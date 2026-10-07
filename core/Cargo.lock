@@ -534,12 +534,14 @@ name = "floe-core"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "librespot-connect",
  "librespot-core",
  "librespot-metadata",
  "librespot-playback",
  "librespot-protocol",
  "log",
  "rtrb",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1180,6 +1182,25 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "librespot-connect"
+version = "0.8.0"
+source = "git+https://github.com/librespot-org/librespot?rev=e023adbbf017ae1fc10d01531dbe50c409786f2d#e023adbbf017ae1fc10d01531dbe50c409786f2d"
+dependencies = [
+ "futures-util",
+ "librespot-core",
+ "librespot-playback",
+ "librespot-protocol",
+ "log",
+ "protobuf",
+ "rand 0.9.5",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-stream",
+ "uuid",
 ]
 
 [[package]]

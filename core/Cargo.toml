@@ -31,6 +31,12 @@ rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
 default-features = false
 features = ["native-tls"]
 
+[dependencies.librespot-connect] # Spirc: Spotify Connect device + context playback
+git = "https://github.com/librespot-org/librespot"
+rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
+default-features = false
+features = ["native-tls"]
+
 [dependencies.librespot-protocol] # only for the AuthenticationType enum
 git = "https://github.com/librespot-org/librespot"
 rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
@@ -39,8 +45,9 @@ rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 rtrb = "0.3"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
 
 [profile.release]
 lto = true

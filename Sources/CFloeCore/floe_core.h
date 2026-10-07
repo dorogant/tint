@@ -23,17 +23,29 @@ bool floe_init(FloeEventCallback callback, void *_Nullable context);
 /// Spotify's own client ID, which librespot's session login requires. Process lifetime.
 const char *floe_session_client_id(void);
 
-/// Async logins. Emit `connecting`, then `credentials` + `connected`, or `login_failed`.
-void floe_login_token(const char *access_token);
-void floe_login_stored(const char *credentials_json);
+/// Async logins that also start the "Floe" Connect device at `volume` (0…65535).
+/// Emit `connecting`, then `credentials` + `connected`, or `login_failed`.
+/// `disconnected` follows later if the session drops.
+void floe_login_token(const char *access_token, uint16_t volume);
+void floe_login_stored(const char *credentials_json, uint16_t volume);
 void floe_logout(void);
 
-/// Returns false for an invalid URI or when not logged in.
-bool floe_load(const char *uri, bool play, uint32_t position_ms);
+/// Plays a context, e.g. {"context_uri": "spotify:playlist:…", "start_uri": "spotify:track:…",
+/// "shuffle": false, "repeat": 0}, or {"tracks": ["spotify:track:…"]}.
+/// Returns false for invalid JSON or when not logged in.
+bool floe_load(const char *request_json);
 void floe_play(void);
 void floe_pause(void);
+void floe_next(void);
+void floe_previous(void);
 void floe_seek(uint32_t position_ms);
-void floe_stop(void);
+void floe_set_shuffle(bool shuffle);
+/// 0 off, 1 repeat context, 2 repeat track.
+void floe_set_repeat(uint8_t mode);
+void floe_set_volume(uint16_t volume);
+/// Moves playback from the currently active device (e.g. a phone) to Floe.
+void floe_transfer(void);
+bool floe_add_to_queue(const char *uri);
 
 /// Audio render thread only. Real-time safe. `left` and `right` must be distinct.
 uint32_t floe_render(float *left, float *right, uint32_t frames);

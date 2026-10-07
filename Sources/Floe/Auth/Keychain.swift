@@ -7,6 +7,8 @@ enum Keychain {
     enum Account {
         /// Reusable librespot credentials (JSON).
         static let playbackSession = "librespot-session"
+        /// Web API tokens for Floe's own client ID (JSON: access + refresh token).
+        static let webAPI = "web-api"
     }
 
     private static let service = "com.antonchurchyn.floe"

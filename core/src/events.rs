@@ -42,20 +42,32 @@ pub fn player_event(event: &PlayerEvent) -> Option<Value> {
             json!({ "type": "unavailable", "uri": track_id.to_uri() })
         }
         PlayerEvent::TrackChanged { audio_item } => track(audio_item),
+        PlayerEvent::ShuffleChanged { shuffle } => json!({ "type": "shuffle", "shuffle": shuffle }),
+        PlayerEvent::RepeatChanged { context, track } => {
+            let mode = if *track { 2 } else if *context { 1 } else { 0 };
+            json!({ "type": "repeat", "mode": mode })
+        }
         _ => return None,
     })
 }
 
 fn track(item: &AudioItem) -> Value {
-    let (artists, album): (Vec<&str>, Option<&str>) = match &item.unique_fields {
+    let (artists, album): (Vec<Value>, Option<&str>) = match &item.unique_fields {
         UniqueFields::Track { artists, album, .. } => (
-            artists.0.iter().map(|a| a.name.as_str()).collect(),
+            artists
+                .0
+                .iter()
+                .map(|a| json!({ "name": a.name, "uri": a.id.to_uri() }))
+                .collect(),
             Some(album.as_str()),
         ),
         UniqueFields::Local {
             artists, album, ..
-        } => (artists.as_deref().into_iter().collect(), album.as_deref()),
-        UniqueFields::Episode { show_name, .. } => (vec![show_name.as_str()], None),
+        } => (
+            artists.iter().map(|name| json!({ "name": name })).collect(),
+            album.as_deref(),
+        ),
+        UniqueFields::Episode { show_name, .. } => (vec![json!({ "name": show_name })], None),
     };
     let cover = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.as_str());
     json!({

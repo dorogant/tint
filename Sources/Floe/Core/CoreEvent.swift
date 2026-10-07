@@ -2,13 +2,32 @@ import Foundation
 
 /// Metadata for the loaded track, as reported by librespot.
 struct TrackInfo: Equatable, Sendable {
+    struct Artist: Equatable, Sendable {
+        var name: String
+        var uri: String?
+    }
+
     var uri: String
     var name: String
-    var artists: [String]
+    var artists: [Artist]
     var album: String?
     var durationMs: Double
     var explicit: Bool
     var coverURL: URL?
+
+    var artistLine: String { artists.map(\.name).joined(separator: ", ") }
+}
+
+enum RepeatMode: Int, Sendable {
+    case off = 0, context = 1, track = 2
+
+    var next: RepeatMode {
+        switch self {
+        case .off: .context
+        case .context: .track
+        case .track: .off
+        }
+    }
 }
 
 /// Events from the Rust core. The JSON shapes are produced in
@@ -19,6 +38,7 @@ enum CoreEvent: Sendable {
     /// Reusable librespot credentials (JSON) to keep in the Keychain.
     case credentials(Data)
     case loginFailed(String)
+    case disconnected
     case loggedOut
     case track(TrackInfo)
     case loading(positionMs: Double)
@@ -28,6 +48,10 @@ enum CoreEvent: Sendable {
     case stopped
     case endOfTrack
     case unavailable(uri: String)
+    case shuffle(Bool)
+    case repeatMode(RepeatMode)
+    /// Spotify volume, 0…65535 (local or remote change).
+    case volume(UInt16)
 
     init?(json data: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -47,13 +71,18 @@ enum CoreEvent: Sendable {
             self = .credentials(blob)
         case "login_failed":
             self = .loginFailed(object["message"] as? String ?? "")
+        case "disconnected":
+            self = .disconnected
         case "logged_out":
             self = .loggedOut
         case "track":
+            let artists = (object["artists"] as? [[String: Any]] ?? []).map {
+                TrackInfo.Artist(name: $0["name"] as? String ?? "", uri: $0["uri"] as? String)
+            }
             self = .track(TrackInfo(
                 uri: object["uri"] as? String ?? "",
                 name: object["name"] as? String ?? "",
-                artists: object["artists"] as? [String] ?? [],
+                artists: artists,
                 album: object["album"] as? String,
                 durationMs: (object["duration_ms"] as? NSNumber)?.doubleValue ?? 0,
                 explicit: object["explicit"] as? Bool ?? false,
@@ -66,7 +95,11 @@ enum CoreEvent: Sendable {
         case "stopped": self = .stopped
         case "end_of_track": self = .endOfTrack
         case "unavailable": self = .unavailable(uri: object["uri"] as? String ?? "")
-        default: return nil
+        case "shuffle": self = .shuffle(object["shuffle"] as? Bool ?? false)
+        case "repeat": self = .repeatMode(RepeatMode(rawValue: object["mode"] as? Int ?? 0) ?? .off)
+        case "volume": self = .volume(UInt16(clamping: object["volume"] as? Int ?? 0))
+        default:
+            return nil
         }
     }
 }

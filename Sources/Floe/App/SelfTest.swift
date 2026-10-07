@@ -1,87 +1,140 @@
 import Foundation
+import MediaPlayer
 
-/// Scripted playback check for development, enabled with the launch argument
-/// `-FloeSelfTest YES` (optionally `-FloeSelfTestTrack spotify:track:…`).
-/// Logs to stdout: play → pause → seek → resume, with audio counters and RAM.
-/// Don't touch playback while it runs: an outside pause is reported as such.
+/// Scripted end-to-end check for development, enabled with `-FloeSelfTest YES`.
+/// Logs to stdout. Plays music; don't touch playback while it runs.
+/// `-FloeSelfTestWrites YES` also likes and then unlikes one song (no net change).
+/// `-FloeSelfTestTour YES` also visits each page; with `-FloeSnapshotDir <dir>` it
+/// snapshots them too.
 @MainActor
 enum SelfTest {
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "FloeSelfTest") }
+    private static var allowWrites: Bool { UserDefaults.standard.bool(forKey: "FloeSelfTestWrites") }
 
-    static func run(_ model: PlayerModel) async {
-        let track = UserDefaults.standard.string(forKey: "FloeSelfTestTrack") ?? PlayerView.defaultTrack
+    static func run(player: PlayerModel, library: LibraryModel, navigator: Navigator, search: SearchModel) async {
         let start = Date()
-        let forward = model.core.onEvent
-        model.core.onEvent = { event in
+        let forward = player.core.onEvent
+        player.core.onEvent = { event in
             let t = String(format: "%6.2f", Date().timeIntervalSince(start))
             say("  t=\(t) event \(String(describing: event).prefix(90))")
             forward?(event)
         }
-        say("waiting for session")
-        guard await wait(timeout: 600, { model.isConnected }) else { return finish(false, "no session") }
+
+        say("waiting for playback session and library")
+        guard await wait(timeout: 600, {
+            player.isConnected && library.connection == .connected && library.profile != nil
+        }) else { return finish(false, "not connected") }
+        say("library: \(library.playlists.count) playlists, \(library.recent.count) recently played, "
+            + "\(library.topArtists.count) top artists, \(library.savedAlbums.count) saved albums")
         let ram0 = MemoryFootprint.currentMB
-
-        say("load \(track)")
-        guard model.play(uri: track) else { return finish(false, "load rejected") }
-        guard await wait(timeout: 30, { model.isPlaying }) else { return finish(false, "never started playing") }
-        say("playing: \(model.track?.name ?? "?") – \(model.track?.artists.joined(separator: ", ") ?? "?")")
-
         var ok = true
-        func interrupted() -> Bool { !model.isPlaying }
-        _ = model.core.takeStats()
-        var frames = model.core.takeStats().frames_rendered
-        try? await Task.sleep(for: .seconds(6))
-        if interrupted() { return finish(false, "playback was paused from outside the test") }
-        var stats = model.core.takeStats()
-        let played = Double(stats.frames_rendered - frames) / 44_100
-        say(String(format: "6 s of playback rendered %.2f s of audio, peak %.2f, underruns %llu",
-                   played, stats.peak, stats.underruns))
-        ok = ok && played > 5 && stats.peak > 0.01
 
-        model.pause()
-        frames = model.core.takeStats().frames_rendered
-        try? await Task.sleep(for: .seconds(3))
-        stats = model.core.takeStats()
-        let leaked = Double(stats.frames_rendered - frames) / 44_100
-        say(String(format: "paused 3 s: rendered %.2f s (expect 0), position %.1f s",
-                   leaked, model.positionMs(at: Date()) / 1000))
-        ok = ok && leaked < 0.05 && !model.isPlaying
-
-        model.seek(toMs: 60_000)
-        model.resume()
-        guard await wait(timeout: 15, { model.isPlaying }) else { return finish(false, "resume failed") }
-        frames = model.core.takeStats().frames_rendered
-        let cpuStart = cpuSeconds(), wallStart = Date()
-        var peak: Float = 0
-        for _ in 0..<5 { // sampled so stalls show up in the log
-            try? await Task.sleep(for: .seconds(1))
-            let sample = model.core.takeStats()
-            peak = max(peak, sample.peak)
-            let rendered = Double(sample.frames_rendered - frames) / 44_100
-            say(String(format: "  t=%6.2f rendered %.2f s since resume, playing=%@",
-                       Date().timeIntervalSince(start), rendered, model.isPlaying ? "yes" : "no"))
+        if let own = library.playlists.first(where: { library.canListItems(of: $0) && ($0.itemCount ?? 0) > 0 }) {
+            let page = try? await library.api.playlistItems(own.id, offset: 0)
+            say("own playlist: \(page?.items.count ?? -1) tracks")
+            ok = check(ok, page?.items.isEmpty == false, "own playlist items")
         }
-        let cpu = (cpuSeconds() - cpuStart) / Date().timeIntervalSince(wallStart) * 100
-        if interrupted() { return finish(false, "playback was paused from outside the test") }
-        stats = model.core.takeStats()
-        let position = model.positionMs(at: Date()) / 1000
-        say(String(format: "after seek to 60 s + 5 s playing: position %.1f s, rendered %.2f s, peak %.2f",
-                   position, Double(stats.frames_rendered - frames) / 44_100, max(peak, stats.peak)))
-        say(String(format: "CPU while playing: %.1f%% of one core; underruns so far: %llu", cpu, stats.underruns))
-        ok = ok && (63...68).contains(position) && max(peak, stats.peak) > 0.01
+        var found: SearchResults?
+        do {
+            found = try await library.api.search("never gonna give you up")
+            say("search: \(found?.tracks?.items.count ?? 0) songs, \(found?.artists?.items.count ?? 0) artists, "
+                + "\(found?.playlists?.items.count ?? 0) playlists")
+            ok = check(ok, found?.tracks?.items.isEmpty == false, "search")
+        } catch {
+            ok = check(ok, false, "search: \(error)")
+        }
 
-        say(String(format: "RAM (phys_footprint): %.1f MB before playback, %.1f MB while playing",
+        // Context playback: Liked Songs, starting at its second song.
+        guard let profile = library.profile,
+              let liked = try? await library.api.savedTracks(offset: 0), liked.items.count >= 3
+        else { return finish(false, "needs at least 3 liked songs") }
+        let songs = liked.items.map(\.track)
+        player.play(PlayRequest(contextURI: "spotify:user:\(profile.id):collection", startURI: songs[1].uri))
+        // Wait for this exact song: Connect can push other state (another device) meanwhile.
+        guard await wait(timeout: 30, { player.isPlaying && player.track?.name == songs[1].name }) else {
+            return finish(false, "Liked Songs didn't start at \(songs[1].name); playing \(player.track?.name ?? "nothing")")
+        }
+        say("Liked Songs from #2: \(songs[1].name)")
+
+        player.next()
+        guard await wait(timeout: 15, { player.isPlaying && player.track?.name == songs[2].name }) else {
+            return finish(false, "next didn't move to \(songs[2].name); playing \(player.track?.name ?? "nothing")")
+        }
+        say("next: \(songs[2].name)")
+
+        player.previous()
+        guard await wait(timeout: 15, { player.isPlaying && player.track?.name == songs[1].name }) else {
+            return finish(false, "previous didn't go back; playing \(player.track?.name ?? "nothing")")
+        }
+        say("previous: \(songs[1].name)")
+
+        // Audio is really flowing, and Control Center shows the track.
+        let frames = player.core.takeStats().frames_rendered
+        try? await Task.sleep(for: .seconds(3))
+        let rendered = Double(player.core.takeStats().frames_rendered - frames) / 44_100
+        say(String(format: "rendered %.2f s of audio in 3 s", rendered))
+        ok = check(ok, rendered > 2.5, "audio flowing")
+        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo
+        let title = info?[MPMediaItemPropertyTitle] as? String
+        let artwork = info?[MPMediaItemPropertyArtwork] != nil
+        say("Now Playing: \(title ?? "nil"), artwork \(artwork ? "yes" : "no"), "
+            + "state \(MPNowPlayingInfoCenter.default().playbackState == .playing ? "playing" : "other")")
+        ok = check(ok, title == player.track?.name && artwork, "Now Playing info")
+
+        if allowWrites, let candidate = found?.tracks?.items.first(where: \.isCatalogTrack) {
+            let before = (try? await library.api.libraryContains([candidate.uri]))?[candidate.uri]
+            if before == false {
+                await library.toggleLike(candidate.uri)
+                let liked = (try? await library.api.libraryContains([candidate.uri]))?[candidate.uri]
+                await library.toggleLike(candidate.uri)
+                let after = (try? await library.api.libraryContains([candidate.uri]))?[candidate.uri]
+                say("like toggle: \(liked == true ? "liked" : "NOT liked"), then \(after == false ? "unliked" : "STILL liked")")
+                ok = check(ok, liked == true && after == false, "like toggle")
+            } else {
+                say("like toggle skipped: test song is already liked")
+            }
+        }
+
+        player.pause()
+        say(String(format: "RAM after playback checks: %.1f MB", MemoryFootprint.currentMB))
+        if Snapshot.isEnabled || UserDefaults.standard.bool(forKey: "FloeSelfTestTour") {
+            let rounds = max(UserDefaults.standard.integer(forKey: "FloeSelfTestTourRounds"), 1)
+            for round in 1...rounds {
+                await tour(library: library, navigator: navigator, search: search)
+                say(String(format: "tour %d: %.1f MB", round, MemoryFootprint.currentMB))
+            }
+        }
+        say(String(format: "RAM (phys_footprint): %.1f MB connected, %.1f MB after browsing + playback",
                    ram0, MemoryFootprint.currentMB))
-        model.pause()
         finish(ok, ok ? "all checks passed" : "a check failed")
     }
 
-    /// User + system CPU time of this process.
-    private static func cpuSeconds() -> Double {
-        var usage = rusage()
-        getrusage(RUSAGE_SELF, &usage)
-        func seconds(_ t: timeval) -> Double { Double(t.tv_sec) + Double(t.tv_usec) / 1_000_000 }
-        return seconds(usage.ru_utime) + seconds(usage.ru_stime)
+    /// Visits each page (and snapshots it when enabled).
+    private static func tour(library: LibraryModel, navigator: Navigator, search: SearchModel) async {
+        func visit(_ route: Route, _ name: String) async {
+            navigator.select(route)
+            try? await Task.sleep(for: .seconds(3)) // data + artwork
+            Snapshot.capture(name)
+        }
+        await visit(.home, "1-home")
+        await visit(.songs, "2-liked-songs")
+        if let own = library.playlists.first(where: { library.canListItems(of: $0) }) {
+            await visit(.playlist(own.id), "3-playlist")
+        }
+        if let album = library.savedAlbums.first {
+            await visit(.album(album.id), "4-album")
+        }
+        if let artist = library.topArtists.first {
+            await visit(.artist(artist.id), "5-artist")
+        }
+        search.text = "daft punk"
+        await visit(.search, "6-search")
+        navigator.select(.home)
+    }
+
+    private static func check(_ ok: Bool, _ condition: Bool, _ name: String) -> Bool {
+        if !condition { say("  ✗ \(name)") }
+        return ok && condition
     }
 
     private static func wait(timeout: TimeInterval, _ condition: () -> Bool) async -> Bool {

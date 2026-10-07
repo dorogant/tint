@@ -10,6 +10,18 @@ enum SpotifyOAuth {
         let redirectURI: URL
         let scopes: [String]
 
+        /// Floe's own developer app, used for the Web API. The client ID
+        /// is public; PKCE needs no secret. The redirect is registered in that app.
+        static let webAPI = Config(
+            clientID: "YOUR_SPOTIFY_CLIENT_ID",
+            redirectURI: URL(string: "http://127.0.0.1:8898/callback")!,
+            scopes: [
+                "playlist-read-private", "playlist-read-collaborative",
+                "user-library-read", "user-library-modify",
+                "user-read-recently-played", "user-top-read", "user-follow-read",
+            ]
+        )
+
         /// librespot's session login: Spotify's own client ID, `streaming` scope.
         /// Its registered redirect is `http://127.0.0.1:<port>/login`; 5588 is librespot's default.
         static func playbackSession(clientID: String) -> Config {
@@ -85,6 +97,15 @@ enum SpotifyOAuth {
             "redirect_uri": config.redirectURI.absoluteString,
             "client_id": config.clientID,
             "code_verifier": verifier,
+        ])
+    }
+
+    /// Spotify may rotate the refresh token; callers keep the old one if none comes back.
+    static func refresh(_ config: Config, refreshToken: String) async throws -> Token {
+        try await requestToken(form: [
+            "grant_type": "refresh_token",
+            "refresh_token": refreshToken,
+            "client_id": config.clientID,
         ])
     }
 

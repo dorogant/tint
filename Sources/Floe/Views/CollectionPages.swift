@@ -93,8 +93,7 @@ struct PlaylistView: View {
             if loadingPage { LoadingView() }
         }
         .task(id: id) { await load() }
-        .onChange(of: sort) { Task { await loadAll() } }
-        .onChange(of: filter) { Task { await loadAll() } }
+        .task(id: "\(sort.rawValue):\(filter)") { await loadAll() }
     }
 
     private func header(_ playlist: PlaylistRef) -> some View {
@@ -170,8 +169,14 @@ struct PlaylistView: View {
     /// Sorting and filtering need every page.
     private func loadAll() async {
         guard sort != .custom || !filter.isEmpty else { return }
-        while nextOffset != nil, error == nil {
-            await loadNextPage()
+        while nextOffset != nil, error == nil, !Task.isCancelled {
+            // Another request may be fetching a page. Yield instead of spinning
+            // on the main actor and preventing that request from completing.
+            if loadingPage {
+                try? await Task.sleep(for: .milliseconds(50))
+            } else {
+                await loadNextPage()
+            }
         }
     }
 
@@ -182,8 +187,7 @@ struct PlaylistView: View {
 
     private func playFromStart(shuffled: Bool) {
         guard let playlist else { return }
-        if player.shuffle != shuffled { player.toggleShuffle() }
-        player.play(PlayRequest(contextURI: playlist.uri))
+        player.playContext(playlist.uri, shuffled: shuffled)
     }
 }
 
@@ -286,8 +290,7 @@ struct AlbumView: View {
 
     private func playFromStart(shuffled: Bool) {
         guard let album else { return }
-        if player.shuffle != shuffled { player.toggleShuffle() }
-        player.play(PlayRequest(contextURI: album.uri))
+        player.playContext(album.uri, shuffled: shuffled)
     }
 }
 
@@ -334,8 +337,7 @@ struct SongsView: View {
             if loadingPage { LoadingView() }
         }
         .task(id: library.likedRevision) { await reload() }
-        .onChange(of: sort) { Task { await loadAll() } }
-        .onChange(of: filter) { Task { await loadAll() } }
+        .task(id: "\(sort.rawValue):\(filter)") { await loadAll() }
     }
 
     private func reload() async {
@@ -366,8 +368,14 @@ struct SongsView: View {
 
     private func loadAll() async {
         guard sort != .custom || !filter.isEmpty else { return }
-        while nextOffset != nil, error == nil {
-            await loadNextPage()
+        while nextOffset != nil, error == nil, !Task.isCancelled {
+            // Another request may be fetching a page. Yield instead of spinning
+            // on the main actor and preventing that request from completing.
+            if loadingPage {
+                try? await Task.sleep(for: .milliseconds(50))
+            } else {
+                await loadNextPage()
+            }
         }
     }
 
@@ -378,8 +386,7 @@ struct SongsView: View {
 
     private func playFromStart(shuffled: Bool) {
         guard let contextURI else { return }
-        if player.shuffle != shuffled { player.toggleShuffle() }
-        player.play(PlayRequest(contextURI: contextURI))
+        player.playContext(contextURI, shuffled: shuffled)
     }
 }
 

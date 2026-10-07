@@ -111,6 +111,12 @@ final class PlayerModel {
         audio.start()
     }
 
+    /// Starts a context with a deliberate shuffle state (page Play / Shuffle actions).
+    func playContext(_ uri: String, shuffled: Bool) {
+        if shuffle != shuffled { toggleShuffle() }
+        play(PlayRequest(contextURI: uri))
+    }
+
     func togglePlayPause() {
         isPlaying ? pause() : resume()
     }

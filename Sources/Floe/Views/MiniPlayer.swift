@@ -8,37 +8,13 @@ struct MiniPlayerView: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            transport.frame(width: 250, alignment: .leading)
+            TransportControls().frame(width: 250, alignment: .leading)
             Spacer(minLength: 0)
             nowPlaying.frame(maxWidth: 560)
             Spacer(minLength: 0)
             VolumeControl().frame(width: 190, alignment: .trailing)
         }
         .padding(.horizontal, 16)
-    }
-
-    private var transport: some View {
-        HStack(spacing: 4) {
-            IconButton(systemImage: "shuffle", size: 14, active: player.shuffle, help: "Shuffle") {
-                player.toggleShuffle()
-            }
-            IconButton(systemImage: "backward.fill", size: 15, help: "Previous") { player.previous() }
-            Button(action: player.togglePlayPause) {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.black)
-                    .frame(width: 42, height: 42)
-                    .background(Theme.accent, in: Circle())
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help(player.isPlaying ? "Pause" : "Play")
-            IconButton(systemImage: "forward.fill", size: 15, help: "Next") { player.next() }
-            IconButton(systemImage: player.repeatMode == .track ? "repeat.1" : "repeat", size: 14,
-                       active: player.repeatMode != .off, help: "Repeat") {
-                player.cycleRepeat()
-            }
-        }
     }
 
     @ViewBuilder

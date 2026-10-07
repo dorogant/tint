@@ -130,51 +130,6 @@ struct ArtistView: View {
 
 // MARK: - Search
 
-@MainActor
-@Observable
-final class SearchModel {
-    var text = ""
-    private(set) var results: SearchResults?
-    private(set) var songs: [Track] = []
-    private(set) var canLoadMoreSongs = false
-    private(set) var isSearching = false
-    private(set) var error: String?
-
-    func search(_ api: WebAPI) async {
-        let query = text.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else {
-            results = nil
-            songs = []
-            return
-        }
-        try? await Task.sleep(for: .milliseconds(300)) // debounce typing
-        guard !Task.isCancelled else { return }
-        isSearching = true
-        defer { isSearching = false }
-        do {
-            let found = try await api.search(query)
-            guard !Task.isCancelled else { return }
-            results = found
-            songs = found.tracks?.items ?? []
-            canLoadMoreSongs = found.tracks?.next != nil
-            error = nil
-        } catch {
-            if !Task.isCancelled { self.error = error.localizedDescription }
-        }
-    }
-
-    /// Development Mode returns 10 results per request; page for more songs.
-    func loadMoreSongs(_ api: WebAPI) async {
-        do {
-            let more = try await api.search(text, offset: songs.count)
-            songs += more.tracks?.items ?? []
-            canLoadMoreSongs = more.tracks?.next != nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
 struct SearchView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -193,6 +148,7 @@ struct SearchView: View {
                             if search.canLoadMoreSongs {
                                 Button("Show more") { Task { await search.loadMoreSongs(library.api) } }
                                     .buttonStyle(.plain)
+                                    .disabled(search.isLoadingMore)
                                     .foregroundStyle(Theme.secondary)
                             }
                         }

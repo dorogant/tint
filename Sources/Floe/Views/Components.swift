@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum Theme {
-    /// Default accent (Spotify-like green); Phase 3 adds "accent from cover".
+    /// Default accent; cover palettes are inherited through the view environment.
     static let accent = Color(red: 0.12, green: 0.84, blue: 0.38)
     static let base = Color(red: 0.045, green: 0.05, blue: 0.06)
     static let panelStroke = Color.white.opacity(0.08)
@@ -12,25 +12,34 @@ enum Theme {
     static let corner: CGFloat = 18
 }
 
-/// Static backdrop behind the glass panels. Phase 3 replaces it with the blurred,
-/// per-song cover art.
+/// Cover art is blurred once at thumbnail resolution, then stretched behind glass.
 struct Backdrop: View {
+    @Environment(\.coverPalette) private var palette
+    @Environment(CoverAppearance.self) private var appearance
+
     var body: some View {
-        ZStack {
-            Theme.base
-            RadialGradient(colors: [Theme.accent.opacity(0.22), .clear],
-                           center: .topLeading, startRadius: 0, endRadius: 700)
-            RadialGradient(colors: [Color(red: 0.1, green: 0.35, blue: 0.5).opacity(0.25), .clear],
-                           center: .bottomTrailing, startRadius: 0, endRadius: 800)
+        GeometryReader { geometry in
+            ZStack {
+                Theme.base
+                if let image = appearance.background {
+                    Image(decorative: image, scale: 1).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped().opacity(0.45)
+                }
+                RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
+                               center: .topLeading, startRadius: 0, endRadius: 700)
+                Color.black.opacity(0.28)
+            }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 
 extension View {
     /// Frosted panel: a translucent tint over an already-soft backdrop, hairline edge.
     /// No live blur (`Material`): each live-blur layer costs memory and GPU time,
-    /// and over a smooth (or pre-blurred, Phase 3) backdrop it looks the same.
+    /// and the cover backdrop is already blurred at thumbnail resolution.
     func glassPanel(cornerRadius: CGFloat = Theme.corner) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return background(Color(white: 0.11).opacity(0.62), in: shape)
@@ -41,8 +50,9 @@ extension View {
     }
 }
 
-/// The green "Play" pill from the reference UI.
+/// Accent-colored Play pill with contrast chosen from the cover palette.
 struct PlayPill: View {
+    @Environment(\.coverPalette) private var palette
     var title: LocalizedStringKey = "Play"
     let action: () -> Void
 
@@ -52,8 +62,8 @@ struct PlayPill: View {
                 .font(.system(size: 14, weight: .semibold))
                 .padding(.horizontal, 20)
                 .padding(.vertical, 9)
-                .foregroundStyle(.black)
-                .background(Theme.accent, in: Capsule())
+                .foregroundStyle(palette.onAccent)
+                .background(palette.accent, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -61,6 +71,7 @@ struct PlayPill: View {
 
 /// Round, quiet icon button used in toolbars and the mini player.
 struct IconButton: View {
+    @Environment(\.coverPalette) private var palette
     let systemImage: String
     var size: CGFloat = 15
     var active = false
@@ -72,7 +83,7 @@ struct IconButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: size, weight: .medium))
-                .foregroundStyle(active ? Theme.accent : (hovering ? .white : Theme.secondary))
+                .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
                 .frame(width: size * 2.1, height: size * 2.1)
                 .background(hovering ? Theme.hover : .clear, in: Circle())
                 .contentShape(Circle())

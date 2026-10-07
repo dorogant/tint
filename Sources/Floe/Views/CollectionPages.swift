@@ -391,11 +391,12 @@ struct SongsView: View {
 }
 
 struct LikedCover: View {
+    @Environment(\.coverPalette) private var palette
     let size: CGFloat
 
     var body: some View {
         RoundedRectangle(cornerRadius: size > 60 ? 12 : 5)
-            .fill(LinearGradient(colors: [Color(red: 0.27, green: 0.2, blue: 0.75), Theme.accent.opacity(0.85)],
+            .fill(LinearGradient(colors: [Color(red: 0.27, green: 0.2, blue: 0.75), palette.accent.opacity(0.85)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
             .overlay(Image(systemName: "star.fill").font(.system(size: size * 0.32)).foregroundStyle(.white))
             .frame(width: size, height: size)

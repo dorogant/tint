@@ -104,10 +104,12 @@ struct ArtworkView: View {
         }
         .frame(width: size, height: size)
         .clipShape(circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: cornerRadius)))
-        .task(id: url) {
+        .task(id: "\(url?.absoluteString ?? "")#\(pixels)") {
             loaded = nil
             guard let url, ArtworkCache.shared.cached(url, pixels: pixels) == nil else { return }
-            loaded = await ArtworkCache.shared.image(for: url, pixels: pixels)
+            let image = await ArtworkCache.shared.image(for: url, pixels: pixels)
+            guard !Task.isCancelled else { return }
+            loaded = image
         }
     }
 }

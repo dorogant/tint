@@ -70,6 +70,7 @@ private struct NavRow: View {
 }
 
 private struct PlaylistRow: View {
+    @Environment(\.coverPalette) private var palette
     let playlist: PlaylistRef
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -84,11 +85,11 @@ private struct PlaylistRow: View {
                 ArtworkView(images: playlist.images, size: 30, cornerRadius: 4)
                 Text(playlist.name)
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(playing ? Theme.accent : (selected ? .white : Theme.secondary))
+                    .foregroundStyle(playing ? palette.highlight : (selected ? .white : Theme.secondary))
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if playing {
-                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
+                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 10)).foregroundStyle(palette.highlight)
                 }
             }
             .padding(.horizontal, 8)
@@ -109,6 +110,7 @@ private struct PlaylistRow: View {
 }
 
 private struct AccountRow: View {
+    @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
 
@@ -143,7 +145,7 @@ private struct AccountRow: View {
     }
 
     private var statusColor: Color {
-        player.isConnected ? Theme.accent : .orange
+        player.isConnected ? palette.accent : .orange
     }
 
     private var statusText: LocalizedStringKey {

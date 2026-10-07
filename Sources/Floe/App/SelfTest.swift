@@ -11,7 +11,8 @@ enum SelfTest {
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "FloeSelfTest") }
     private static var allowWrites: Bool { UserDefaults.standard.bool(forKey: "FloeSelfTestWrites") }
 
-    static func run(player: PlayerModel, library: LibraryModel, navigator: Navigator, search: SearchModel) async {
+    static func run(player: PlayerModel, library: LibraryModel, navigator: Navigator, search: SearchModel,
+                    lyrics: LyricsModel, appearance: CoverAppearance) async {
         let start = Date()
         let forward = player.core.onEvent
         player.core.onEvent = { event in
@@ -95,6 +96,37 @@ enum SelfTest {
             }
         }
 
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestPhase3") {
+            let lyricSearch = try? await library.api.search("Get Lucky Daft Punk")
+            guard let candidate = lyricSearch?.tracks?.items.first(where: {
+                $0.artists.contains { $0.name == "Daft Punk" } && (360000...380000).contains($0.durationMs)
+            }) else { player.pause(); return finish(false, "lyrics fixture song not found") }
+            player.play(PlayRequest(tracks: [candidate.uri]))
+            navigator.surface = .nowPlaying
+            let started = await wait(timeout: 20) { player.isPlaying && player.track?.uri == candidate.uri }
+            ok = check(ok, started, "Phase 3 playback")
+            say("lyrics signature: \(player.track?.name ?? ""), \(player.track?.artistLine ?? ""), album \(player.track?.album ?? ""), \(player.track?.durationMs ?? 0) ms")
+            let loaded = await wait(timeout: 25) {
+                guard lyrics.trackURI == candidate.uri, appearance.coverURL == player.track?.coverURL else { return false }
+                if case .loaded = lyrics.state { return appearance.image != nil && appearance.background != nil }
+                if case .failed = lyrics.state { return true }
+                return false
+            }
+            ok = check(ok, loaded && appearance.image != nil && appearance.background != nil, "cover and background")
+            if case let .loaded(.synced(lines)) = lyrics.state {
+                say("Phase 3: synced lyrics available (\(lines.count) lines; text stays in live view)")
+                ok = check(ok, lines.count > 3, "multiple synced lines")
+                if let line = lines.first(where: { $0.time > 10 }) {
+                    player.seek(toMs: line.time * 1000)
+                    try? await Task.sleep(for: .seconds(1))
+                    ok = check(ok, abs(player.positionMs(at: Date()) / 1000 - line.time) < 3, "seek to lyric timing")
+                }
+            } else {
+                ok = check(ok, false, "expected synced lyrics for the fixture song")
+            }
+            try? await Task.sleep(for: .seconds(20))
+            say(String(format: "Now Playing during playback: %.1f MB", MemoryFootprint.currentMB))
+        }
         player.pause()
         say(String(format: "RAM after playback checks: %.1f MB", MemoryFootprint.currentMB))
         if Snapshot.isEnabled || UserDefaults.standard.bool(forKey: "FloeSelfTestTour") {
@@ -106,6 +138,17 @@ enum SelfTest {
         }
         say(String(format: "RAM (phys_footprint): %.1f MB connected, %.1f MB after browsing + playback",
                    ram0, MemoryFootprint.currentMB))
+        if UserDefaults.standard.bool(forKey: "FloeVisualTest") {
+            lyrics.showVisualTestFixture()
+            navigator.surface = .nowPlaying
+            player.seek(toMs: 9000)
+            try? await Task.sleep(for: .seconds(2))
+            Snapshot.capture("7-now-playing-synthetic")
+            navigator.surface = .lyrics
+            try? await Task.sleep(for: .seconds(1))
+            Snapshot.capture("8-lyrics-synthetic")
+            navigator.surface = .nowPlaying
+        }
         finish(ok, ok ? "all checks passed" : "a check failed")
     }
 

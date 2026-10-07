@@ -1,6 +1,6 @@
-# Native macOS Spotify client (name TBD)
+# Floe — native macOS Spotify client
 
-The app name is still undecided (suggest a few). Goal: a lightweight **native** Spotify client for macOS (Apple Silicon) that replaces the official Chromium-based app for everyday listening.
+The app name is **Floe** (now shipped as Tint). Goal: a lightweight **native** Spotify client for macOS (Apple Silicon) that replaces the official Chromium-based app for everyday listening.
 
 **Design direction:** modelled on a QML Linux Spotify client shown in a short video ("QML Spotify client, no webviews"). That video is **the** visual and feature reference (see "Reference UI" below). This is *not* a port of a WebView theme. Build an original implementation of that look and feel; don't copy assets or code.
 
@@ -26,7 +26,7 @@ The app name is still undecided (suggest a few). Goal: a lightweight **native** 
 ## Environment facts (checked 2026-10-07)
 
 - macOS 27.0, arm64. Swift 6.4 (CLT only; `xcodebuild` unavailable). Homebrew 7.0.8 is installed.
-- **Rust is not installed.** Install via rustup (the user agreed in principle; confirm before running).
+- **Rust is installed via rustup.** The build script uses `~/.cargo/bin`.
 - Qt is not installed and isn't needed.
 - Make strings localisable (English first, Ukrainian later).
 
@@ -96,7 +96,7 @@ App.app (SwiftUI)
 
 **2. Library & navigation.** *Done when:* the sidebar, Home (recently played, playlists, saved albums), search, and playlist/album/artist pages work; clicking a track plays it in context; the mini player works; liked songs can be toggled; media keys and Control Center Now Playing work.
 
-**3. Now Playing & lyrics.** *Done when:* there's a cover-art glass background with an accent from the cover, the blob cover mask (slow morph, respecting Reduce Motion), the wavy progress bar, and LRCLIB synced lyrics with a frosted current-line pill and smooth scrolling (with an "instrumental / no lyrics" state).
+**3. Now Playing & lyrics.** Done (2026-10-08): shared transport, cover-derived palette with readable button text, a pre-blurred backdrop, a slow blob mask, wavy seeking, LRCLIB fetch/cache and line sync. Cover/wave motion pauses with playback; both app and system Reduce Motion are respected. Verified with 12 synthetic parser/color/service tests, real playback with 134 synced lines and lyric seeking, and screenshots with synthetic text only. Physical footprint was ~147 MiB; steady playback RSS ~155 MiB, so the original RSS target still needs tuning. *Done when:* there's a cover-art glass background with an accent from the cover, the blob cover mask (slow morph, respecting Reduce Motion), the wavy progress bar, and LRCLIB synced lyrics with a frosted current-line pill and smooth scrolling (with an "instrumental / no lyrics" state).
 
 **4. Visualizer & live background.** *Done when:* an FFT from the real PCM (vDSP) drives circular, bars and wave visualizers, there's an optional Metal shader background, and both pause when playback pauses. Keep CPU and RAM within budget.
 

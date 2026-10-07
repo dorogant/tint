@@ -10,15 +10,18 @@ enum Route: Hashable {
 @MainActor
 @Observable
 final class Navigator {
+    enum Surface: String, CaseIterable { case library, nowPlaying, lyrics }
+    var surface: Surface = .library
     private(set) var stack: [Route] = [.home]
 
     var current: Route { stack[stack.count - 1] }
     var root: Route { stack[0] }
     var canGoBack: Bool { stack.count > 1 }
 
-    func select(_ route: Route) { stack = [route] }
+    func select(_ route: Route) { surface = .library; stack = [route] }
 
     func push(_ route: Route) {
+        surface = .library
         if route != current { stack.append(route) }
     }
 

@@ -62,6 +62,10 @@ final class PlayerModel {
         return min(max(position, 0), track?.durationMs ?? .infinity)
     }
 
+    /// Changes on pause, resume, seek and position correction. Lyrics use it to
+    /// restart their clock without redrawing the whole list on every timer tick.
+    var playbackAnchor: Date { anchorDate }
+
     // MARK: - Session
 
     /// Restores the previous session from the Keychain, if there is one.

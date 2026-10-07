@@ -7,6 +7,9 @@ struct FloeApp: App {
     @ViewState private var library = LibraryModel(api: WebAPI(user: UserTokenProvider()))
     @ViewState private var navigator = Navigator()
     @ViewState private var search = SearchModel()
+    @ViewState private var lyrics = LyricsModel()
+    @ViewState private var appearance = CoverAppearance()
+    @AppStorage("accentFromCover") private var accentFromCover = false
 
     var body: some Scene {
         Window("Floe", id: "main") {
@@ -15,13 +18,22 @@ struct FloeApp: App {
                 .environment(library)
                 .environment(navigator)
                 .environment(search)
+                .environment(lyrics)
+                .environment(appearance)
+                .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette())
+                .task(id: player.track) {
+                    async let cover: () = appearance.load(player.track?.coverURL)
+                    async let words: () = lyrics.load(player.track)
+                    _ = await (cover, words)
+                }
                 .task {
                     SpaceToPlay.install(player)
+                    Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }
                     Snapshot.installTrigger()
                     await player.restoreSession()
                     await library.start()
                     if SelfTest.isEnabled {
-                        await SelfTest.run(player: player, library: library, navigator: navigator, search: search)
+                        await SelfTest.run(player: player, library: library, navigator: navigator, search: search, lyrics: lyrics, appearance: appearance)
                     }
                 }
         }

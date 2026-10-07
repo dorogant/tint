@@ -67,44 +67,65 @@ struct MiniPlayerView: View {
 
 /// Thin seekable progress line with elapsed/total times.
 struct ProgressBar: View {
+    @Environment(\.coverPalette) private var palette
+    var wavy = false
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage("reduceMotion") private var reduceMotion = false
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragFraction: Double?
 
     var body: some View {
         let duration = max(player.track?.durationMs ?? 0, 1)
-        // Redraws once a second, only while playing: redraws cost more CPU than decoding.
-        TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil)) { context in
+        // The mini player updates once a second; Now Playing animates the wave at 12 Hz.
+        TimelineView(.animation(minimumInterval: wavy && !reduceMotion && !systemReduceMotion ? 1 / 12 : 1,
+                                paused: !player.isPlaying || dragFraction != nil)) { context in
             let fraction = dragFraction ?? min(player.positionMs(at: context.date) / duration, 1)
             HStack(spacing: 8) {
                 Text(Format.duration(ms: fraction * duration))
                     .frame(width: 36, alignment: .trailing)
                 GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.14))
-                        Capsule().fill(dragFraction == nil ? .white.opacity(0.85) : Theme.accent)
-                            .frame(width: geometry.size.width * fraction)
+                    Group {
+                        if wavy {
+                            WavyProgress(progress: fraction,
+                                         phase: reduceMotion || systemReduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate * 1.2,
+                                         color: palette.highlight)
+                        } else {
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(.white.opacity(0.14))
+                                Capsule().fill(dragFraction == nil ? .white.opacity(0.85) : palette.accent)
+                                    .frame(width: geometry.size.width * fraction)
+                            }.frame(height: 4)
+                        }
                     }
-                    .frame(height: 4)
                     .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { dragFraction = min(max($0.location.x / geometry.size.width, 0), 1) }
+                        .onChanged { dragFraction = min(max($0.location.x / max(geometry.size.width, 1), 0), 1) }
                         .onEnded { _ in
                             if let target = dragFraction { player.seek(toMs: target * duration) }
                             dragFraction = nil
                         })
                 }
-                .frame(height: 12)
+                .frame(height: wavy ? 24 : 12)
                 Text(Format.duration(ms: duration))
                     .frame(width: 36, alignment: .leading)
             }
             .font(.system(size: 10.5).monospacedDigit())
             .foregroundStyle(Theme.tertiary)
         }
+        .onChange(of: player.track?.uri) { dragFraction = nil }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback position")
+        .accessibilityValue(Format.duration(ms: player.positionMs(at: Date())))
+        .accessibilityAdjustableAction { direction in
+            player.seek(toMs: player.positionMs(at: Date()) + (direction == .increment ? 5000 : -5000))
+        }
+        .disabled(player.track == nil)
     }
 }
 
 struct VolumeControl: View {
+    @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragging = false
 
@@ -118,7 +139,7 @@ struct VolumeControl: View {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.14))
-                    Capsule().fill(dragging ? Theme.accent : .white.opacity(0.85))
+                    Capsule().fill(dragging ? palette.accent : .white.opacity(0.85))
                         .frame(width: geometry.size.width * player.volume)
                 }
                 .frame(height: 4)
@@ -127,7 +148,7 @@ struct VolumeControl: View {
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged {
                         dragging = true
-                        player.setVolume($0.location.x / geometry.size.width)
+                        player.setVolume($0.location.x / max(geometry.size.width, 1))
                     }
                     .onEnded { _ in dragging = false })
             }

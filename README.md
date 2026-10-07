@@ -5,10 +5,21 @@ A lightweight native Spotify client for macOS (Apple Silicon): SwiftUI on top of
 Chromium-based official app for everyday listening, with a target of **≤150 MB RAM**
 during playback and ~0% CPU when idle. See [PLAN.md](PLAN.md) for the full plan.
 
-**Status:** Phase 2 (library & navigation) done. Measured on a MacBook Air (2026-10-08),
-release build: ~60 MB physical footprint on Home, ~82 MB while playing, and a stable
-~105 MB after visiting every page (no growth over repeated visits); 0.0% CPU when paused.
-RSS is ~145 MB, of which ~40 MB is shared system frameworks. The official app uses ~450 MB.
+**Status:** Phase 3 (Now Playing & lyrics) implemented. Library, navigation,
+playback and macOS media controls are working. Now Playing adds a cover-art backdrop,
+a slowly morphing cover mask, a wavy seek bar and LRCLIB line-synced lyrics.
+The paint-palette menu switches cover-derived accents and Reduce Motion; the
+system's Reduce Motion preference is respected too. Phase 4 (audio visualizers and
+live background) is next.
+
+
+Measured on this MacBook Air on 2026-10-08, release build, at the restored large
+window size: ~147 MiB physical footprint during Now Playing with synced lyrics,
+~155 MiB RSS during the stable playback sample, and ~120 MiB RSS after pausing.
+Paused CPU settles around 0–0.1%; cover/wave animation uses roughly 9–18% of one
+core while visible. The original ≤150 MiB RSS playback goal still needs a little
+more work. Screenshots temporarily increase memory and are excluded from this
+sample.
 
 > Floe uses librespot, an **unofficial** Spotify client library. That is against
 > Spotify's terms of use; bans are rare but possible, and protocol changes can break
@@ -68,6 +79,39 @@ Options: `-FloeSelfTestWrites YES` likes and then unlikes one song (no net chang
 watch memory); `-FloeSnapshotDir <dir>` saves PNGs of each page (and on
 `notifyutil -p com.antonchurchyn.floe.snapshot`), since Screen Recording isn't needed for that.
 
+### Now Playing and lyrics
+
+Use the top-right **Now Playing** or **Lyrics** button. Timed lyrics follow playback;
+click a line to seek to it. Scrolling manually stops automatic following until you
+click **Follow lyrics**. Untimed lyrics, instrumental songs, missing lyrics and
+request failures have separate states.
+
+LRCLIB matches the track title, first artist, album and duration in seconds, with a
+±2-second duration tolerance. Floe preserves version names to avoid syncing a live,
+remixed or slowed recording to another version. Lyrics have a bounded, expiring
+memory cache and never go to disk, logs or snapshots. The newer `hasWordSync` and
+`lyricsfile` fields are ignored; this phase uses line timing from `syncedLyrics`.
+Requests are serialized, spaced, and respect `Retry-After`. See [LRCLIB docs](https://lrclib.net/docs).
+
+Run the synthetic parser, response, caching, rate-limit and cover-color tests:
+
+```sh
+scripts/test-phase3.sh
+```
+
+The live Phase 3 self-test plays a Daft Punk track, waits for its cover and synced
+lyrics, checks seeking, plays for 20 seconds and pauses. It reports counts and
+memory only, never lyric text:
+
+```sh
+build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase3 YES
+```
+
+For visual QA, add `-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` after creating
+the output directory. Only synthetic lyrics are captured. Snapshot capture refuses
+real-lyrics views even when triggered manually. These tests need only Command Line
+Tools; XCTest is unavailable in the CLT-only installation.
+
 ## Layout
 
 ```
@@ -80,7 +124,8 @@ Sources/Floe/         SwiftUI app
   API/                Web API client and models
   Auth/               OAuth PKCE (loopback redirect), token provider, Keychain
   Library/            library state (playlists, pins, liked songs), navigation
-  Images/             artwork cache (downsampled, disk-backed)
+  Images/             artwork cache, cover palette and pre-blurred backdrop
+  Lyrics/             LRCLIB service, memory cache, LRC parser and view state
   Views/              UI
 Support/Info.plist    bundle metadata
 scripts/              build-app.sh, make-icon.swift

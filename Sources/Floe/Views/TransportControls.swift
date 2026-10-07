@@ -2,6 +2,8 @@ import SwiftUI
 
 /// Shared transport for the mini player and Now Playing.
 struct TransportControls: View {
+    @Environment(\.coverPalette) private var palette
+    var playSize: CGFloat = 42
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
@@ -12,10 +14,10 @@ struct TransportControls: View {
             IconButton(systemImage: "backward.fill", size: 15, help: "Previous") { player.previous() }
             Button(action: player.togglePlayPause) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.black)
-                    .frame(width: 42, height: 42)
-                    .background(Theme.accent, in: Circle())
+                    .font(.system(size: playSize * 0.4, weight: .bold))
+                    .foregroundStyle(palette.onAccent)
+                    .frame(width: playSize, height: playSize)
+                    .background(palette.accent, in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -27,5 +29,4 @@ struct TransportControls: View {
             }
         }
     }
-
 }

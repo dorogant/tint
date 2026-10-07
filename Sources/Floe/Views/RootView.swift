@@ -30,33 +30,65 @@ struct RootView: View {
 }
 
 struct MainView: View {
+    @Environment(\.coverPalette) private var palette
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
 
+    @AppStorage("accentFromCover") private var accentFromCover = false
+    @AppStorage("reduceMotion") private var reduceMotion = false
+
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                SidebarView()
-                    .frame(width: 236)
-                    .glassPanel()
-                VStack(spacing: 0) {
-                    topBar
-                    ScrollView {
-                        page
-                            .padding(.horizontal, 18)
-                            .padding(.bottom, 24)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .id(navigator.stack.count) // new page, new scroll position
-                }
-                .glassPanel()
+            HStack {
+                Text("Floe").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.secondary)
+                Spacer()
+                surfaceButton("Library", icon: "square.grid.2x2", surface: .library)
+                surfaceButton("Now Playing", icon: "play.circle", surface: .nowPlaying)
+                surfaceButton("Lyrics", icon: "text.quote", surface: .lyrics)
+                Menu {
+                    Toggle("Accent from cover", isOn: $accentFromCover)
+                    Toggle("Reduce motion", isOn: $reduceMotion)
+                } label: { Image(systemName: "paintpalette").frame(width: 30, height: 30) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Appearance")
             }
-            MiniPlayerView()
-                .frame(height: 76)
-                .glassPanel()
+            .padding(.horizontal, 14)
+            .frame(height: 40)
+            Group {
+                switch navigator.surface {
+                case .library:
+                    HStack(spacing: 10) {
+                        SidebarView().frame(width: 236).glassPanel()
+                        VStack(spacing: 0) {
+                            topBar
+                            ScrollView {
+                                page.padding(.horizontal, 18).padding(.bottom, 24)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .id(navigator.current)
+                        }.glassPanel()
+                    }
+                case .nowPlaying:
+                    NowPlayingView().glassPanel()
+                case .lyrics:
+                    LyricsView().frame(maxWidth: 780).frame(maxWidth: .infinity).glassPanel()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if navigator.surface != .nowPlaying {
+                MiniPlayerView().frame(height: 76).glassPanel()
+            }
         }
         .padding(10)
         .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func surfaceButton(_ title: LocalizedStringKey, icon: String, surface: Navigator.Surface) -> some View {
+        Button { navigator.surface = surface } label: {
+            Label(title, systemImage: icon).font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(navigator.surface == surface ? .white.opacity(0.12) : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var topBar: some View {
@@ -87,6 +119,7 @@ struct MainView: View {
 }
 
 struct OnboardingView: View {
+    @Environment(\.coverPalette) private var palette
     enum Step { case playback, library }
 
     let step: Step
@@ -98,7 +131,7 @@ struct OnboardingView: View {
             HStack(spacing: 12) {
                 Image(systemName: "circle.hexagongrid.fill")
                     .font(.system(size: 30))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(palette.accent)
                 Text("Welcome to Floe").font(.system(size: 26, weight: .heavy))
             }
             Text("Spotify asks for two approvals, both in your browser. Floe never sees your password.")
@@ -132,7 +165,7 @@ struct OnboardingView: View {
                          action: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 14) {
             ZStack {
-                Circle().fill(done ? Theme.accent : .white.opacity(0.1)).frame(width: 28, height: 28)
+                Circle().fill(done ? palette.accent : .white.opacity(0.1)).frame(width: 28, height: 28)
                 if done {
                     Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.black)
                 } else {
@@ -152,7 +185,7 @@ struct OnboardingView: View {
             } else if !done {
                 Button(error == nil ? "Connect" : "Try Again", action: action)
                     .buttonStyle(.borderedProminent)
-                    .tint(Theme.accent)
+                    .tint(palette.accent)
                     .disabled(!enabled)
             }
         }

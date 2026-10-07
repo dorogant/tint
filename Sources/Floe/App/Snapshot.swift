@@ -11,6 +11,8 @@ enum Snapshot {
         UserDefaults.standard.string(forKey: "FloeSnapshotDir").map { URL(fileURLWithPath: $0) }
     }
 
+    static var canCapture: (() -> Bool)?
+
     private static var counter = 0
     private static var token: Int32 = 0
 
@@ -27,7 +29,7 @@ enum Snapshot {
     }
 
     static func capture(_ name: String) {
-        guard let directory,
+        guard canCapture?() == true, let directory,
               let view = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })?.contentView,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
         else { return }

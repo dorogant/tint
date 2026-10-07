@@ -188,6 +188,7 @@ struct SearchView: View {
 
 /// The pill search field from the reference UI.
 struct SearchField: View {
+    @Environment(\.coverPalette) private var palette
     @Bindable var search: SearchModel
     @FocusState private var focused: Bool
 
@@ -208,7 +209,7 @@ struct SearchField: View {
         .padding(.vertical, 8)
         .frame(maxWidth: 420)
         .background(.white.opacity(0.08), in: Capsule())
-        .overlay(Capsule().strokeBorder(focused ? Theme.accent.opacity(0.6) : .clear))
+        .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.6) : .clear))
         .onAppear { focused = true }
     }
 }

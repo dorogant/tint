@@ -84,6 +84,7 @@ struct TrackListView: View {
 }
 
 struct TrackRow: View {
+    @Environment(\.coverPalette) private var palette
     let entry: TrackEntry
     let number: Int
     let showCover: Bool
@@ -109,7 +110,7 @@ struct TrackRow: View {
                 HStack(spacing: 5) {
                     Text(track.name)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(isCurrent ? Theme.accent : .white)
+                        .foregroundStyle(isCurrent ? palette.highlight : .white)
                         .lineLimit(1)
                     if track.explicit == true {
                         Text("E").font(.system(size: 9, weight: .bold))
@@ -175,11 +176,11 @@ struct TrackRow: View {
         } else if isCurrent && player.isPlaying {
             Image(systemName: "speaker.wave.2.fill")
                 .font(.system(size: 11))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(palette.highlight)
         } else {
             Text("\(number)")
                 .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(isCurrent ? Theme.accent : Theme.tertiary)
+                .foregroundStyle(isCurrent ? palette.highlight : Theme.tertiary)
         }
     }
 }
@@ -226,6 +227,7 @@ struct LinkText: View {
 }
 
 struct LikeButton: View {
+    @Environment(\.coverPalette) private var palette
     let uri: String
     var size: CGFloat = 13
     @Environment(LibraryModel.self) private var library
@@ -237,7 +239,7 @@ struct LikeButton: View {
         } label: {
             Image(systemName: liked ? "star.fill" : "star")
                 .font(.system(size: size))
-                .foregroundStyle(liked ? Theme.accent : Theme.tertiary)
+                .foregroundStyle(liked ? palette.highlight : Theme.tertiary)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }

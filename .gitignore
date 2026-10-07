@@ -1,0 +1,15 @@
+# Build output
+/build/
+/.build/
+/core/target/
+/.swiftpm/
+Package.resolved
+
+# Secrets never belong in the repo (PKCE needs no client secret; tokens live in the Keychain)
+*.p12
+*.pem
+.env
+credentials.json
+
+# macOS
+.DS_Store

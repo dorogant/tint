@@ -1,0 +1,5 @@
+module CFloeCore [system] {
+    header "floe_core.h"
+    link "floe_core"
+    export *
+}

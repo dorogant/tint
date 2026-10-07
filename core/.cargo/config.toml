@@ -1,0 +1,4 @@
+[net]
+# Use the git CLI for git dependencies (librespot), so the user's own git
+# setup (e.g. an https->ssh insteadOf rewrite) works as it does on the CLI.
+git-fetch-with-cli = true

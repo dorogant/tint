@@ -147,11 +147,7 @@ impl Core {
 
             let stored = serde_json::to_value(&stored).unwrap_or(Value::Null);
             self.emit(json!({ "type": "credentials", "credentials": stored }));
-            self.emit(json!({
-                "type": "connected",
-                "username": username,
-                "country": session.country(),
-            }));
+            self.emit(json!({ "type": "connected", "username": username }));
         });
     }
 }
@@ -159,6 +155,7 @@ impl Core {
 fn player_config() -> PlayerConfig {
     PlayerConfig {
         bitrate: Bitrate::Bitrate320,
+        ditherer: None, // we output f32, which librespot never dithers anyway
         ..PlayerConfig::default()
     }
 }

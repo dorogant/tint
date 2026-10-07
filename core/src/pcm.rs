@@ -42,7 +42,9 @@ pub struct Pcm {
     gate_open: AtomicBool,
     epoch: AtomicU64,
     frames_rendered: AtomicU64,
+    /// Times playback ran dry after having audio (render thread only).
     underruns: AtomicU64,
+    fed: AtomicBool,
     peak_bits: AtomicU32,
 }
 
@@ -69,6 +71,7 @@ impl Pcm {
             epoch: AtomicU64::new(0),
             frames_rendered: AtomicU64::new(0),
             underruns: AtomicU64::new(0),
+            fed: AtomicBool::new(false),
             peak_bits: AtomicU32::new(0),
         })
     }
@@ -104,7 +107,9 @@ impl Pcm {
             return 0;
         };
         let n = (consumer.slots() / CHANNELS).min(frames);
-        if n < frames {
+        // Count transitions into starvation, not every empty cycle while a track loads.
+        let starved = n < frames;
+        if self.fed.swap(!starved, Ordering::Relaxed) && starved {
             self.underruns.fetch_add(1, Ordering::Relaxed);
         }
         if n == 0 {
@@ -210,7 +215,11 @@ impl Sink for FloeSink {
             if paused && self.pending.len() < MAX_PARKED_SAMPLES {
                 return Ok(());
             }
-            thread::sleep(Duration::from_millis(5));
+            // Sleep about as long as it takes to drain room for what's pending,
+            // instead of waking every few ms to push a sliver.
+            let frames = self.pending.len() / CHANNELS;
+            let ms = (frames * 1000 / SAMPLE_RATE).clamp(5, 50) as u64;
+            thread::sleep(Duration::from_millis(ms));
         }
     }
 }

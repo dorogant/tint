@@ -123,7 +123,7 @@ final class PlayerModel {
         switch event {
         case .connecting:
             session = .connecting
-        case let .connected(username, _):
+        case let .connected(username):
             session = .connected(username: username)
         case let .credentials(blob):
             Task.detached { Keychain.write(blob, account: Keychain.Account.playbackSession) }

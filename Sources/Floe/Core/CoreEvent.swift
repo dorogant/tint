@@ -15,7 +15,7 @@ struct TrackInfo: Equatable, Sendable {
 /// `core/src/lib.rs` (session) and `core/src/events.rs` (player).
 enum CoreEvent: Sendable {
     case connecting
-    case connected(username: String, country: String)
+    case connected(username: String)
     /// Reusable librespot credentials (JSON) to keep in the Keychain.
     case credentials(Data)
     case loginFailed(String)
@@ -39,10 +39,7 @@ enum CoreEvent: Sendable {
         case "connecting":
             self = .connecting
         case "connected":
-            self = .connected(
-                username: object["username"] as? String ?? "",
-                country: object["country"] as? String ?? ""
-            )
+            self = .connected(username: object["username"] as? String ?? "")
         case "credentials":
             guard let credentials = object["credentials"] as? [String: Any],
                   let blob = try? JSONSerialization.data(withJSONObject: credentials)

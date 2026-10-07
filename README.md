@@ -5,6 +5,10 @@ A lightweight native Spotify client for macOS (Apple Silicon): SwiftUI on top of
 Chromium-based official app for everyday listening, with a target of **≤150 MB RAM**
 during playback and ~0% CPU when idle. See [PLAN.md](PLAN.md) for the full plan.
 
+**Status:** Phase 1 (playback core) done. Measured on a MacBook Air (2026-10-08), release
+build: ~56 MB physical footprint and 2.3% of one core while playing, 0.0% CPU when paused.
+RSS is ~125 MB, most of it shared system frameworks. The official app uses ~450 MB.
+
 > Floe uses librespot, an **unofficial** Spotify client library. That is against
 > Spotify's terms of use; bans are rare but possible, and protocol changes can break
 > playback until librespot catches up. It needs **Spotify Premium**, and offline
@@ -25,6 +29,26 @@ scripts/build-app.sh --open   # build, then launch
 
 The script runs `cargo build --release` for the Rust core, `swift build` for the app,
 assembles the bundle (Info.plist, generated placeholder icon) and ad-hoc signs it.
+
+### Signing
+
+Floe keeps its Spotify credentials in the Keychain, which only lets the app that
+created an item read it back. An ad-hoc signature changes on every build, so each
+rebuild would prompt for your password. To avoid that, create a local code-signing
+certificate once; the build script uses it automatically (or set `FLOE_SIGN_IDENTITY`):
+
+1. Open **Keychain Access** (Spotlight, or `/System/Library/CoreServices/Applications/`).
+2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
+3. Name `Floe Local Signing`, Identity Type **Self-Signed Root**, Certificate Type
+   **Code Signing** → **Create**. It is stored in your login keychain.
+
+The first build after that asks whether `codesign` may use the key (choose **Always
+Allow**). The first launch then asks once for the existing Floe item; choose **Always
+Allow** again. Without the certificate the script falls back to ad-hoc signing.
+
+If the certificate has another name (Keychain Access pre-fills your full name), put
+its name or SHA-1 (from `security find-identity -p codesigning`) in a git-ignored
+`.signing-identity` file at the repo root.
 
 **Self-test** (play → pause → seek → resume, with audio counters and RAM, logged to stdout):
 

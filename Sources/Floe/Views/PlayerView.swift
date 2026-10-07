@@ -95,8 +95,8 @@ struct PlayerView: View {
 
     private var progress: some View {
         let duration = max(model.track?.durationMs ?? 0, 1)
-        // Redraws only while playing, so a paused app stays idle.
-        return TimelineView(.animation(minimumInterval: 0.25, paused: !model.isPlaying)) { context in
+        // Once a second, and only while playing: redraws dominate CPU during playback.
+        return TimelineView(.animation(minimumInterval: 1, paused: !model.isPlaying)) { context in
             let position = scrubMs ?? model.positionMs(at: context.date)
             VStack(spacing: 2) {
                 Slider(

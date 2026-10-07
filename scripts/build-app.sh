@@ -3,7 +3,8 @@
 #   1. Rust core      cargo build --release        -> core/target/release/libfloe_core.a
 #   2. Swift app      swift build -c release       -> .build/release/Floe
 #   3. Bundle         Info.plist, icon, executable -> build/Floe.app
-#   4. Sign           ad-hoc codesign
+#   4. Sign           with the local "Floe Local Signing" certificate if present,
+#                     otherwise ad-hoc (see README: Signing)
 #
 # Usage: scripts/build-app.sh [--debug] [--open]
 #   --debug  Swift debug build (the Rust core is always release)
@@ -14,6 +15,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Floe"
 OUT="$ROOT/build"
 APP="$OUT/$APP_NAME.app"
+# Signing certificate: $FLOE_SIGN_IDENTITY, else the git-ignored per-machine file
+# .signing-identity (a certificate name or SHA-1), else "Floe Local Signing".
+if [[ -z "${FLOE_SIGN_IDENTITY:-}" && -f "$ROOT/.signing-identity" ]]; then
+    FLOE_SIGN_IDENTITY="$(head -n 1 "$ROOT/.signing-identity")"
+fi
+SIGN_IDENTITY="${FLOE_SIGN_IDENTITY:-Floe Local Signing}"
 export PATH="$HOME/.cargo/bin:$PATH"
 export MACOSX_DEPLOYMENT_TARGET=26.0
 
@@ -61,8 +68,15 @@ cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 
-step "Sign (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP"
+# A stable certificate keeps the Keychain's access rule valid across rebuilds;
+# ad-hoc signatures change every build and trigger a Keychain prompt.
+if security find-identity -p codesigning 2>/dev/null | grep -qF -e "\"$SIGN_IDENTITY\"" -e " $SIGN_IDENTITY "; then
+    step "Sign ($SIGN_IDENTITY)"
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$APP"
+else
+    step "Sign (ad-hoc: no \"$SIGN_IDENTITY\" certificate found)"
+    codesign --force --sign - --timestamp=none "$APP"
+fi
 codesign --verify --strict "$APP"
 
 printf '\nBuilt %s (%s, %s)\n' "$APP" "$CONFIG" "$(du -sh "$APP" | cut -f1)"

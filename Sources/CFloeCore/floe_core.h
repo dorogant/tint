@@ -12,7 +12,7 @@ typedef void (*FloeEventCallback)(void *_Nullable context, const char *json);
 
 typedef struct FloeStats {
     uint64_t frames_rendered;
-    uint64_t underruns;
+    uint64_t underruns;    // times playback ran dry after having audio
     float peak;            // max |sample| since the previous call
     uint32_t buffered_ms;
 } FloeStats;

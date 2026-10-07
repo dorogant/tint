@@ -11,5 +11,8 @@ Package.resolved
 .env
 credentials.json
 
+# Per-machine signing certificate (name or SHA-1), see README
+/.signing-identity
+
 # macOS
 .DS_Store

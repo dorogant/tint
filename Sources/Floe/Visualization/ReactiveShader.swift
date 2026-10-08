@@ -213,7 +213,7 @@ enum ReactiveShader {
         light *= 1 + 0.12 * neutral;
         float3 color = float3(0.01, 0.011, 0.016) + average * smoke * 0.035 * (1 - 0.5 * neutral) + light;
         // Vocals and leads tint the smoke with the cover's colour.
-        color += u.haze.rgb * (smoke * smoke + 0.15 * wisps) * fill * 0.8;
+        color += u.haze.rgb * (smoke * smoke + 0.15 * wisps) * fill * 0.5;
         // The opt-in strobe lights the whole haze, never more than three times a second.
         color += mix(average, float3(1), 0.7) * u.motion.z * (0.25 + 0.2 * density);
         color = 1 - exp(-color * 1.15); // highlights roll off toward white instead of clipping

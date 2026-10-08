@@ -240,7 +240,12 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         } else {
             let timer = DispatchSource.makeTimerSource(queue: .main)
             timer.schedule(deadline: .now(), repeating: .nanoseconds(Int(1_000_000_000 / rate)), leeway: .milliseconds(2))
-            timer.setEventHandler { [weak self] in self?.advance(to: CACurrentMediaTime()) }
+            timer.setEventHandler { [weak self] in
+                guard let self else { return }
+                // The window came on screen: move over to its display's clock.
+                if self.view?.window?.isVisible == true { self.stop(); self.start(); return }
+                self.advance(to: CACurrentMediaTime())
+            }
             self.timer = timer
             timer.resume()
         }

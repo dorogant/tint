@@ -63,6 +63,9 @@ struct BeamRig {
     private var sinceFlash: Float = 10
     private var scheme = 0
     private var heads = 6
+    /// Until the music first moves it, the rig stands in its resting fan (what
+    /// a paused or Reduce Motion frame shows).
+    private var started = false
 
     /// One analysis frame: hits land here, once each, as impulses on the springs.
     mutating func receive(_ pulse: BeatDetector.Pulse, configuration: BackgroundConfiguration) {
@@ -108,6 +111,10 @@ struct BeamRig {
     /// Moves the rig on by `dt` seconds of display time.
     mutating func step(by dt: Float, configuration: BackgroundConfiguration) {
         let react = configuration.reactivity
+        if !started {
+            started = true
+            for i in 0..<heads { aim[i].position = Self.aim(.fan, head: i, count: heads, beats: 0, period: 8, reach: reach) }
+        }
         sincePattern += dt
         sinceFlash += dt
         haze += dt * configuration.speed * (0.4 + 0.5 * energy)
@@ -180,7 +187,7 @@ struct BeamRig {
             let spread = 0.042 * (0.8 + 0.2 * outer) * (1 + outer * (0.35 * bass + 0.5 * kickGlow))
             let glint = inner * min(1.2, 0.4 * high + sparkle)
             let color = palette[pair.treble] + (palette[pair.bass] - palette[pair.treble]) * outer
-            let angle = aim[i].position + swing[i].position
+            let angle = started ? aim[i].position + swing[i].position : Self.aim(.fan, head: i, count: count, beats: 0, period: 8, reach: reach)
             // The sine rides along, so the shader needn't take one per pixel per beam.
             return (SIMD4(angle, intensity, spread, glint), SIMD4(color, sin(angle)))
         }

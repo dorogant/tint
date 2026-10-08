@@ -306,7 +306,6 @@ private struct SongTile: View {
         .onHover { hovering = $0 }
         .floeHover(hovering)
         .contextMenu { TrackMenuItems(track: track) }
-        .accessibilityLabel(Text("\(track.name), \(track.artistLine)"))
     }
 }
 

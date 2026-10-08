@@ -20,11 +20,21 @@ struct VisualizerView: NSViewRepresentable {
 
     func updateNSView(_ view: VisualizerLayerView, context: Context) {
         // Only settings and colours come through SwiftUI; frames never do.
+        let tints = Self.tints(palette.highlight)
         view.configure(style: circular ? (settings.shape == .wave ? .halo : .radialBars)
                                        : (settings.shape == .wave ? .beads : .bars),
-                       sensitivity: Float(settings.sensitivity), color: NSColor(palette.highlight),
-                       pale: NSColor(palette.highlight.mix(with: .white, by: 0.55)),
+                       sensitivity: Float(settings.sensitivity), color: tints.color, pale: tints.pale,
                        running: visualization.isRunning)
+    }
+
+    /// The saturated base and the pale top from the palette's highlight, mixed
+    /// perceptually so the hue holds (sRGB mixing turned blues violet on the
+    /// way to white). A black-and-white cover's silver has no saturation to
+    /// give the gradient depth, so its base steps down to a darker silver.
+    nonisolated static func tints(_ highlight: Color) -> (color: NSColor, pale: NSColor) {
+        let neutral = (NSColor(highlight).usingColorSpace(.sRGB)?.saturationComponent ?? 1) < 0.08
+        let base = neutral ? highlight.mix(with: .black, by: 0.22, in: .perceptual) : highlight
+        return (NSColor(base), NSColor(highlight.mix(with: .white, by: neutral ? 0.75 : 0.55, in: .perceptual)))
     }
 }
 
@@ -85,8 +95,10 @@ final class VisualizerLayerView: NSView {
         self.sensitivity = sensitivity
         self.color = color
         let beads = style == .beads
-        let top = pale.withAlphaComponent(0.75).cgColor, bottom = color.withAlphaComponent(0.95).cgColor
-        let gradient = beads ? [bottom, pale.withAlphaComponent(0.7).cgColor, bottom] : [top, bottom]
+        // The pale end stays nearly opaque: a translucent pale over the dark
+        // backdrop read as khaki on yellows and dusty pink on reds.
+        let top = pale.withAlphaComponent(0.9).cgColor, bottom = color.withAlphaComponent(0.95).cgColor
+        let gradient = beads ? [bottom, pale.withAlphaComponent(0.88).cgColor, bottom] : [top, bottom]
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for layer in [fill, echo] {
@@ -107,8 +119,9 @@ final class VisualizerLayerView: NSView {
             tier.lineWidth = 1.2
         }
         rim.isHidden = style == .bars || style == .radialBars || halo
-        rim.strokeColor = beads ? color.blended(withFraction: 0.45, of: .black)?.withAlphaComponent(0.7).cgColor
-                                : color.withAlphaComponent(0.45).cgColor
+        // A crisp edge in the base colour; darkening it toward black turned
+        // yellows olive and oranges brown.
+        rim.strokeColor = color.withAlphaComponent(beads ? 0.85 : 0.45).cgColor
         rim.lineWidth = beads ? 1.2 : 1.5
         // Bars are stroked shapes; the halo and beads are filled outlines.
         let stroked = style == .bars || style == .radialBars

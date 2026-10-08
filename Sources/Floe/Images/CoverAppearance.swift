@@ -3,32 +3,43 @@ import Observation
 import SwiftUI
 
 struct CoverPalette: Equatable {
-    var rgb: RGB
+    /// The interface accent, already readable on the dark glass: the cover's
+    /// colour, a light silver for a black-and-white cover, or a fixed accent.
+    let rgb: RGB
     /// Distinct cover colours for the live background, accent first; shades of
     /// the accent when there's no cover to read them from.
-    var colors: [RGB]
-    init(rgb: RGB = .fallback, colors: [RGB]? = nil) {
+    let colors: [RGB]
+    /// The cover has no colour of its own (black, white, grey): `rgb` is a
+    /// silver and `colors` are the cover's tones with their faint cast.
+    let isNeutral: Bool
+    private let highlightRGB: RGB
+
+    init(rgb: RGB = .fallback, colors: [RGB]? = nil, isNeutral: Bool = false) {
         self.rgb = rgb
         self.colors = colors ?? CoverColorExtractor.shades(of: rgb)
+        self.isNeutral = isNeutral
+        highlightRGB = CoverColorExtractor.highlight(of: rgb)
     }
+
+    init(_ cover: CoverColorExtractor.Colors) {
+        self.init(rgb: cover.accent, colors: cover.colors, isNeutral: cover.isNeutral)
+    }
+
     var accent: Color { Color(red: rgb.r, green: rgb.g, blue: rgb.b) }
-    /// Lift dark cover colors only for small text/icons on the dark glass.
-    var highlight: Color {
-        let lift = rgb.luminance < 0.2 ? 0.4 : 0.0
-        return Color(red: rgb.r + (1 - rgb.r) * lift,
-                     green: rgb.g + (1 - rgb.g) * lift,
-                     blue: rgb.b + (1 - rgb.b) * lift)
-    }
+    /// The accent lightened for small text, icons and strokes on the dark glass,
+    /// keeping its hue (lifting toward white turned deep reds dusty pink).
+    var highlight: Color { Color(red: highlightRGB.r, green: highlightRGB.g, blue: highlightRGB.b) }
+    var onAccent: Color { rgb.usesDarkText ? .black : .white }
+
     static func fixed(_ name: String) -> CoverPalette {
         let rgb: RGB = switch name {
-        case "blue": RGB(r: 0.32, g: 0.65, b: 1)
+        case "green": RGB(r: 0.12, g: 0.84, b: 0.38)
         case "violet": RGB(r: 0.73, g: 0.5, b: 1)
         case "amber": RGB(r: 1, g: 0.7, b: 0.3)
-        default: .fallback
+        default: .fallback // blue
         }
         return CoverPalette(rgb: rgb)
     }
-    var onAccent: Color { rgb.usesDarkText ? .black : .white }
 }
 
 private struct CoverPaletteKey: EnvironmentKey {
@@ -98,9 +109,7 @@ final class CoverAppearance {
 
     /// The accent and the background's colours, read once per cover off the main thread.
     private nonisolated static func palette(of image: CGImage) -> CoverPalette {
-        let accent = CoverColorExtractor.extract(of: image)
-        return CoverPalette(rgb: accent ?? .fallback,
-                            colors: CoverColorExtractor.palette(of: image, accent: accent ?? .fallback))
+        CoverColorExtractor.colors(of: image).map(CoverPalette.init) ?? CoverPalette()
     }
 
     private nonisolated static func blur(_ image: CGImage, radius: Double) -> CGImage? {

@@ -161,14 +161,15 @@ struct BackgroundTests {
         for (name, cover) in [("navy", Covers.navy), ("grey", Covers.grey)] {
             let colors = Covers.palette(cover)
             check(colors.count == CoverColorExtractor.paletteSize, "\(name): a plain cover must still fill every slot")
-            check(colors.allSatisfy { CoverColorExtractor.hsv($0).1 > 0.25 }, "\(name): plain covers get shades, not greys")
+            // A coloured cover gets shades of its colour; a grey one its own greys, never a borrowed hue.
+            check(colors.allSatisfy { (CoverColorExtractor.hsv($0).1 > 0.25) == (name == "navy") },
+                  "\(name): plain covers get shades of their own colour")
             let closest = colors.indices.flatMap { i in colors.indices.filter { $0 > i }.map { colors[i].distance(to: colors[$0]) } }.min()!
             check(closest > 0.05, "\(name): derived shades must still differ (closest pair \(closest))")
         }
         let navy = Covers.palette(Covers.navy)
         check(navy.allSatisfy { $0.b > $0.r }, "a navy cover's shades must stay blue")
-        check(CoverColorExtractor.palette(of: Covers.grey, accent: .fallback) == CoverColorExtractor.shades(of: .fallback),
-              "a greyscale cover must fall back to shades of the accent")
+        check(CoverColorExtractor.colors(of: Covers.grey)?.isNeutral == true, "a greyscale cover reads as neutral")
     }
 
     // MARK: - Settings

@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Recoverable errors remain visible above the player without covering the library.
+/// Banners round like the panels below them; their buttons sit 12 pt in, so the corners nest.
 /// A banner drops in from just above its place and leaves faster; `MainView`
 /// springs the content below aside to make room (see `key`).
 struct PlaybackStatusView: View {
@@ -22,7 +23,7 @@ struct PlaybackStatusView: View {
                 Button("Reconnect now") { player.reconnectPlayback() }
                 Button("Sign in again") { player.logIn() }.disabled(player.session == .authorizing)
             }
-            .padding(12).glassPanel(cornerRadius: 10).foregroundStyle(.orange)
+            .padding(12).glassPanel().foregroundStyle(.orange)
             .transition(banner)
         } else if let error = player.lastError {
             HStack(spacing: 12) {
@@ -33,7 +34,7 @@ struct PlaybackStatusView: View {
                 Button { player.dismissError() } label: { Image(systemName: "xmark") }
                     .help("Dismiss")
             }
-            .padding(12).glassPanel(cornerRadius: 10).foregroundStyle(.orange)
+            .padding(12).glassPanel().foregroundStyle(.orange)
             .transition(banner)
         }
     }

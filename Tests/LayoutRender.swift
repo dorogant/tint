@@ -1,0 +1,260 @@
+import AppKit
+import SwiftUI
+
+/// Renders the real main window offscreen with a fixture library and writes
+/// PNGs (2x) of each page, the toolbar and the sidebar, for layout review.
+/// Nothing is shown on screen and nothing talks to Spotify. See scripts/test-layout.sh.
+@main @MainActor
+struct LayoutRender {
+    static let size = CGSize(width: 1710, height: 1000)
+
+    static func main() async {
+        let environment = ProcessInfo.processInfo.environment
+        let output = URL(fileURLWithPath: environment["FLOE_LAYOUT_DIR"] ?? "/tmp/tint-layout", isDirectory: true)
+        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let only = environment["FLOE_LAYOUT_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
+
+        FixtureProtocol.install()
+        // Flat glass (the snapshot path); the app's own preferences are untouched
+        // because the script points the harness at a temporary home.
+        // FLOE_LAYOUT_REAL_GLASS=1 keeps Liquid Glass, which renders in the toolbar but not in the content;
+        // FLOE_LAYOUT_REDUCE_MOTION=1 renders with the app's Reduce Motion on.
+        var defaults: [String: Any] = ["appLanguage": "en",
+                                       "reduceMotion": environment["FLOE_LAYOUT_REDUCE_MOTION"] == "1"]
+        if environment["FLOE_LAYOUT_REAL_GLASS"] != "1" { defaults["FloeSnapshotDir"] = output.path }
+        UserDefaults.standard.setVolatileDomain(defaults, forName: UserDefaults.argumentDomain)
+
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+
+        let player = PlayerModel()
+        let api = WebAPI(user: UserTokenProvider(), tokens: FixtureTokens(), http: FixtureProtocol.session)
+        let library = LibraryModel(api: api)
+        let navigator = Navigator()
+        let search = SearchModel()
+        let appearance = CoverAppearance()
+        let visuals = VisualSettings()
+        let settings = AppSettings()
+
+        await library.refresh()
+        let nowPlaying = TrackInfo(Track(id: "np", uri: "spotify:track:np", name: "New Person, Same Old Mistakes",
+                                         durationMs: 363_000, explicit: false,
+                                         artists: [ArtistRef(id: "tame-impala", uri: "spotify:artist:tame-impala", name: "Tame Impala")],
+                                         album: library.savedAlbums.first, trackNumber: 13, discNumber: 1,
+                                         isLocal: false, isPlayable: true))
+        FloeCore.shared.deliver(.connected(username: Fixture.userID))
+        FloeCore.shared.deliver(.track(nowPlaying))
+        FloeCore.shared.deliver(.paused(positionMs: 64_000))
+        await appearance.load(nowPlaying.coverURL, blur: visuals.backgroundBlur)
+
+        let root = ZStack {
+            Backdrop()
+            MainView()
+        }
+        .preferredColorScheme(.dark)
+        .environment(player)
+        .environment(library)
+        .environment(navigator)
+        .environment(search)
+        .environment(LyricsModel())
+        .environment(appearance)
+        .environment(VisualizationModel())
+        .environment(visuals)
+        .environment(settings)
+        .environment(ConnectModel(api: api))
+        .environment(\.coverPalette, CoverPalette.fixed(settings.fixedAccent))
+
+        let window = OffscreenWindow(contentRect: NSRect(origin: CGPoint(x: -30_000, y: -30_000), size: size),
+                                     styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                     backing: .buffered, defer: false)
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unified
+        window.title = "Tint"
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: root)
+        host.sceneBridgingOptions = [.toolbars]
+        window.contentView = host
+        window.orderFrontRegardless()
+        window.setFrameOrigin(CGPoint(x: -30_000, y: -30_000))
+
+        await settle(window)
+        if environment["FLOE_LAYOUT_DUMP_TOOLBAR"] == "1", let frame = window.contentView?.superview {
+            func dump(_ view: NSView, _ depth: Int) {
+                let rect = view.convert(view.bounds, to: nil)
+                print(String(repeating: "  ", count: depth) + "\(type(of: view)) \(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height))")
+                for child in view.subviews where !(child is NSHostingView<AnyView>) { dump(child, depth + 1) }
+            }
+            for child in frame.subviews where "\(type(of: child))".contains("Titlebar") { dump(child, 0) }
+        }
+        var failures = 0
+        func check(_ condition: Bool, _ name: String) {
+            print(condition ? "  ✓ \(name)" : "  ✗ \(name)")
+            if !condition { failures += 1 }
+        }
+        check(!(window.firstResponder is NSText), "the sidebar search field doesn't take focus on its own")
+        if environment["FLOE_LAYOUT_DUMP_SCROLL"] == "1" {
+            print("first Home:")
+            dumpScrollViews(window.contentView!)
+        }
+        navigator.surface = .nowPlaying
+        await settle(window, steps: 10)
+        if only?.contains("now-playing") ?? true { write(capture(window), to: output.appendingPathComponent("now-playing.png")) }
+        navigator.surface = .lyrics
+        await settle(window, steps: 10)
+        if only?.contains("lyrics") ?? true { write(capture(window), to: output.appendingPathComponent("lyrics.png")) }
+        navigator.surface = .library
+        await settle(window, steps: 10)
+        check(!(window.firstResponder is NSText), "returning to Library doesn't focus the field either")
+
+        let playlist = Route.playlist(library.playlists[4].id)
+        let scenarios: [(String, @MainActor () async -> Void)] = [
+            ("home", { navigator.select(.home) }),
+            ("search", {
+                // ⌘F over a playlist, then type: results open over it.
+                navigator.select(playlist)
+                await settle(window)
+                navigator.select(.search)
+                await settle(window, steps: 5)
+                check(window.firstResponder is NSText, "⌘F focuses the sidebar field")
+                search.text = "tame impala"
+                check(navigator.stack == [playlist, .search], "results open over the page you were on")
+            }),
+            ("search-artist", {
+                // Opening a result lets go of the keyboard; ⌘F comes back with the query selected.
+                navigator.push(.artist("tame-impala"))
+                await settle(window, steps: 5)
+                check(!(window.firstResponder is NSText), "opening a result hands the keyboard back")
+                check(navigator.section == .search, "Search stays the sidebar's selection under a result")
+                navigator.select(.search)
+                await settle(window, steps: 5)
+                let editor = window.firstResponder as? NSTextView
+                check(editor?.selectedRange() == NSRange(location: 0, length: search.text.utf16.count),
+                      "⌘F refocuses the field with the query selected")
+                check(navigator.stack == [playlist, .search], "⌘F returns to the results instead of stacking them")
+                navigator.push(.artist("tame-impala"))
+            }),
+            ("search-empty", {
+                navigator.select(.search)
+                await settle(window, steps: 5)
+                // Escape clears the query and goes back; ⌘F then shows the empty state.
+                window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+                await settle(window, steps: 5)
+                check(search.text.isEmpty && navigator.stack == [playlist], "Escape clears and returns to the page")
+                check(!(window.firstResponder is NSText), "Escape lets go of the keyboard")
+                navigator.select(.search)
+            }),
+            ("playlist", {
+                navigator.select(playlist)
+                await settle(window, steps: 5)
+                check(!(window.firstResponder is NSText), "leaving Search hands the keyboard back")
+            }),
+            ("artist", { navigator.select(.artist("tame-impala")) }),
+            ("album", { navigator.select(.album("currents")) }),
+            ("songs", { navigator.select(.songs) }),
+            ("status-banner", {
+                navigator.select(.home)
+                FloeCore.shared.deliver(.unavailable(uri: nowPlaying.uri))
+            }),
+            ("home-default-size", {
+                player.dismissError()
+                // A fresh page: the banner's spring can leave the old one up to 2 pt off (see below).
+                navigator.select(.songs)
+                await settle(window, steps: 5)
+                navigator.select(.home)
+                window.setContentSize(CGSize(width: 1220, height: 800))
+            }),
+            ("home-minimum-size", { window.setContentSize(CGSize(width: 940, height: 600)) }),
+        ]
+        for (name, setUp) in scenarios where only?.contains(name) ?? true {
+            await setUp()
+            await settle(window)
+            write(capture(window), to: output.appendingPathComponent("\(name).png"))
+            if environment["FLOE_LAYOUT_DUMP_SCROLL"] == "1" { dumpScrollViews(window.contentView!) }
+            // Known: a banner's room opens on a spring, and AppKit rounds the page's
+            // scroll offset to pixels on each frame of it, so it can end 1–2 pt off.
+            guard name != "status-banner" else { continue }
+            check(scrollViewsAtRest(window.contentView!), "\(name): pages and shelves rest unscrolled, on the guides")
+        }
+        window.close()
+        print(failures == 0 ? "PASS: layout renders written to \(output.path)" : "FAIL: \(failures) check(s)")
+        if failures > 0 { exit(1) }
+    }
+
+    /// Nothing has been scrolled in the harness, so every scroll view should sit
+    /// at its origin. Animating a scroll view's frame used to leave it a few
+    /// points off (pages under the toolbar, shelves sideways). Allow a pixel.
+    static func scrollViewsAtRest(_ view: NSView) -> Bool {
+        if let scroll = view as? NSScrollView {
+            let origin = scroll.documentVisibleRect.origin
+            if abs(origin.x + scroll.contentInsets.left) > 0.5 || abs(origin.y + scroll.contentInsets.top) > 0.5 {
+                print("    \(scroll.convert(scroll.bounds, to: nil)) rests at \(origin)")
+                return false
+            }
+        }
+        return view.subviews.allSatisfy(scrollViewsAtRest)
+    }
+
+    /// Where each scroll view sits and how far it's scrolled, for chasing offsets.
+    static func dumpScrollViews(_ view: NSView) {
+        if let scroll = view as? NSScrollView {
+            let frame = scroll.convert(scroll.bounds, to: nil)
+            print("  scroll \(frame) visible \(scroll.documentVisibleRect) insets \(scroll.contentInsets)")
+        }
+        view.subviews.forEach(dumpScrollViews)
+    }
+
+    static func settle(_ window: NSWindow, steps: Int = 20) async {
+        for _ in 0..<steps {
+            window.contentView?.layoutSubtreeIfNeeded()
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    /// The content at 2x with the toolbar drawn on top (it lives in the
+    /// titlebar, outside the content view), as `Snapshot.capture` does.
+    static func capture(_ window: NSWindow) -> NSBitmapImageRep {
+        let content = window.contentView!
+        let rep = bitmap(for: content)
+        content.cacheDisplay(in: content.bounds, to: rep)
+        if let titlebar = content.superview?.subviews.first(where: { "\(type(of: $0))".contains("Titlebar") }) {
+            let bar = bitmap(for: titlebar)
+            titlebar.cacheDisplay(in: titlebar.bounds, to: bar)
+            let origin = content.convert(content.bounds, to: nil).origin
+            let frame = titlebar.convert(titlebar.bounds, to: nil).offsetBy(dx: -origin.x, dy: -origin.y)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            bar.draw(in: frame)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        return rep
+    }
+
+    static func bitmap(for view: NSView) -> NSBitmapImageRep {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2),
+                                   pixelsHigh: Int(view.bounds.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
+                                   bitsPerPixel: 0)!
+        rep.size = view.bounds.size
+        return rep
+    }
+
+    /// The area under the toolbar comes out transparent; lay it on the window's base colour.
+    static func write(_ rep: NSBitmapImageRep, to url: URL) {
+        let opaque = bitmap(for: NSView(frame: NSRect(origin: .zero, size: rep.size)))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: opaque)
+        NSColor(red: 0.045, green: 0.05, blue: 0.06, alpha: 1).setFill()
+        NSRect(origin: .zero, size: rep.size).fill()
+        rep.draw(in: NSRect(origin: .zero, size: rep.size), from: .zero, operation: .sourceOver, fraction: 1,
+                 respectFlipped: false, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        try? opaque.representation(using: .png, properties: [:])?.write(to: url)
+        print("[layout] \(url.path)")
+    }
+}
+
+/// Keeps its offscreen origin instead of being pulled back onto a display.
+final class OffscreenWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}

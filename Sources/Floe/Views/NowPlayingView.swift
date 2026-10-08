@@ -19,7 +19,7 @@ struct NowPlayingView: View {
                 let ring = circular ? VisualizerView.ringScale : 1
                 let available = (geometry.size.height - controlsHeight - (normal ? 96 : 0)) / ring
                 let lyricsWidth = showLyrics ? max(330, geometry.size.width * 0.42) : 0
-                let columnWidth = geometry.size.width - 24 - lyricsWidth - (showLyrics ? 20 : 0)
+                let columnWidth = geometry.size.width - 2 * Theme.margin - lyricsWidth - (showLyrics ? 20 : 0)
                 let coverWidth = (columnWidth - (compact ? 24 : 40)) / ring
                 let coverSize = min(showLyrics ? 330 : 420, max(100, min(available, coverWidth)))
                 VStack(spacing: 12) {
@@ -51,17 +51,17 @@ struct NowPlayingView: View {
                         .padding(compact ? 12 : 20)
                         if showLyrics {
                             LyricsView().frame(width: lyricsWidth)
-                                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.corner - Theme.margin, style: .continuous))
                                 .transition(lyricsTransition)
                         }
                     }
                     .frame(maxHeight: .infinity)
                     if normal { VisualizerView().frame(height: 84).padding(.horizontal, 24) }
                 }
-                .padding(12)
+                .padding(Theme.margin)
                 .animation(still ? nil : FloeMotion.enter, value: showLyrics)
             }
-            .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(18) }
+            .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(2 * Theme.margin) }
             .onAppear {
                 // The ring fades in once the cover has flown into place.
                 withAnimation(still ? nil : .easeOut(duration: 0.4).delay(0.35)) {

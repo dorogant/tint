@@ -9,13 +9,19 @@ struct MiniPlayerView: View {
     @ReducedMotion private var still
     @ViewState private var hovering = false
 
+    /// Transport and volume get the same width, so the song sits on the
+    /// window's centre line, under the toolbar's switcher. Just wider than
+    /// the transport, so a narrow window leaves the song as much room as it can.
+    private static let sideWidth: CGFloat = 200
+
     var body: some View {
         HStack(spacing: 16) {
-            TransportControls().frame(width: 250, alignment: .leading)
+            // A 44 pt Play button leaves 16 pt above and below, the bar's side inset.
+            TransportControls(playSize: 44).frame(width: Self.sideWidth, alignment: .leading)
             Spacer(minLength: 0)
             nowPlaying.frame(maxWidth: 560)
             Spacer(minLength: 0)
-            VolumeControl().frame(width: 190, alignment: .trailing)
+            VolumeControl().frame(width: Self.sideWidth, alignment: .trailing)
         }
         .padding(.horizontal, 16)
     }
@@ -64,6 +70,8 @@ struct MiniPlayerView: View {
             TitleLink(text: track.name) { openAlbum(track) }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .layoutPriority(1)
             Text("·").foregroundStyle(Theme.tertiary)
             HStack(spacing: 0) {
                 ForEach(Array(track.artists.enumerated()), id: \.offset) { index, artist in

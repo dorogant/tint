@@ -31,7 +31,6 @@ struct RootView: View {
 
 struct MainView: View {
     @Environment(Navigator.self) private var navigator
-    @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
 
     @Namespace private var hero
@@ -42,25 +41,35 @@ struct MainView: View {
     @ReducedMotion private var still
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: Theme.margin) {
             PlaybackStatusView()
             Group {
                 switch navigator.surface {
                 case .library:
-                    HStack(spacing: 10) {
-                        SidebarView().frame(width: 236).glassPanel()
-                        VStack(spacing: 0) {
-                            if navigator.current == .search {
-                                SearchField(search: search)
-                                    .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 4)
-                            }
+                    HStack(spacing: Theme.margin) {
+                        SidebarView().frame(width: 240).glassPanel()
+                        ZStack {
+                            // Every page starts on the same guides: content on the
+                            // gutter, plates and full-bleed shelves reaching past it.
                             ScrollView {
-                                page.padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 24)
+                                page.padding(.horizontal, Theme.gutter).padding(.top, Theme.gutter - 1).padding(.bottom, 32)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            // A scroll view touching the toolbar's edge reaches up under
+                            // it and insets its content to match. When a banner or a
+                            // transition moved the panel, that inset changed mid-flight
+                            // and left the page resting a few points scrolled. One point
+                            // of room (taken back from the top padding) keeps it out.
+                            .padding(.top, 1)
                             .id(navigator.current)
-                            .transition(.opacity.combined(with: .offset(y: 6)))
-                        }.glassPanel()
+                            // A fade only: the page's sections rise in on their own
+                            // (`reveal`), and moving the scroll view itself left it
+                            // resting a few points scrolled, off the page's guides.
+                            .transition(.opacity)
+                        }
+                        // Shelves scroll to the panel's edge; keep them inside its corners.
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+                        .glassPanel()
                         .floeAnimation(value: navigator.current)
                     }
                 case .nowPlaying:
@@ -77,7 +86,7 @@ struct MainView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .padding([.horizontal, .bottom], 10)
+        .padding([.horizontal, .bottom], Theme.margin)
         .environment(\.heroNamespace, hero)
         .floeAnimation(value: navigator.surface, duration: 0.45, bounce: 0.12)
         // A status banner's room opens on the same spring it drops in on.
@@ -145,12 +154,24 @@ struct MainView: View {
 }
 
 /// Library, Now Playing and Lyrics as one control: a pill glides to the chosen
-/// view and the others brighten under the pointer. The toolbar supplies the
-/// glass behind it, and VoiceOver gets the segmented picker it replaces.
+/// view and the others brighten under the pointer. VoiceOver gets the
+/// segmented picker it replaces.
+///
+/// The toolbar's glass capsule hugs an item exactly as tall as the platter
+/// (36 pt) but centres a shorter one, which left the pill 3 pt from the sides
+/// and 5 pt from the top and bottom. Filling the platter makes the inset the
+/// same all round, and the pill, a capsule too, concentric with it. (Hiding
+/// the shared glass to draw our own capsule was tried: SwiftUI glass and
+/// translucent fills draw flat inside a bare toolbar item.)
 private struct SurfaceSwitcher: View {
     @Binding var selection: Navigator.Surface
     @Namespace private var pill
     @ReducedMotion private var still
+
+    /// Between the pill and the glass's edge, all round.
+    static let inset: CGFloat = 4
+    /// The toolbar's platter height, which the switcher fills.
+    static let height: CGFloat = 36
 
     var body: some View {
         HStack(spacing: 0) {
@@ -162,7 +183,7 @@ private struct SurfaceSwitcher: View {
                 }
             }
         }
-        .padding(3)
+        .padding(Self.inset)
         .animation(still ? FloeMotion.fade : FloeMotion.glide, value: selection)
         .accessibilityRepresentation {
             Picker("View", selection: $selection) {
@@ -190,12 +211,12 @@ private struct SurfaceSegment: View {
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(.white)
                 .opacity(selected ? 1 : (hovering ? 0.88 : 0.6))
-                .padding(.horizontal, 14)
-                .frame(height: 26)
+                .padding(.horizontal, 16)
+                .frame(height: SurfaceSwitcher.height - 2 * SurfaceSwitcher.inset)
                 .background {
                     if selected {
                         Capsule().fill(.white.opacity(0.15))
-                            .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
+                            .overlay(HairlineCapsule().fill(.white.opacity(0.1), style: FillStyle(eoFill: true)))
                             .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
                             .matchedGeometryEffect(id: pillID, in: pill)
                     } else {
@@ -208,6 +229,16 @@ private struct SurfaceSegment: View {
         .onHover { hovering = $0 }
         .floeHover(hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The pill's 1 pt edge as a filled ring. A stroked capsule drew a sliver
+/// beside each end of the pill in the toolbar.
+private struct HairlineCapsule: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Capsule().path(in: rect)
+        path.addPath(Capsule().path(in: rect.insetBy(dx: 1, dy: 1)))
+        return path
     }
 }
 

@@ -47,7 +47,7 @@ struct NowPlayingView: View {
                 .padding(12)
             }
         } else {
-            MessageView(systemImage: "music.note", message: String(localized: "Pick something to play"))
+            MessageView(systemImage: "music.note", message: L10n.string("Pick something to play"))
                 .frame(maxHeight: .infinity)
         }
     }

@@ -128,21 +128,27 @@ struct VolumeControl: View {
     @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragging = false
+    @ViewState private var audibleVolume = 0.6
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.secondary)
-                .frame(width: 20)
-                .onTapGesture { player.setVolume(player.volume > 0 ? 0 : 0.6) }
+            Button {
+                if player.volume > 0 { audibleVolume = player.volume; player.setVolume(0) }
+                else { player.setVolume(audibleVolume) }
+            } label: {
+                Image(systemName: icon).font(.system(size: 13)).foregroundStyle(Theme.secondary).frame(width: 20)
+            }.buttonStyle(.plain).help(player.volume > 0 ? "Mute" : "Unmute")
             GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.14))
-                    Capsule().fill(dragging ? palette.accent : .white.opacity(0.85))
-                        .frame(width: geometry.size.width * player.volume)
+                Canvas { context, size in
+                    let count = 27, step = size.width / 27
+                    for i in 0..<count {
+                        let h = 3 + 7 * (0.5 + 0.5 * sin(Double(i) * 1.4))
+                        let bar = Path(roundedRect: CGRect(x: CGFloat(i) * step, y: (size.height - h) / 2,
+                                                          width: max(1, step - 2), height: h), cornerRadius: 1)
+                        let filled = Double(i) / Double(count) < player.volume
+                        context.fill(bar, with: .color(filled ? (dragging ? palette.accent : .white.opacity(0.85)) : .white.opacity(0.14)))
+                    }
                 }
-                .frame(height: 4)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
@@ -155,6 +161,12 @@ struct VolumeControl: View {
             .frame(width: 110, height: 12)
         }
         .help("Volume")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Volume")
+        .accessibilityValue(Text("\(Int(player.volume * 100))%"))
+        .accessibilityAdjustableAction { direction in
+            player.setVolume(player.volume + (direction == .increment ? 0.05 : -0.05))
+        }
     }
 
     private var icon: String {

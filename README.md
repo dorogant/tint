@@ -5,12 +5,19 @@ A lightweight native Spotify client for macOS (Apple Silicon): SwiftUI on top of
 Chromium-based official app for everyday listening, with a target of **≤150 MB RAM**
 during playback and ~0% CPU when idle. See [PLAN.md](PLAN.md) for the full plan.
 
-**Status:** Phase 4 (visualizers and live background) implemented. Library,
-navigation, playback, macOS media controls, cover-driven Now Playing and LRCLIB
-synced lyrics work. The waveform toolbar button opens **Visuals**: circular or
-normal visualizers, bars or wave, sensitivity, and an optional reactive Metal
-background. Preferences persist between launches. Phase 5 (settings and polish)
-is next.
+**Status:** Phase 5 settings and polish implemented. The gear button or **⌘,**
+opens a native settings window with Visualizer, Background, Playback, Downloads,
+Appearance and About. English and Ukrainian interface text is bundled; choose a
+language in Appearance. Queue and Devices have dedicated toolbar panels and an
+opt-in Spotify permission flow. Playback quality, normalization and gapless
+settings now reach librespot, and reconnecting preserves the song, position and
+pause state. Floe has a new native flower-and-rhythm icon (version 0.2.0).
+
+Limitations: the pinned engine has no crossfade support, so Settings labels it
+unavailable. Offline downloads remain unavailable. Queue/device requests need
+additional Spotify consent. Live queue and device-list requests pass with that
+permission; response decoding, access gating and transfer requests also pass
+offline tests. Device transfer has not been exercised against another live device.
 
 Measured on this MacBook Air on 2026-10-08, release build, restored large window
 (1710×1052 points), without screenshots: stable circular visualization used
@@ -40,7 +47,7 @@ scripts/build-app.sh --open   # build, then launch
 ```
 
 The script runs `cargo build --release` for the Rust core, `swift build` for the app,
-assembles the bundle (Info.plist, generated placeholder icon) and signs it (see below).
+assembles the bundle (Info.plist, generated native icon) and signs it (see below).
 
 On first launch Floe asks for two approvals in the browser: **playback** (librespot,
 Spotify's own client ID) and **library** (the Web API, through your own developer app).
@@ -138,6 +145,50 @@ style/shape, and verifies pause, hiding, disabled effects and Reduce Motion. Add
 `-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` for synthetic-only visual QA.
 The live test restores visual preferences afterward and leaves playback paused.
 
+### Settings and recovery
+
+The native Settings window shares the same visual preferences as the toolbar
+popover. Background blur is computed from a tiny cover thumbnail, with slider
+changes coalesced; glass intensity and four fixed accent colors apply immediately.
+English/Ukrainian switching changes interface text, including count plurals;
+catalogue metadata and lyrics retain their original language.
+
+Streaming quality (96/160/320 kbps), normalization and gapless playback take effect
+on the next playback session. **Apply and reconnect** preserves the current song,
+position and whether it was paused, and reloads Floe's context. Manually queued
+songs may be reset. Session loss stops the UI clock and retries with backoff;
+**Reconnect now** and **Sign in again** provide recovery. Unavailable tracks show a
+human-readable, dismissible error with **Next song**. Expired/revoked library tokens
+lead back to library authorization; stale refreshes cannot reinstall signed-out
+credentials.
+
+Queue/Devices fetch only when opened, on track changes in Queue, or on **Refresh**.
+Queue shows songs (episode/local entries without usable song metadata are skipped),
+retaining duplicate entries. Restricted devices cannot receive transfers. Transfers
+preserve the current play/pause state. The volume control applies to Floe; use macOS
+Control Center to choose the Mac's audio output.
+
+Use **Connect Queue and Devices** once to grant `user-read-playback-state`,
+`user-read-currently-playing` and `user-modify-playback-state` with the existing
+PKCE client. Restoring an existing library session never opens a new consent flow.
+These are the documented scopes for [queue access](https://developer.spotify.com/documentation/web-api/reference/get-queue),
+[devices](https://developer.spotify.com/documentation/web-api/reference/get-a-users-available-devices)
+and [transfer](https://developer.spotify.com/documentation/web-api/reference/transfer-a-users-playback).
+
+```sh
+scripts/test-phase5.sh
+build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase5 YES
+```
+
+Offline checks use synthetic tokens, devices and metadata: configuration and paused
+reload, 401 refresh/repeated rejection, Retry-After, transfer JSON, mixed queue
+entries, access gating, restricted devices, cancellation/stale responses and
+Ukrainian plural forms. The live check exercises a connection-loss event, applies
+160 kbps with normalization, restores the original playback preferences and
+verifies resume/position/pause and real audio flow. It leaves playback paused.
+On this Mac, its paused sample was ~133 MiB physical footprint; CPU settled to 0%.
+The queue/device live checks run only after permission is granted.
+
 ## Layout
 
 ```
@@ -153,7 +204,9 @@ Sources/Floe/         SwiftUI app
   Images/             artwork cache, cover palette and pre-blurred backdrop
   Lyrics/             LRCLIB service, memory cache, LRC parser and view state
   Visualization/      vDSP FFT, bounded PCM sampling, visual preferences, Metal shader
+  Settings/           persisted playback/appearance preferences and native settings window
   Views/              UI
+Support/Localizations/ English/Ukrainian interface strings and plural rules
 Support/Info.plist    bundle metadata
 scripts/              build-app.sh, make-icon.swift
 ```

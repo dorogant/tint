@@ -29,6 +29,8 @@ const char *floe_session_client_id(void);
 void floe_login_token(const char *access_token, uint16_t volume);
 void floe_login_stored(const char *credentials_json, uint16_t volume);
 void floe_logout(void);
+/// Configuration for the next session (reconnect/relaunch to apply).
+void floe_configure_playback(uint16_t bitrate, bool normalization, bool gapless);
 
 /// Plays a context, e.g. {"context_uri": "spotify:playlist:…", "start_uri": "spotify:track:…",
 /// "shuffle": false, "repeat": 0}, or {"tracks": ["spotify:track:…"]}.

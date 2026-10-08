@@ -63,6 +63,7 @@ struct Core {
     pcm: Arc<Pcm>,
     client_id: CString,
     state: Mutex<State>,
+    settings: Mutex<PlaybackSettings>,
 }
 
 #[derive(Default)]
@@ -136,13 +137,14 @@ impl Core {
     }
 
     fn connect(&'static self, credentials: Credentials, volume: u16) {
+        let settings = *self.settings.lock().unwrap_or_else(|p| p.into_inner());
         let generation = self.teardown();
         self.emit(json!({ "type": "connecting" }));
         self.runtime.spawn(async move {
             let session = Session::new(SessionConfig::default(), None);
             let pcm = self.pcm.clone();
             let player = Player::new(
-                player_config(),
+                player_config(settings),
                 session.clone(),
                 Box::new(NoOpVolume), // volume is applied in AVAudioEngine
                 move || Box::new(FloeSink::new(pcm)),
@@ -163,14 +165,16 @@ impl Core {
                 Ok(pair) => pair,
                 Err(e) => {
                     warn!("login failed: {e}");
-                    self.emit(json!({ "type": "login_failed", "message": e.to_string() }));
+                    if self.state().generation == generation {
+                        self.emit(json!({ "type": "login_failed", "message": e.to_string() }));
+                    }
                     session.shutdown();
                     tokio::task::spawn_blocking(move || drop(player));
                     return;
                 }
             };
 
-            let events = self.runtime.spawn(forward_events(self, player_events));
+            let events = self.runtime.spawn(forward_events(self, player_events, generation));
             let spirc_task = self.runtime.spawn(async move {
                 spirc_task.await;
                 // The Connect loop ends on shutdown (generation moved on) or when
@@ -234,9 +238,22 @@ impl Mixer for FloeMixer {
     }
 }
 
-fn player_config() -> PlayerConfig {
+#[derive(Clone, Copy)]
+struct PlaybackSettings {
+    bitrate: u16,
+    normalization: bool,
+    gapless: bool,
+}
+
+impl Default for PlaybackSettings {
+    fn default() -> Self { Self { bitrate: 320, normalization: false, gapless: true } }
+}
+
+fn player_config(settings: PlaybackSettings) -> PlayerConfig {
     PlayerConfig {
-        bitrate: Bitrate::Bitrate320,
+        bitrate: match settings.bitrate { 96 => Bitrate::Bitrate96, 160 => Bitrate::Bitrate160, _ => Bitrate::Bitrate320 },
+        normalisation: settings.normalization,
+        gapless: settings.gapless,
         ditherer: None, // we output f32, which librespot never dithers anyway
         ..PlayerConfig::default()
     }
@@ -251,8 +268,9 @@ fn connect_config(volume: u16) -> ConnectConfig {
     }
 }
 
-async fn forward_events(core: &'static Core, mut events: PlayerEventChannel) {
+async fn forward_events(core: &'static Core, mut events: PlayerEventChannel, generation: u64) {
     while let Some(event) = events.recv().await {
+        if core.state().generation != generation { break; }
         // Keep the gate in step with remote (phone) play/pause too.
         match event {
             PlayerEvent::Playing { .. } => core.pcm.set_gate(true),
@@ -283,12 +301,16 @@ struct LoadSpec {
     repeat: u8,
     #[serde(default)]
     position_ms: u32,
+    #[serde(default = "default_start_playing")]
+    start_playing: bool,
 }
+
+fn default_start_playing() -> bool { true }
 
 impl LoadSpec {
     fn into_request(self) -> Option<LoadRequest> {
         let options = LoadRequestOptions {
-            start_playing: true,
+            start_playing: self.start_playing,
             seek_to: self.position_ms,
             context_options: Some(LoadContextOptions::Options(Options {
                 shuffle: self.shuffle,
@@ -354,6 +376,7 @@ pub unsafe extern "C" fn floe_init(callback: EventCallback, context: *mut c_void
             pcm: Pcm::new(),
             client_id: CString::new(SessionConfig::default().client_id).unwrap_or_default(),
             state: Mutex::default(),
+            settings: Mutex::default(),
         }
     });
     created
@@ -515,8 +538,8 @@ pub unsafe extern "C" fn floe_add_to_queue(uri: *const c_char) -> bool {
     let Some(Ok(uri)) = (unsafe { str_arg(uri) }).map(SpotifyUri::from_uri) else {
         return false;
     };
-    core.command(|spirc| spirc.add_to_queue(uri));
-    true
+    let Some(spirc) = core.spirc() else { return false };
+    spirc.add_to_queue(uri).is_ok()
 }
 
 /// Render-thread entry point: writes `frames` samples into each channel buffer
@@ -607,4 +630,44 @@ pub unsafe extern "C" fn floe_read_analysis(
     let (frames, epoch) = core.pcm.analysis.read_latest(left, right);
     unsafe { *generation = epoch; }
     frames as u32
+}
+
+/// Sets configuration for the next playback session; never interrupts current audio.
+#[unsafe(no_mangle)]
+pub extern "C" fn floe_configure_playback(bitrate: u16, normalization: bool, gapless: bool) {
+    if let Some(core) = CORE.get() {
+        *core.settings.lock().unwrap_or_else(|p| p.into_inner()) = PlaybackSettings {
+            bitrate: if [96, 160, 320].contains(&bitrate) { bitrate } else { 320 },
+            normalization,
+            gapless,
+        };
+    }
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::*;
+    #[test]
+    fn paused_reload_preserves_position_and_default_requests_still_play() {
+        let paused: LoadSpec = serde_json::from_str(r#"{"tracks":["spotify:track:0000000000000000000000"],"position_ms":12000,"start_playing":false}"#).unwrap();
+        let request = paused.into_request().unwrap();
+        assert!(!request.start_playing);
+        assert_eq!(request.seek_to, 12000);
+        let ordinary: LoadSpec = serde_json::from_str(r#"{"tracks":["spotify:track:0000000000000000000000"]}"#).unwrap();
+        assert!(ordinary.into_request().unwrap().start_playing);
+    }
+
+    #[test]
+    fn quality_normalization_and_gapless_reach_player_config() {
+        for (quality, expected) in [(96, Bitrate::Bitrate96), (160, Bitrate::Bitrate160), (320, Bitrate::Bitrate320)] {
+            let config = player_config(PlaybackSettings { bitrate: quality, normalization: true, gapless: false });
+            assert_eq!(config.bitrate, expected);
+            assert!(config.normalisation);
+            assert!(!config.gapless);
+        }
+        let default = player_config(PlaybackSettings::default());
+        assert_eq!(default.bitrate, Bitrate::Bitrate320);
+        assert!(!default.normalisation);
+        assert!(default.gapless);
+    }
 }

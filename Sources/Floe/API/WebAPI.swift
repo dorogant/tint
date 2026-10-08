@@ -15,22 +15,24 @@ final class WebAPI: Sendable {
             switch self {
             case let .http(status, message): "Spotify returned \(status): \(message)"
             case let .rateLimited(seconds):
-                String(localized: "Spotify is rate-limiting requests; try again in \(Int(seconds)) s.")
+                L10n.string("Spotify is rate-limiting requests; try again in \(Int(seconds)) s.")
             }
         }
     }
 
     let user: UserTokenProvider
     private let base = URL(string: "https://api.spotify.com/v1/")!
+    private let tokens: any TokenProvider
     private let http: URLSession
     private let decoder: JSONDecoder
     private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "webapi")
 
-    init(user: UserTokenProvider) {
+    init(user: UserTokenProvider, tokens: (any TokenProvider)? = nil, http: URLSession? = nil) {
         self.user = user
+        self.tokens = tokens ?? user
         let config = URLSessionConfiguration.ephemeral // API responses aren't worth caching
         config.timeoutIntervalForRequest = 20
-        http = URLSession(configuration: config)
+        self.http = http ?? URLSession(configuration: config)
         decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -48,7 +50,7 @@ final class WebAPI: Sendable {
     }
 
     @discardableResult
-    func send(_ method: String, _ path: String, _ query: [String: String] = [:]) async throws -> Data {
+    func send(_ method: String, _ path: String, _ query: [String: String] = [:], body: Data? = nil) async throws -> Data {
         var components = URLComponents(
             url: path.hasPrefix("https://") ? URL(string: path)! : base.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
@@ -59,8 +61,9 @@ final class WebAPI: Sendable {
         }
         var request = URLRequest(url: components.url!)
         request.httpMethod = method
+        request.httpBody = body
+        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
 
-        let tokens: any TokenProvider = user
         for attempt in 0..<3 {
             request.setValue("Bearer \(try await tokens.accessToken())", forHTTPHeaderField: "Authorization")
             let (data, response) = try await http.data(for: request)
@@ -70,6 +73,9 @@ final class WebAPI: Sendable {
                 return data
             case 401 where attempt == 0:
                 await tokens.invalidate()
+            case 401:
+                await user.reportAuthorizationExpired()
+                throw TokenError.notAuthorized
             case 429 where attempt < 2:
                 let retryAfter = (response as? HTTPURLResponse)?
                     .value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 2

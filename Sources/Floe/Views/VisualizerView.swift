@@ -69,14 +69,11 @@ struct VisualizerView: View {
     }
 }
 
-struct VisualControls: View {
-    @Environment(VisualizationModel.self) private var visualization
+struct VisualizerOptions: View {
     @Environment(VisualSettings.self) private var settings
-
     var body: some View {
         @Bindable var settings = settings
         VStack(alignment: .leading, spacing: 16) {
-            Text("Visuals").font(.system(size: 18, weight: .bold))
             Toggle("Show visualizer", isOn: $settings.showVisualizer)
             Group {
                 Picker("Style", selection: $settings.style) {
@@ -94,7 +91,16 @@ struct VisualControls: View {
                         .monospacedDigit().frame(width: 42, alignment: .trailing)
                 }
             }.disabled(!settings.showVisualizer)
-            Divider()
+        }
+    }
+}
+
+struct BackgroundOptions: View {
+    @Environment(VisualizationModel.self) private var visualization
+    @Environment(VisualSettings.self) private var settings
+    var body: some View {
+        @Bindable var settings = settings
+        VStack(alignment: .leading, spacing: 16) {
             Toggle("Live background", isOn: $settings.liveBackground)
             HStack {
                 Text("Reactivity")
@@ -103,6 +109,17 @@ struct VisualControls: View {
             if settings.liveBackground, let error = visualization.backgroundFailure {
                 Text(error).font(.system(size: 11)).foregroundStyle(.orange)
             }
+        }
+    }
+}
+
+struct VisualControls: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Visuals").font(.system(size: 18, weight: .bold))
+            VisualizerOptions()
+            Divider()
+            BackgroundOptions()
             Text("Motion stops when playback pauses or Floe is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy.")
                 .font(.system(size: 11)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
         }

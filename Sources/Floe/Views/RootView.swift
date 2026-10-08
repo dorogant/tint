@@ -34,6 +34,8 @@ struct MainView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
 
+    @Environment(\.openSettings) private var openSettings
+    @ViewState private var showingConnect: Bool?
     @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -51,6 +53,14 @@ struct MainView: View {
                 }
                 .buttonStyle(.plain).help("Visuals")
                 .popover(isPresented: $showingVisuals) { VisualControls() }
+                Button { showingConnect = true } label: { Image(systemName: "list.bullet").frame(width: 30, height: 30) }
+                    .buttonStyle(.plain).help("Queue")
+                    .popover(isPresented: Binding(get: { showingConnect == true }, set: { if !$0 { showingConnect = nil } })) { ConnectPanel(queue: true) }
+                Button { showingConnect = false } label: { Image(systemName: "hifispeaker").frame(width: 30, height: 30) }
+                    .buttonStyle(.plain).help("Devices")
+                    .popover(isPresented: Binding(get: { showingConnect == false }, set: { if !$0 { showingConnect = nil } })) { ConnectPanel(queue: false) }
+                Button { openSettings() } label: { Image(systemName: "gearshape").frame(width: 30, height: 30) }
+                    .buttonStyle(.plain).help("Settings")
                 Menu {
                     Toggle("Accent from cover", isOn: $accentFromCover)
                     Toggle("Reduce motion", isOn: $reduceMotion)
@@ -59,6 +69,7 @@ struct MainView: View {
             }
             .padding(.horizontal, 14)
             .frame(height: 40)
+            PlaybackStatusView()
             Group {
                 switch navigator.surface {
                 case .library:

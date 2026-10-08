@@ -24,7 +24,7 @@ struct ReactiveBackground: NSViewRepresentable {
             context.coordinator.renderer = renderer
             view.delegate = renderer
         } catch {
-            DispatchQueue.main.async { visualization.backgroundFailure = String(localized: "Live background is unavailable on this Mac.") }
+            DispatchQueue.main.async { visualization.backgroundFailure = L10n.string("Live background is unavailable on this Mac.") }
         }
         return view
     }
@@ -130,7 +130,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
                 guard let self else { return }
                 self.busy = false
                 if succeeded { self.status?.backgroundFramesDrawn += 1 }
-                else { self.status?.backgroundFailure = String(localized: "Live background stopped unexpectedly."); self.stop() }
+                else { self.status?.backgroundFailure = L10n.string("Live background stopped unexpectedly."); self.stop() }
             }
         }
         command.commit()

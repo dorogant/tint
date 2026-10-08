@@ -12,6 +12,15 @@ struct CoverPalette: Equatable {
                      green: rgb.g + (1 - rgb.g) * lift,
                      blue: rgb.b + (1 - rgb.b) * lift)
     }
+    static func fixed(_ name: String) -> CoverPalette {
+        let rgb: RGB = switch name {
+        case "blue": RGB(r: 0.32, g: 0.65, b: 1)
+        case "violet": RGB(r: 0.73, g: 0.5, b: 1)
+        case "amber": RGB(r: 1, g: 0.7, b: 0.3)
+        default: .fallback
+        }
+        return CoverPalette(rgb: rgb)
+    }
     var onAccent: Color { rgb.usesDarkText ? .black : .white }
 }
 
@@ -34,19 +43,25 @@ final class CoverAppearance {
     private(set) var background: CGImage?
     private(set) var palette = CoverPalette()
 
-    func load(_ url: URL?) async {
+    func load(_ url: URL?, blur: Double = 9) async {
         guard !Task.isCancelled else { return }
+        let sameCover = coverURL == url
         coverURL = url
-        image = nil
-        background = nil
-        palette = CoverPalette()
+        if !sameCover {
+            image = nil
+            background = nil
+            palette = CoverPalette()
+        } else {
+            try? await Task.sleep(for: .milliseconds(120)) // coalesce slider drags
+            guard !Task.isCancelled else { return }
+        }
         guard let url else { return }
         async let cover = ArtworkCache.shared.image(for: url, pixels: 720)
         async let thumbnail = ArtworkCache.shared.image(for: url, pixels: 96)
         let (loaded, small) = await (cover, thumbnail)
         guard !Task.isCancelled else { return }
         let processed = await Task.detached(priority: .utility) {
-            (small.flatMap(Self.blur), small.flatMap(CoverColorExtractor.extract))
+            (small.flatMap { Self.blur($0, radius: blur) }, small.flatMap(CoverColorExtractor.extract))
         }.value
         guard !Task.isCancelled else { return }
         image = loaded
@@ -54,9 +69,9 @@ final class CoverAppearance {
         palette = CoverPalette(rgb: processed.1 ?? .fallback)
     }
 
-    private nonisolated static func blur(_ image: CGImage) -> CGImage? {
+    private nonisolated static func blur(_ image: CGImage, radius: Double) -> CGImage? {
         let input = CIImage(cgImage: image)
-        let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 9])
+        let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: min(18, max(0, radius))])
         // The source is only 96 px. No full-window live blur or persistent GPU cache.
         return CIContext(options: [.useSoftwareRenderer: true, .cacheIntermediates: false])
             .createCGImage(blurred, from: input.extent)

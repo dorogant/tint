@@ -12,6 +12,7 @@ final class VisualSettings {
     var sensitivity: Double { didSet { defaults.set(sensitivity, forKey: "visualizerSensitivity") } }
     var liveBackground: Bool { didSet { defaults.set(liveBackground, forKey: "liveBackground") } }
     var reactivity: Double { didSet { defaults.set(reactivity, forKey: "backgroundReactivity") } }
+    var backgroundBlur: Double { didSet { defaults.set(backgroundBlur, forKey: "backgroundBlur") } }
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -21,6 +22,7 @@ final class VisualSettings {
         shape = Shape(rawValue: defaults.string(forKey: "visualizerShape") ?? "") ?? .bars
         sensitivity = min(3, max(0.25, defaults.object(forKey: "visualizerSensitivity") as? Double ?? 1.2))
         liveBackground = defaults.bool(forKey: "liveBackground")
+        backgroundBlur = min(18, max(0, defaults.object(forKey: "backgroundBlur") as? Double ?? 9))
         reactivity = min(2, max(0, defaults.object(forKey: "backgroundReactivity") as? Double ?? 1))
     }
 }

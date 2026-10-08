@@ -22,8 +22,8 @@ actor LyricsService {
         case http(Int), rateLimited(Date)
         var errorDescription: String? {
             switch self {
-            case .http: String(localized: "Couldn't load lyrics. Try again later.")
-            case .rateLimited: String(localized: "The lyrics service is busy. Try again later.")
+            case .http: L10n.string("Couldn't load lyrics. Try again later.")
+            case .rateLimited: L10n.string("The lyrics service is busy. Try again later.")
             }
         }
     }

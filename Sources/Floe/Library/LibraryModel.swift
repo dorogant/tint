@@ -38,6 +38,9 @@ final class LibraryModel {
 
     func start() async {
         guard connection == .checking else { return }
+        await api.user.setAuthorizationExpiredHandler { [weak self] in
+            self?.connection = .failed(L10n.string("Spotify authorization expired. Reconnect your library."))
+        }
         connection = await api.user.isAuthorized ? .connected : .disconnected
         if connection == .connected { await refresh() }
     }

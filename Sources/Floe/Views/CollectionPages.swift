@@ -71,7 +71,7 @@ struct PlaylistView: View {
                 header(playlist)
                 if !library.canListItems(of: playlist) {
                     MessageView(systemImage: "lock",
-                                message: String(localized: "Spotify only lets developer apps list the songs of playlists you own or collaborate on. Play still works."))
+                                message: L10n.string("Spotify only lets developer apps list the songs of playlists you own or collaborate on. Play still works."))
                 }
             } else if error == nil {
                 LoadingView()
@@ -88,7 +88,7 @@ struct PlaylistView: View {
                 TrackListView(entries: sort.apply(entries.filtered(filter)), play: play,
                               onReachEnd: { Task { await loadNextPage() } })
             } else if let playlist, library.canListItems(of: playlist), nextOffset == nil, error == nil {
-                MessageView(systemImage: "music.note.list", message: String(localized: "This playlist is empty."))
+                MessageView(systemImage: "music.note.list", message: L10n.string("This playlist is empty."))
             }
             if loadingPage { LoadingView() }
         }
@@ -98,7 +98,7 @@ struct PlaylistView: View {
 
     private func header(_ playlist: PlaylistRef) -> some View {
         var parts = [playlist.owner.displayName ?? playlist.owner.id]
-        if let count = playlist.itemCount { parts.append(String(localized: "\(count) songs")) }
+        if let count = playlist.itemCount { parts.append(L10n.string("\(count) songs")) }
         if nextOffset == nil, !entries.isEmpty {
             parts.append(Format.total(ms: entries.reduce(0) { $0 + $1.track.durationMs }))
         }
@@ -143,7 +143,7 @@ struct PlaylistView: View {
             }
         } catch let failure as WebAPI.Failure where failure.status == 404 {
             // Spotify-made (editorial/algorithmic) playlists are hidden from developer apps.
-            error = String(localized: "Spotify doesn't share this playlist with developer apps, but you can play it.")
+            error = L10n.string("Spotify doesn't share this playlist with developer apps, but you can play it.")
         } catch {
             self.error = error.localizedDescription
         }
@@ -261,7 +261,7 @@ struct AlbumView: View {
     private func subtitle(_ album: Album) -> String {
         var parts = [album.artists.map(\.name).joined(separator: ", ")]
         if let year = album.ref.year { parts.append(year) }
-        parts.append(String(localized: "\(album.totalTracks ?? entries.count) songs"))
+        parts.append(L10n.string("\(album.totalTracks ?? entries.count) songs"))
         parts.append(Format.total(ms: entries.reduce(0) { $0 + $1.track.durationMs }))
         return parts.joined(separator: " · ")
     }
@@ -321,8 +321,8 @@ struct SongsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            PageHeader(badge: "Playlist", title: String(localized: "Liked Songs"),
-                       subtitle: total.map { String(localized: "\($0) songs") } ?? " ") {
+            PageHeader(badge: "Playlist", title: L10n.string("Liked Songs"),
+                       subtitle: total.map { L10n.string("\($0) songs") } ?? " ") {
                 LikedCover(size: 200)
             } actions: {
                 PlayPill { playFromStart(shuffled: false) }

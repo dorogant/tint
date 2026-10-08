@@ -9,10 +9,12 @@ struct PlayRequest: Encodable, Sendable {
     var startIndex: Int?
     var shuffle = false
     var repeatMode = 0
+    var positionMs: UInt32?
+    var startPlaying = true
 
     enum CodingKeys: String, CodingKey {
         case contextURI = "context_uri", tracks, startURI = "start_uri"
-        case startIndex = "start_index", shuffle, repeatMode = "repeat"
+        case startIndex = "start_index", shuffle, repeatMode = "repeat", positionMs = "position_ms", startPlaying = "start_playing"
     }
 }
 
@@ -40,6 +42,10 @@ final class FloeCore {
 
     func logOut() { floe_logout() }
 
+    func configure(_ configuration: PlaybackConfiguration) {
+        floe_configure_playback(UInt16(clamping: configuration.bitrate), configuration.normalization, configuration.gapless)
+    }
+
     /// Returns false for a malformed request or when no session is up.
     @discardableResult
     func load(_ request: PlayRequest) -> Bool {
@@ -64,7 +70,7 @@ final class FloeCore {
         return stats
     }
 
-    fileprivate func deliver(_ event: CoreEvent) {
+    func deliver(_ event: CoreEvent) {
         onEvent?(event)
     }
 }

@@ -22,6 +22,10 @@ enum SpotifyOAuth {
             ]
         )
 
+        /// Added only when the user connects Queue and Devices; never requested on restore.
+        static let playbackControls = Config(clientID: webAPI.clientID, redirectURI: webAPI.redirectURI,
+            scopes: webAPI.scopes + ["user-read-playback-state", "user-read-currently-playing", "user-modify-playback-state"])
+
         /// librespot's session login: Spotify's own client ID, `streaming` scope.
         /// Its registered redirect is `http://127.0.0.1:<port>/login`; 5588 is librespot's default.
         static func playbackSession(clientID: String) -> Config {
@@ -54,9 +58,9 @@ enum SpotifyOAuth {
 
         var errorDescription: String? {
             switch self {
-            case let .denied(reason): "Spotify login was not completed (\(reason))."
-            case .stateMismatch: "Login response didn't match the request; try again."
-            case let .tokenRequest(status, body): "Token request failed (HTTP \(status)): \(body)"
+            case let .denied(reason): L10n.string("Spotify login was not completed (\(reason)).")
+            case .stateMismatch: L10n.string("Login response didn't match the request; try again.")
+            case let .tokenRequest(status, _): L10n.string("Spotify authorization failed (HTTP \(status)). Try signing in again.")
             }
         }
     }

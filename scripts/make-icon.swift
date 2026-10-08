@@ -1,40 +1,50 @@
-// Draws the placeholder app icon (1024×1024 PNG). Usage: swift make-icon.swift out.png
-// A frosted "floe" on a deep teal squircle; replaced by a real icon in Phase 5.
+// Floe's native icon: an icy flower over deep teal, with a small rhythm mark.
+// Usage: swift scripts/make-icon.swift out.png
 import AppKit
 
-let size = 1024.0
 let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "AppIcon.png")
-
-let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
-    // macOS icon grid: 824 pt body, ~185 pt corner radius, centred.
-    let body = NSRect(x: 100, y: 100, width: 824, height: 824)
-    let squircle = NSBezierPath(roundedRect: body, xRadius: 185, yRadius: 185)
-    NSGradient(colors: [
-        NSColor(srgbRed: 0.04, green: 0.13, blue: 0.16, alpha: 1),
-        NSColor(srgbRed: 0.09, green: 0.33, blue: 0.38, alpha: 1),
-    ])!.draw(in: squircle, angle: 70)
-
+let image = NSImage(size: NSSize(width: 1024, height: 1024), flipped: false) { _ in
+    let body = NSBezierPath(roundedRect: NSRect(x: 100, y: 100, width: 824, height: 824), xRadius: 185, yRadius: 185)
     NSGraphicsContext.current?.saveGraphicsState()
-    squircle.addClip()
-    // Soft glow behind the floe, in the default green accent.
-    NSGradient(colors: [
-        NSColor(srgbRed: 0.11, green: 0.73, blue: 0.33, alpha: 0.55),
-        NSColor(srgbRed: 0.11, green: 0.73, blue: 0.33, alpha: 0),
-    ])!.draw(in: NSBezierPath(ovalIn: body.insetBy(dx: 90, dy: 90)), relativeCenterPosition: .zero)
-
-    // The floe: an irregular rounded blob made of overlapping translucent discs.
-    let discs: [(x: Double, y: Double, r: Double, a: Double)] = [
-        (512, 520, 230, 0.80), (390, 600, 150, 0.55), (640, 610, 140, 0.55),
-        (430, 420, 140, 0.50), (620, 430, 150, 0.50),
-    ]
-    for d in discs {
-        NSColor(white: 1, alpha: d.a).setFill()
-        NSBezierPath(ovalIn: NSRect(x: d.x - d.r, y: d.y - d.r, width: d.r * 2, height: d.r * 2)).fill()
+    let shadow = NSShadow()
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
+    shadow.shadowBlurRadius = 24
+    shadow.shadowOffset = NSSize(width: 0, height: -12)
+    shadow.set()
+    NSGradient(colors: [NSColor(srgbRed: 0.025, green: 0.11, blue: 0.14, alpha: 1),
+                        NSColor(srgbRed: 0.08, green: 0.32, blue: 0.32, alpha: 1)])!.draw(in: body, angle: 70)
+    NSGraphicsContext.current?.restoreGraphicsState()
+    NSGraphicsContext.current?.saveGraphicsState()
+    body.addClip()
+    NSGradient(colors: [NSColor(srgbRed: 0.15, green: 0.9, blue: 0.55, alpha: 0.3), .clear])!
+        .draw(in: NSBezierPath(ovalIn: NSRect(x: 180, y: 250, width: 640, height: 640)), relativeCenterPosition: NSPoint(x: -0.2, y: 0.2))
+    let flower = NSBezierPath()
+    for i in 0..<360 {
+        let a = Double(i) * 2 * .pi / 360
+        let r = 265 + 30 * cos(6 * a + 0.5)
+        let p = NSPoint(x: 512 + cos(a) * r, y: 530 + sin(a) * r)
+        if i == 0 { flower.move(to: p) } else { flower.line(to: p) }
+    }
+    flower.close()
+    NSGraphicsContext.current?.saveGraphicsState()
+    let plateShadow = NSShadow()
+    plateShadow.shadowColor = NSColor.black.withAlphaComponent(0.26)
+    plateShadow.shadowBlurRadius = 28
+    plateShadow.shadowOffset = NSSize(width: 0, height: -20)
+    plateShadow.set()
+    NSGradient(colors: [NSColor(srgbRed: 0.49, green: 0.79, blue: 0.75, alpha: 1),
+                        NSColor(srgbRed: 0.91, green: 1, blue: 0.97, alpha: 1)])!.draw(in: flower, angle: 80)
+    NSGraphicsContext.current?.restoreGraphicsState()
+    NSColor.white.withAlphaComponent(0.65).setStroke()
+    flower.lineWidth = 6
+    flower.stroke()
+    NSColor(srgbRed: 0.055, green: 0.26, blue: 0.27, alpha: 1).setFill()
+    for (x, h) in [(424.0, 104.0), (486.0, 178.0), (548.0, 138.0)] {
+        NSBezierPath(roundedRect: NSRect(x: x, y: 530 - h / 2, width: 42, height: h), xRadius: 21, yRadius: 21).fill()
     }
     NSGraphicsContext.current?.restoreGraphicsState()
     return true
 }
-
 guard let tiff = image.tiffRepresentation,
       let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
 else { fatalError("could not render the icon") }

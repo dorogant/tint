@@ -28,6 +28,12 @@ final class PlayerModel {
     /// The context Floe last started, e.g. `spotify:playlist:…`, for highlighting.
     private(set) var contextURI: String?
     private(set) var lastError: String?
+    private(set) var activeConfiguration: PlaybackConfiguration?
+    @ObservationIgnored private var requestedConfiguration = PlaybackConfiguration(bitrate: 320, normalization: false, gapless: true)
+    @ObservationIgnored private var connectingConfiguration: PlaybackConfiguration?
+    @ObservationIgnored private var pendingPlayback: PlayRequest?
+    @ObservationIgnored private var lastRequest: PlayRequest?
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
 
     var isConnected: Bool {
         if case .connected = session { true } else { false }
@@ -73,14 +79,19 @@ final class PlayerModel {
         let stored = await Task.detached { Keychain.read(Keychain.Account.playbackSession) }.value
         guard let stored, session == .loggedOut else { return }
         storedCredentials = stored
+        connectingConfiguration = requestedConfiguration
         core.logIn(storedCredentials: stored, volume: spotifyVolume)
     }
 
     func logIn() {
+        guard session != .authorizing else { return }
+        reconnectTask?.cancel()
+        rememberPlayback()
         Task {
             session = .authorizing
             do {
                 let token = try await SpotifyOAuth.authorize(.playbackSession(clientID: core.sessionClientID))
+                connectingConfiguration = requestedConfiguration
                 core.logIn(accessToken: token.accessToken, volume: spotifyVolume)
             } catch is CancellationError {
                 session = .loggedOut
@@ -91,6 +102,8 @@ final class PlayerModel {
     }
 
     func logOut() {
+        reconnectTask?.cancel()
+        pendingPlayback = nil
         storedCredentials = nil
         core.logOut()
         Task.detached { Keychain.delete(Keychain.Account.playbackSession) }
@@ -106,9 +119,10 @@ final class PlayerModel {
         request.repeatMode = repeatMode.rawValue
         lastError = nil
         guard core.load(request) else {
-            lastError = String(localized: "Couldn't start playback. Is Floe connected?")
+            lastError = L10n.string("Couldn't start playback. Is Floe connected?")
             return
         }
+        lastRequest = request
         contextURI = request.contextURI
         isActiveDevice = true
         isLoading = true
@@ -175,8 +189,37 @@ final class PlayerModel {
     }
 
     func addToQueue(_ uri: String) {
-        core.addToQueue(uri)
+        if !core.addToQueue(uri) { lastError = L10n.string("Couldn't add this song to the queue.") }
     }
+
+    func configurePlayback(_ configuration: PlaybackConfiguration) {
+        requestedConfiguration = configuration
+        core.configure(configuration)
+    }
+
+    /// Rebuild the playback session to apply codec settings, preserving context and position.
+    func reconnectPlayback() {
+        guard let credentials = storedCredentials else { logIn(); return }
+        reconnectTask?.cancel()
+        rememberPlayback()
+        core.pause()
+        setAnchor(positionMs(at: Date()), playing: false)
+        isLoading = false
+        session = .connecting
+        connectingConfiguration = requestedConfiguration
+        core.logIn(storedCredentials: credentials, volume: spotifyVolume)
+    }
+
+    private func rememberPlayback() {
+        guard let track, pendingPlayback == nil else { return }
+        var request = lastRequest ?? PlayRequest(tracks: [track.uri])
+        request.startURI = track.uri
+        request.positionMs = UInt32(clamping: Int(positionMs(at: Date())))
+        request.startPlaying = isPlaying
+        pendingPlayback = request
+    }
+
+    func dismissError() { lastError = nil }
 
     private var spotifyVolume: UInt16 { UInt16((volume * 65535).rounded()) }
 
@@ -219,16 +262,24 @@ final class PlayerModel {
             reconnectAttempt = 0
             hasConnected = true
             session = .connected(username: username)
+            activeConfiguration = connectingConfiguration ?? requestedConfiguration
+            if let request = pendingPlayback {
+                pendingPlayback = nil
+                play(request)
+            }
         case let .credentials(blob):
             storedCredentials = blob
             Task.detached { Keychain.write(blob, account: Keychain.Account.playbackSession) }
         case let .loginFailed(message):
             log.error("Login failed: \(message, privacy: .public)")
-            if reconnectAttempt > 0 { scheduleReconnect() } else { session = .failed(message) }
+            if hasConnected || reconnectAttempt > 0 { session = .connecting; scheduleReconnect() } else { session = .failed(message) }
         case .disconnected:
+            rememberPlayback()
             log.notice("Session dropped; reconnecting")
             isActiveDevice = false
             session = .connecting
+            isLoading = false
+            setAnchor(positionMs(at: Date()), playing: false)
             scheduleReconnect()
         case .loggedOut:
             session = .loggedOut
@@ -245,6 +296,7 @@ final class PlayerModel {
         case let .playing(ms):
             isLoading = false
             isActiveDevice = true
+            lastError = nil
             setAnchor(ms, playing: true)
         case let .paused(ms):
             isLoading = false
@@ -258,8 +310,9 @@ final class PlayerModel {
             setAnchor(positionMs(at: Date()), playing: false)
         case .endOfTrack:
             break // Spirc moves on to the next track itself
-        case let .unavailable(uri):
-            lastError = String(localized: "This track isn't available in your region: \(uri)")
+        case .unavailable:
+            isLoading = false
+            lastError = L10n.string("This track is unavailable. Try another song.")
         case let .shuffle(on):
             shuffle = on
         case let .repeatMode(mode):
@@ -272,15 +325,17 @@ final class PlayerModel {
 
     /// Back-off: 2, 4, 8, 16, 30, 30… seconds.
     private func scheduleReconnect() {
+        reconnectTask?.cancel()
         guard let credentials = storedCredentials else {
             session = .loggedOut
             return
         }
         reconnectAttempt += 1
         let delay = min(pow(2, Double(reconnectAttempt)), 30)
-        Task {
+        reconnectTask = Task {
             try? await Task.sleep(for: .seconds(delay))
-            guard session == .connecting else { return }
+            guard !Task.isCancelled, session == .connecting else { return }
+            connectingConfiguration = requestedConfiguration
             core.logIn(storedCredentials: credentials, volume: spotifyVolume)
         }
     }

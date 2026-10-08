@@ -13,7 +13,7 @@ enum SelfTest {
 
     static func run(player: PlayerModel, library: LibraryModel, navigator: Navigator, search: SearchModel,
                     lyrics: LyricsModel, appearance: CoverAppearance,
-                    visualization: VisualizationModel, visuals: VisualSettings) async {
+                    visualization: VisualizationModel, visuals: VisualSettings, settings: AppSettings, connect: ConnectModel) async {
         let start = Date()
         let forward = player.core.onEvent
         player.core.onEvent = { event in
@@ -132,6 +132,9 @@ enum SelfTest {
             ok = await phase4(player: player, navigator: navigator, lyrics: lyrics,
                               visualization: visualization, visuals: visuals) && ok
         }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestPhase5") {
+            ok = await phase5(player: player, navigator: navigator, settings: settings, connect: connect) && ok
+        }
         player.pause()
         say(String(format: "RAM after playback checks: %.1f MB", MemoryFootprint.currentMB))
         if Snapshot.isEnabled || UserDefaults.standard.bool(forKey: "FloeSelfTestTour") {
@@ -155,6 +158,54 @@ enum SelfTest {
             navigator.surface = .nowPlaying
         }
         finish(ok, ok ? "all checks passed" : "a check failed")
+    }
+
+    private static func phase5(player: PlayerModel, navigator: Navigator, settings: AppSettings, connect: ConnectModel) async -> Bool {
+        var ok = true
+        let original = settings.playbackConfiguration
+        navigator.surface = .library
+        let uri = player.track?.uri
+        player.seek(toMs: 12000)
+        try? await Task.sleep(for: .seconds(1))
+        player.core.deliver(.unavailable(uri: "spotify:track:synthetic-unavailable"))
+        ok = check(ok, player.lastError != nil && !(player.lastError?.contains("spotify:") ?? true), "unavailable error is human-readable")
+        Snapshot.capture("14-unavailable-state")
+        player.dismissError()
+        settings.bitrate = 160; settings.normalization = true; settings.gapless = false
+        player.configurePlayback(settings.playbackConfiguration)
+        player.core.deliver(.disconnected)
+        ok = check(ok, !player.isPlaying && !player.isConnected, "session loss stops the UI clock")
+        Snapshot.capture("15-reconnecting-state")
+        player.reconnectPlayback()
+        let restored = await wait(timeout: 30) {
+            player.isConnected && player.isPlaying && player.track?.uri == uri && !player.isLoading
+        }
+        ok = check(ok, restored, "reconnect resumes context playback")
+        ok = check(ok, player.positionMs(at: Date()) >= 11000 && player.positionMs(at: Date()) < 30000, "reconnect preserves position")
+        ok = check(ok, player.activeConfiguration == settings.playbackConfiguration, "quality and normalization configuration applied")
+        let frames = player.core.takeStats().frames_rendered
+        try? await Task.sleep(for: .seconds(3))
+        ok = check(ok, player.core.takeStats().frames_rendered > frames + 110000, "audio flows after reconfiguration")
+        player.pause()
+        settings.bitrate = original.bitrate; settings.normalization = original.normalization; settings.gapless = original.gapless
+        player.configurePlayback(original)
+        player.reconnectPlayback()
+        let paused = await wait(timeout: 30) {
+            player.isConnected && !player.isPlaying && !player.isLoading && player.activeConfiguration == original
+        }
+        ok = check(ok, paused, "reconnect preserves pause and restores preferences")
+        await connect.refresh(queue: true)
+        if connect.needsPermission {
+            say("Queue/Devices: consent is required; existing library permission is preserved")
+        } else {
+            ok = check(ok, connect.error == nil, "live queue fetch")
+            await connect.refresh(queue: false)
+            ok = check(ok, connect.error == nil && !connect.devices.isEmpty, "live device fetch")
+            say("Queue/Devices: \(connect.queue.count) upcoming entries, \(connect.devices.count) devices")
+        }
+        try? await Task.sleep(for: .seconds(10))
+        say(String(format: "Phase 5 after reconnect, paused: %.1f MiB footprint", MemoryFootprint.currentMB))
+        return ok
     }
 
     private static func phase4(player: PlayerModel, navigator: Navigator, lyrics: LyricsModel,

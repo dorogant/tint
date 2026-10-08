@@ -16,7 +16,7 @@ struct LyricsView: View {
                 }
             }
             switch lyrics.state {
-            case .idle: MessageView(systemImage: "text.quote", message: String(localized: "Pick a song to see its lyrics."))
+            case .idle: MessageView(systemImage: "text.quote", message: L10n.string("Pick a song to see its lyrics."))
             case .loading: LoadingView()
             case let .failed(message):
                 VStack {
@@ -24,9 +24,9 @@ struct LyricsView: View {
                     Button("Try Again") { Task { await lyrics.load(player.track) } }
                 }
             case .loaded(.instrumental):
-                MessageView(systemImage: "pianokeys", message: String(localized: "Instrumental"))
+                MessageView(systemImage: "pianokeys", message: L10n.string("Instrumental"))
             case .loaded(.missing):
-                MessageView(systemImage: "text.quote", message: String(localized: "No lyrics found for this song."))
+                MessageView(systemImage: "text.quote", message: L10n.string("No lyrics found for this song."))
             case let .loaded(.plain(text)):
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {

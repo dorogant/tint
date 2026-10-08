@@ -30,7 +30,7 @@ final class LyricsModel {
         } catch {
             guard !Task.isCancelled, revision == self.revision else { return }
             state = .failed((error as? LyricsService.Failure)?.localizedDescription
-                ?? String(localized: "Couldn't load lyrics. Try again later."))
+                ?? L10n.string("Couldn't load lyrics. Try again later."))
         }
     }
     /// Synthetic content only for the opt-in visual self-test. Never export real lyrics.

@@ -4,7 +4,9 @@ import SwiftUI
 @main
 struct FloeApp: App {
     @ViewState private var player = PlayerModel()
-    @ViewState private var library = LibraryModel(api: WebAPI(user: UserTokenProvider()))
+    @ViewState private var library: LibraryModel
+    @ViewState private var connect: ConnectModel
+    @ViewState private var settings = AppSettings()
     @ViewState private var navigator = Navigator()
     @ViewState private var search = SearchModel()
     @ViewState private var lyrics = LyricsModel()
@@ -15,6 +17,12 @@ struct FloeApp: App {
     @AppStorage("reduceMotion") private var reduceMotion = false
     @ViewState private var appearance = CoverAppearance()
     @AppStorage("accentFromCover") private var accentFromCover = false
+
+    init() {
+        let api = WebAPI(user: UserTokenProvider())
+        _library = ViewState(wrappedValue: LibraryModel(api: api))
+        _connect = ViewState(wrappedValue: ConnectModel(api: api))
+    }
 
     private var needsAnalysis: Bool {
         player.isPlaying && (scenePhase == .active || SelfTest.isEnabled) && !reduceMotion && !systemReduceMotion
@@ -32,13 +40,16 @@ struct FloeApp: App {
                 .environment(appearance)
                 .environment(visualization)
                 .environment(visuals)
-                .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette())
+                .environment(settings)
+                .environment(connect)
+                .environment(\.locale, Locale(identifier: settings.language == "system" ? L10n.language : settings.language))
+                .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
                 .onChange(of: needsAnalysis, initial: true) { visualization.setRunning(needsAnalysis) }
-                .task(id: player.track) {
-                    async let cover: () = appearance.load(player.track?.coverURL)
-                    async let words: () = lyrics.load(player.track)
-                    _ = await (cover, words)
+                .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }
+                .task(id: "\(player.track?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
+                    await appearance.load(player.track?.coverURL, blur: visuals.backgroundBlur)
                 }
+                .task(id: player.track) { await lyrics.load(player.track) }
                 .task {
                     SpaceToPlay.install(player)
                     Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }
@@ -46,7 +57,7 @@ struct FloeApp: App {
                     await player.restoreSession()
                     await library.start()
                     if SelfTest.isEnabled {
-                        await SelfTest.run(player: player, library: library, navigator: navigator, search: search, lyrics: lyrics, appearance: appearance, visualization: visualization, visuals: visuals)
+                        await SelfTest.run(player: player, library: library, navigator: navigator, search: search, lyrics: lyrics, appearance: appearance, visualization: visualization, visuals: visuals, settings: settings, connect: connect)
                     }
                 }
         }
@@ -77,6 +88,15 @@ struct FloeApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .option])
             }
         }
+        Settings {
+            SettingsView()
+                .environment(settings)
+                .environment(visuals)
+                .environment(player)
+                .environment(visualization)
+                .environment(\.locale, Locale(identifier: settings.language == "system" ? L10n.language : settings.language))
+        }
+
     }
 }
 
@@ -91,7 +111,7 @@ enum SpaceToPlay {
         installed = true
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard event.keyCode == 49, modifiers.isEmpty,
+            guard event.keyCode == 49, modifiers.isEmpty, NSApp.keyWindow?.title == "Floe",
                   !(NSApp.keyWindow?.firstResponder is NSText)
             else { return event }
             player.togglePlayPause()

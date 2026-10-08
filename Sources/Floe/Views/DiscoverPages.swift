@@ -36,7 +36,7 @@ struct HomeView: View {
                 }
             }
             Shelf(title: "Your top artists", items: library.topArtists) { artist in
-                Card(images: artist.images, title: artist.name, subtitle: String(localized: "Artist"),
+                Card(images: artist.images, title: artist.name, subtitle: L10n.string("Artist"),
                      circle: true) {
                     navigator.push(.artist(artist.id))
                 }
@@ -59,9 +59,9 @@ struct HomeView: View {
     private var greeting: String {
         let name = library.profile?.displayName.map { ", \($0)" } ?? ""
         switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: return String(localized: "Good morning\(name)")
-        case 12..<18: return String(localized: "Good afternoon\(name)")
-        default: return String(localized: "Good evening\(name)")
+        case 5..<12: return L10n.string("Good morning\(name)")
+        case 12..<18: return L10n.string("Good afternoon\(name)")
+        default: return L10n.string("Good evening\(name)")
         }
     }
 
@@ -160,7 +160,7 @@ struct SearchView: View {
                     }
                 }
                 Shelf(title: "Artists", items: results.artists?.items ?? []) { artist in
-                    Card(images: artist.images, title: artist.name, subtitle: String(localized: "Artist"),
+                    Card(images: artist.images, title: artist.name, subtitle: L10n.string("Artist"),
                          circle: true) { navigator.push(.artist(artist.id)) }
                 }
                 Shelf(title: "Albums", items: results.albums?.items ?? []) { album in
@@ -179,7 +179,7 @@ struct SearchView: View {
                 LoadingView()
             } else {
                 MessageView(systemImage: "magnifyingglass",
-                            message: String(localized: "Search for songs, artists, albums and playlists."))
+                            message: L10n.string("Search for songs, artists, albums and playlists."))
             }
         }
         .task(id: search.text) { await search.search(library.api) }

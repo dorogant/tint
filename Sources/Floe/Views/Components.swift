@@ -43,12 +43,17 @@ extension View {
     /// No live blur (`Material`): each live-blur layer costs memory and GPU time,
     /// and the cover backdrop is already blurred at thumbnail resolution.
     func glassPanel(cornerRadius: CGFloat = Theme.corner) -> some View {
+        modifier(GlassPanelModifier(cornerRadius: cornerRadius))
+    }
+}
+
+private struct GlassPanelModifier: ViewModifier {
+    var cornerRadius: CGFloat
+    @AppStorage("glassOpacity") private var opacity = 0.62
+    func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return background(Color(white: 0.11).opacity(0.62), in: shape)
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Theme.panelStroke)
-            )
+        content.background(Color(white: 0.11).opacity(opacity), in: shape)
+            .overlay(shape.strokeBorder(Theme.panelStroke))
     }
 }
 
@@ -241,8 +246,8 @@ enum Format {
     static func total(ms: Int) -> String {
         let minutes = ms / 60_000
         return minutes >= 60
-            ? String(localized: "\(minutes / 60) hr \(minutes % 60) min")
-            : String(localized: "\(minutes) min")
+            ? L10n.string("\(minutes / 60) hr \(minutes % 60) min")
+            : L10n.string("\(minutes) min")
     }
 
     /// Playlist descriptions arrive as HTML snippets.

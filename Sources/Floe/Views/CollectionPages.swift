@@ -1,26 +1,35 @@
 import SwiftUI
 
-/// Toolbar above a track list: "Find in playlist" and sort.
+/// Toolbar above a track list: "Find in playlist" and sort. The field
+/// brightens under the pointer and takes an accent ring while focused.
 struct ListTools: View {
+    @Environment(\.coverPalette) private var palette
     @Binding var filter: String
     @Binding var sort: TrackSort
     var prompt: LocalizedStringKey = "Find in playlist"
+    @FocusState private var focused: Bool
+    @ViewState private var hovering = false
 
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.tertiary)
-                TextField(prompt, text: $filter).textFieldStyle(.plain)
+                Image(systemName: "magnifyingglass").foregroundStyle(focused ? Theme.secondary : Theme.tertiary)
+                TextField(prompt, text: $filter).textFieldStyle(.plain).focused($focused)
                 if !filter.isEmpty {
                     Button { filter = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(Theme.tertiary)
+                        .help("Clear")
                 }
             }
             .font(.system(size: 12))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(width: 220)
-            .background(.white.opacity(0.07), in: Capsule())
+            .background(.white.opacity(focused ? 0.1 : (hovering ? 0.09 : 0.07)), in: Capsule())
+            .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.5) : .clear))
+            .onHover { hovering = $0 }
+            .floeHover(hovering)
+            .floeState(value: focused)
 
             Spacer()
             Menu {
@@ -34,6 +43,7 @@ struct ListTools: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .help("Sort by")
         }
     }
 }
@@ -62,36 +72,45 @@ struct PlaylistView: View {
     @ViewState private var nextOffset: Int? = 0
     @ViewState private var loadingPage = false
     @ViewState private var error: String?
+    /// False for answers a retry won't change (Spotify hides the playlist).
+    @ViewState private var retryable = true
     @ViewState private var filter = ""
     @ViewState private var sort = TrackSort.custom
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             if let playlist {
-                header(playlist)
+                header(playlist).reveal("header")
                 if !library.canListItems(of: playlist) {
                     MessageView(systemImage: "lock",
                                 message: L10n.string("Spotify only lets developer apps list the songs of playlists you own or collaborate on. Play still works."))
                 }
             } else if error == nil {
-                LoadingView()
+                PagePlaceholder()
             }
             if let error {
-                MessageView(systemImage: "exclamationmark.triangle", message: error)
+                if playlist == nil, retryable {
+                    MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange,
+                                actionTitle: "Try Again") { Task { await load() } }
+                } else {
+                    MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange)
+                }
                 if playlist == nil {
                     PlayPill { player.play(PlayRequest(contextURI: "spotify:playlist:\(id)")) }
                         .frame(maxWidth: .infinity)
                 }
             }
             if !entries.isEmpty {
-                ListTools(filter: $filter, sort: $sort)
+                ListTools(filter: $filter, sort: $sort).reveal("tools", order: 1)
                 TrackListView(entries: sort.apply(entries.filtered(filter)), play: play,
                               onReachEnd: { Task { await loadNextPage() } })
+                    .reveal("tracks", order: 2)
             } else if let playlist, library.canListItems(of: playlist), nextOffset == nil, error == nil {
                 MessageView(systemImage: "music.note.list", message: L10n.string("This playlist is empty."))
             }
             if loadingPage { LoadingView() }
         }
+        .revealScope()
         .task(id: id) { await load() }
         .task(id: "\(sort.rawValue):\(filter)") { await loadAll() }
     }
@@ -102,18 +121,19 @@ struct PlaylistView: View {
         if nextOffset == nil, !entries.isEmpty {
             parts.append(Format.total(ms: entries.reduce(0) { $0 + $1.track.durationMs }))
         }
-        let description = Format.plainText(playlist.description)
+        let pinned = library.isPinned(playlist.id)
         return PageHeader(
             badge: "Playlist",
             title: playlist.name,
-            subtitle: ([description].filter { !$0.isEmpty } + [parts.joined(separator: " · ")]).joined(separator: "\n")
+            subtitle: Format.plainText(playlist.description),
+            detail: parts.joined(separator: " · ")
         ) {
             cover(playlist)
         } actions: {
             PlayPill { playFromStart(shuffled: false) }
             IconButton(systemImage: "shuffle", size: 16, help: "Shuffle play") { playFromStart(shuffled: true) }
-            IconButton(systemImage: library.isPinned(playlist.id) ? "pin.fill" : "pin", size: 15,
-                       active: library.isPinned(playlist.id), help: "Pin to sidebar") {
+            IconButton(systemImage: pinned ? "pin.fill" : "pin", size: 15,
+                       active: pinned, help: pinned ? "Unpin" : "Pin to Sidebar") {
                 library.togglePin(playlist.id)
             }
         }
@@ -122,9 +142,10 @@ struct PlaylistView: View {
     @ViewBuilder
     private func cover(_ playlist: PlaylistRef) -> some View {
         if let images = playlist.images, !images.isEmpty {
-            ArtworkView(images: images, size: 200, cornerRadius: 12)
+            ArtworkView(images: images, size: 200, cornerRadius: 12).coverGlow(images)
         } else {
-            MosaicCover(albums: entries.compactMap(\.track.album), size: 200)
+            let albums = entries.compactMap(\.track.album)
+            MosaicCover(albums: albums, size: 200).coverGlow(albums.first?.images)
         }
     }
 
@@ -133,6 +154,7 @@ struct PlaylistView: View {
         entries = []
         nextOffset = 0
         error = nil
+        retryable = true
         do {
             let loaded = try await library.api.playlist(id)
             playlist = loaded
@@ -143,6 +165,7 @@ struct PlaylistView: View {
             }
         } catch let failure as WebAPI.Failure where failure.status == 404 {
             // Spotify-made (editorial/algorithmic) playlists are hidden from developer apps.
+            retryable = false
             error = L10n.string("Spotify doesn't share this playlist with developer apps, but you can play it.")
         } catch {
             self.error = error.localizedDescription
@@ -235,31 +258,36 @@ struct AlbumView: View {
         VStack(alignment: .leading, spacing: 22) {
             if let album {
                 PageHeader(badge: album.albumType == "single" ? "Single" : "Album", title: album.name,
-                           subtitle: subtitle(album)) {
-                    ArtworkView(images: album.images, size: 200, cornerRadius: 12)
+                           detail: detail(album)) {
+                    ArtworkView(images: album.images, size: 200, cornerRadius: 12).coverGlow(album.images)
+                } byline: {
+                    HStack(spacing: 4) {
+                        Text("By").foregroundStyle(Theme.secondary)
+                        ArtistLinks(artists: album.artists, font: .system(size: 13, weight: .semibold))
+                    }
                 } actions: {
                     PlayPill { playFromStart(shuffled: false) }
                     IconButton(systemImage: "shuffle", size: 16, help: "Shuffle play") { playFromStart(shuffled: true) }
                 }
-                HStack(spacing: 4) {
-                    Text("By").foregroundStyle(Theme.secondary)
-                    ArtistLinks(artists: album.artists, font: .system(size: 13, weight: .semibold))
-                }
-                .font(.system(size: 13))
+                .reveal("header")
                 TrackListView(entries: entries, showCover: false, showAlbum: false, numbering: .trackNumber) { entry in
                     player.play(PlayRequest(contextURI: album.uri, startURI: entry.track.uri), selectedTrack: entry.track)
                 }
+                .reveal("tracks", order: 1)
             } else if let error {
-                MessageView(systemImage: "exclamationmark.triangle", message: error)
+                MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange,
+                            actionTitle: "Try Again") { Task { await load() } }
             } else {
-                LoadingView()
+                PagePlaceholder()
             }
         }
+        .revealScope()
         .task(id: id) { await load() }
     }
 
-    private func subtitle(_ album: Album) -> String {
-        var parts = [album.artists.map(\.name).joined(separator: ", ")]
+    /// Year, length and running time; the artists are the byline.
+    private func detail(_ album: Album) -> String {
+        var parts: [String] = []
         if let year = album.ref.year { parts.append(year) }
         parts.append(L10n.string("\(album.totalTracks ?? entries.count) songs"))
         parts.append(Format.total(ms: entries.reduce(0) { $0 + $1.track.durationMs }))
@@ -322,20 +350,26 @@ struct SongsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             PageHeader(badge: "Playlist", title: L10n.string("Liked Songs"),
-                       subtitle: total.map { L10n.string("\($0) songs") } ?? " ") {
-                LikedCover(size: 200)
+                       detail: total.map { L10n.string("\($0) songs") } ?? " ") {
+                LikedCover(size: 200).coverGlow(color: LikedCover.violet)
             } actions: {
                 PlayPill { playFromStart(shuffled: false) }
                 IconButton(systemImage: "shuffle", size: 16, help: "Shuffle play") { playFromStart(shuffled: true) }
             }
-            if let error { MessageView(systemImage: "exclamationmark.triangle", message: error) }
+            .reveal("header")
+            if let error {
+                MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange,
+                            actionTitle: "Try Again") { Task { await reload() } }
+            }
             if !entries.isEmpty {
-                ListTools(filter: $filter, sort: $sort, prompt: "Find in Liked Songs")
+                ListTools(filter: $filter, sort: $sort, prompt: "Find in Liked Songs").reveal("tools", order: 1)
                 TrackListView(entries: sort.apply(entries.filtered(filter)), play: play,
                               onReachEnd: { Task { await loadNextPage() } })
+                    .reveal("tracks", order: 2)
             }
             if loadingPage { LoadingView() }
         }
+        .revealScope()
         .task(id: library.likedRevision) { await reload() }
         .task(id: "\(sort.rawValue):\(filter)") { await loadAll() }
     }
@@ -393,10 +427,11 @@ struct SongsView: View {
 struct LikedCover: View {
     @Environment(\.coverPalette) private var palette
     let size: CGFloat
+    static let violet = Color(red: 0.27, green: 0.2, blue: 0.75)
 
     var body: some View {
         RoundedRectangle(cornerRadius: size > 60 ? 12 : 5)
-            .fill(LinearGradient(colors: [Color(red: 0.27, green: 0.2, blue: 0.75), palette.accent.opacity(0.85)],
+            .fill(LinearGradient(colors: [Self.violet, palette.accent.opacity(0.85)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
             .overlay(Image(systemName: "star.fill").font(.system(size: size * 0.32)).foregroundStyle(.white))
             .frame(width: size, height: size)

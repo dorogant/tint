@@ -18,7 +18,17 @@ final class Navigator {
     var root: Route { stack[0] }
     var canGoBack: Bool { stack.count > 1 }
 
-    func select(_ route: Route) { surface = .library; stack = [route] }
+    /// Bumped each time Search is chosen (sidebar or ⌘F), so the field takes
+    /// focus even when Search is already showing. Going Back to Search doesn't.
+    private(set) var searchFocusRequest = 0
+    /// The last request the field acted on.
+    @ObservationIgnored var searchFocusHandled = 0
+
+    func select(_ route: Route) {
+        surface = .library
+        stack = [route]
+        if route == .search { searchFocusRequest += 1 }
+    }
 
     func push(_ route: Route) {
         surface = .library

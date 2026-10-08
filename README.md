@@ -435,6 +435,8 @@ scripts/              build-app.sh, make-icon.swift
   Team ID macOS ties its items to each build's code hash, so it asked for your
   password after every rebuild. Builds before this kept both logins in the Keychain;
   Floe moves each one into its file on first read and deletes the old item, once.
+  `scripts/test-credentials.sh` checks this offline, with a temporary folder and a
+  fake Keychain.
 - **Web API limits (Development Mode, 2026).** Floe uses only endpoints still open to
   Development Mode apps. Consequences: playlists you don't own show their header and
   Play but no track list; Spotify-made playlists 404 (Play still works); no artist top

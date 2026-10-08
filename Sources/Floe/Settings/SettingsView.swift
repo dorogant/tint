@@ -237,12 +237,27 @@ struct SettingsView: View {
     }
 }
 
+private struct SettingsLabelWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+extension EnvironmentValues {
+    /// A minimum label width for slider and stepper rows outside a `Form`, so
+    /// stacked sliders start in one column.
+    var settingsLabelWidth: CGFloat? {
+        get { self[SettingsLabelWidthKey.self] }
+        set { self[SettingsLabelWidthKey.self] = newValue }
+    }
+}
+
 /// Native slider with a stable readout and an explicit VoiceOver name/value.
+/// Its label dims with the slider, as a toggle's does.
 struct SettingsSlider: View {
     let title: LocalizedStringKey
     @Binding var value: Double
     let range: ClosedRange<Double>
     let displayedValue: Text
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.settingsLabelWidth) private var labelWidth
 
     init(_ title: LocalizedStringKey, value: Binding<Double>, range: ClosedRange<Double>, displayedValue: Text) {
         self.title = title
@@ -252,15 +267,45 @@ struct SettingsSlider: View {
     }
 
     var body: some View {
-        LabeledContent(title) {
+        LabeledContent {
             HStack(spacing: 12) {
                 Slider(value: $value, in: range).labelsHidden()
                     .accessibilityLabel(Text(title))
                     .accessibilityValue(displayedValue)
-                displayedValue.monospacedDigit().foregroundStyle(.secondary)
+                displayedValue.monospacedDigit().foregroundStyle(isEnabled ? .secondary : .tertiary)
                     .frame(width: 46, alignment: .trailing)
                     .accessibilityHidden(true)
             }.frame(maxWidth: 280)
+        } label: {
+            Text(title).foregroundStyle(isEnabled ? .primary : .tertiary)
+                .frame(minWidth: labelWidth, alignment: .leading)
+        }
+    }
+}
+
+/// A small count with a stepper, laid out and dimmed like `SettingsSlider`.
+struct SettingsStepper: View {
+    let title: LocalizedStringKey
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(_ title: LocalizedStringKey, value: Binding<Int>, range: ClosedRange<Int>) {
+        self.title = title
+        _value = value
+        self.range = range
+    }
+
+    var body: some View {
+        LabeledContent {
+            HStack(spacing: 8) {
+                Text("\(value)").monospacedDigit().foregroundStyle(isEnabled ? .secondary : .tertiary)
+                    .accessibilityHidden(true)
+                Stepper(title, value: $value, in: range).labelsHidden()
+                    .accessibilityValue(Text("\(value)"))
+            }.frame(maxWidth: .infinity, alignment: .trailing)
+        } label: {
+            Text(title).foregroundStyle(isEnabled ? .primary : .tertiary)
         }
     }
 }

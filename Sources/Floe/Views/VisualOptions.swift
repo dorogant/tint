@@ -46,9 +46,7 @@ struct BackgroundOptions: View {
                            displayedValue: percent(settings.shake))
                 .disabled(settings.backgroundKind != .fluid)
             Group {
-                Stepper(value: $settings.beamCount, in: VisualSettings.beamCountRange) {
-                    LabeledContent("Beam count") { Text("\(settings.beamCount)").monospacedDigit() }
-                }
+                SettingsStepper("Beam count", value: $settings.beamCount, range: VisualSettings.beamCountRange)
                 Toggle("Strobe on the beat", isOn: $settings.strobe)
             }.disabled(settings.backgroundKind != .beams)
         }.disabled(!settings.liveBackground)
@@ -71,6 +69,7 @@ struct VisualControls: View {
             Text("Motion stops when playback pauses or Floe is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+        .environment(\.settingsLabelWidth, 92) // one label column, so the sliders line up
         .padding(20).frame(width: 340)
     }
 }

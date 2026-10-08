@@ -18,7 +18,7 @@ enum TokenError: LocalizedError {
     var errorDescription: String? { L10n.string("Your Spotify library isn't connected.") }
 }
 
-/// PKCE tokens for Floe's own client ID, persisted in the Keychain and refreshed as needed.
+/// PKCE tokens for Floe's own client ID, persisted in `CredentialStore` and refreshed as needed.
 actor UserTokenProvider: TokenProvider {
     private struct Stored: Codable {
         var accessToken: String
@@ -81,7 +81,7 @@ actor UserTokenProvider: TokenProvider {
         refreshTask?.cancel()
         stored = nil
         refreshTask = nil
-        Keychain.delete(Keychain.Account.webAPI)
+        CredentialStore.shared.delete(.webAPI)
     }
 
     private func refreshed(_ current: Stored) async throws -> Stored {
@@ -114,7 +114,7 @@ actor UserTokenProvider: TokenProvider {
     private func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
-        if let data = Keychain.read(Keychain.Account.webAPI) {
+        if let data = CredentialStore.shared.read(.webAPI) {
             stored = try? JSONDecoder().decode(Stored.self, from: data)
         }
     }
@@ -123,7 +123,7 @@ actor UserTokenProvider: TokenProvider {
         stored = value
         loaded = true
         if let data = try? JSONEncoder().encode(value) {
-            Keychain.write(data, account: Keychain.Account.webAPI)
+            CredentialStore.shared.write(data, account: .webAPI)
         }
     }
 }

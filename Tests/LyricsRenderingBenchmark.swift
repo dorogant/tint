@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A real SwiftUI window, using only synthetic text and a monotonic playback
-/// fixture. No Spotify session, Keychain, network request or rendered export.
+/// fixture. No Spotify session, saved credentials, network request or rendered export.
 @main @MainActor
 struct LyricsRenderingBenchmark {
     static func main() async {

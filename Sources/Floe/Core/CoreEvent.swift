@@ -46,7 +46,7 @@ enum RepeatMode: Int, Sendable {
 enum CoreEvent: Sendable {
     case connecting
     case connected(username: String)
-    /// Reusable librespot credentials (JSON) to keep in the Keychain.
+    /// Reusable librespot credentials (JSON) to keep in `CredentialStore`.
     case credentials(Data)
     case loginFailed(String)
     case disconnected

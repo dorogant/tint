@@ -87,9 +87,9 @@ final class PlayerModel {
 
     // MARK: - Session
 
-    /// Restores the previous session from the Keychain, if there is one.
+    /// Restores the previous session from `CredentialStore`, if there is one.
     func restoreSession() async {
-        let stored = await Task.detached { Keychain.read(Keychain.Account.playbackSession) }.value
+        let stored = await Task.detached { CredentialStore.shared.read(.playbackSession) }.value
         guard let stored, session == .loggedOut else { return }
         storedCredentials = stored
         startSession(using: stored)
@@ -121,7 +121,7 @@ final class PlayerModel {
         pendingPlayback = nil
         storedCredentials = nil
         core.logOut()
-        Task.detached { Keychain.delete(Keychain.Account.playbackSession) }
+        Task.detached { CredentialStore.shared.delete(.playbackSession) }
     }
 
     // MARK: - Transport
@@ -323,7 +323,7 @@ final class PlayerModel {
             }
         case let .credentials(blob):
             storedCredentials = blob
-            Task.detached { Keychain.write(blob, account: Keychain.Account.playbackSession) }
+            Task.detached { CredentialStore.shared.write(blob, account: .playbackSession) }
         case let .loginFailed(message):
             log.error("Login failed: \(message, privacy: .public)")
             if hasConnected || reconnectAttempt > 0 { session = .connecting; scheduleReconnect() } else { session = .failed(message) }

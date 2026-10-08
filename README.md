@@ -75,19 +75,22 @@ same Desktop icon. To install an already-built app, run `scripts/install-app.sh`
 The installer verifies its signature before replacing an existing Floe bundle and
 does not overwrite unrelated items with the same name.
 
-If macOS asks to access your saved Spotify login, unlock your login Keychain and
-choose **Always Allow** for Floe. This system dialog requires your own password;
-the installer does not read or change credentials.
+Floe keeps your Spotify login in private files (see *Credentials* under How it
+works), so rebuilds don't ask for your password. Builds before that used the
+Keychain: the first launch after updating may ask once for each of the two saved
+logins while Floe moves them out. Enter your password and choose **Allow**; it
+doesn't ask again. The installer does not read or change credentials.
 
 On first launch Floe asks for two approvals in the browser: **playback** (librespot,
 Spotify's own client ID) and **library** (the Web API, through your own developer app).
 
 ### Signing
 
-Floe keeps its Spotify credentials in the Keychain, which only lets the app that
-created an item read it back. An ad-hoc signature changes on every build, so each
-rebuild would prompt for your password. To avoid that, create a local code-signing
-certificate once; the build script uses it automatically (or set `FLOE_SIGN_IDENTITY`):
+The build script signs with a local code-signing certificate when there is one, so
+every build keeps the same code identity; an ad-hoc signature changes on every build.
+Floe's login no longer depends on it, but the certificate lets Floe delete its old
+Keychain items without asking. Create it once; the build script uses it
+automatically (or set `FLOE_SIGN_IDENTITY`):
 
 1. Open **Keychain Access** (Spotlight, or `/System/Library/CoreServices/Applications/`).
 2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
@@ -95,8 +98,7 @@ certificate once; the build script uses it automatically (or set `FLOE_SIGN_IDEN
    **Code Signing** → **Create**. It is stored in your login keychain.
 
 The first build after that asks whether `codesign` may use the key (choose **Always
-Allow**). The first launch then asks once for the existing Floe item; choose **Always
-Allow** again. Without the certificate the script falls back to ad-hoc signing.
+Allow**). Without the certificate the script falls back to ad-hoc signing.
 
 If the certificate has another name (Keychain Access pre-fills your full name), put
 its name or SHA-1 (from `security find-identity -p codesigning`) in a git-ignored
@@ -259,7 +261,7 @@ that arrive during GPU work coalesce into the latest replacement frame.
 
 `scripts/benchmark-lyrics.sh` opens a separate native window with synthetic timed
 lines, measures CPU during steady/changing/paused lyrics, checks line-clock wakeups,
-then closes it. It needs neither Spotify nor Keychain access. An optional first
+then closes it. It needs neither Spotify nor saved credentials. An optional first
 argument selects another `LyricsView.swift` to benchmark against the same fixture.
 The production lyric clock now sleeps until the next line, and stops waking after
 the final line or during pauses. Progress motion also stops while Floe is inactive
@@ -387,7 +389,7 @@ Sources/Floe/         SwiftUI app
   Core/               Swift wrapper over the C ABI, event decoding
   Playback/           PlayerModel, AVAudioEngine output, Now Playing + media keys
   API/                Web API client and models
-  Auth/               OAuth PKCE (loopback redirect), token provider, Keychain
+  Auth/               OAuth PKCE (loopback redirect), token provider, credential store
   Library/            library state (playlists, pins, liked songs), navigation
   Images/             artwork cache, cover palette and pre-blurred backdrop
   Lyrics/             LRCLIB service, memory cache, LRC parser and view state
@@ -423,9 +425,18 @@ scripts/              build-app.sh, make-icon.swift
 - **Login.** librespot's session must be authorised with *Spotify's own* client ID
   (`streaming` scope): Spotify rejects third-party client IDs there. Floe runs the PKCE
   flow in the browser with a one-shot listener on `127.0.0.1:5588/login`, gets
-  reusable credentials back from librespot, and stores only those in the Keychain.
-  The Web API uses Floe's own client ID with PKCE on `127.0.0.1:8898/callback`; its
-  refresh token is in the Keychain too. No client secret is used or stored anywhere.
+  reusable credentials back from librespot, and stores only those. The Web API uses
+  Floe's own client ID with PKCE on `127.0.0.1:8898/callback`; its refresh token is
+  stored too. No client secret is used or stored anywhere.
+- **Credentials.** Both logins are files in `~/Library/Application Support/Floe/Credentials`
+  (folder 0700, files 0600, written atomically, excluded from backups). Any process
+  running as you can read them, as with Spotify's own desktop client; FileVault
+  protects them at rest. The Keychain would be stricter, but without a developer
+  Team ID macOS ties its items to each build's code hash, so it asked for your
+  password after every rebuild. Builds before this kept both logins in the Keychain;
+  Floe moves each one into its file on first read and deletes the old item, once.
+  `scripts/test-credentials.sh` checks this offline, with a temporary folder and a
+  fake Keychain.
 - **Web API limits (Development Mode, 2026).** Floe uses only endpoints still open to
   Development Mode apps. Consequences: playlists you don't own show their header and
   Play but no track list; Spotify-made playlists 404 (Play still works); no artist top

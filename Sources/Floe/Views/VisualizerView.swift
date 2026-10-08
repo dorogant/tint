@@ -20,11 +20,16 @@ struct VisualizerView: NSViewRepresentable {
 
     func updateNSView(_ view: VisualizerLayerView, context: Context) {
         // Only settings and colours come through SwiftUI; frames never do.
+        let tints = Self.tints(palette.highlight)
         view.configure(style: circular ? (settings.shape == .wave ? .halo : .radialBars)
                                        : (settings.shape == .wave ? .beads : .bars),
-                       sensitivity: Float(settings.sensitivity), color: NSColor(palette.highlight),
-                       pale: NSColor(palette.highlight.mix(with: .white, by: 0.55)),
+                       sensitivity: Float(settings.sensitivity), color: tints.color, pale: tints.pale,
                        running: visualization.isRunning)
+    }
+
+    /// The saturated base and the pale top from the palette's highlight.
+    nonisolated static func tints(_ highlight: Color) -> (color: NSColor, pale: NSColor) {
+        (NSColor(highlight), NSColor(highlight.mix(with: .white, by: 0.55)))
     }
 }
 

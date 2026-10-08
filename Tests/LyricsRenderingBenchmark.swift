@@ -16,7 +16,7 @@ struct LyricsRenderingBenchmark {
         let player = PlayerModel(), lyrics = LyricsModel()
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 430, height: 760),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Floe — synthetic lyric performance check"
+        window.title = "Tint — synthetic lyric performance check"
         window.isReleasedWhenClosed = false
         let view = NSHostingView(rootView: LyricsView().environment(player).environment(lyrics)
             .preferredColorScheme(.dark).background(Color(red: 0.04, green: 0.05, blue: 0.065)))

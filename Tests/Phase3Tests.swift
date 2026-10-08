@@ -76,7 +76,7 @@ final class Phase3Tests {
         expectEqual(query.first { $0.name == "track_name" }?.value, track.name)
         expectEqual(query.first { $0.name == "artist_name" }?.value, "Artist + One")
         expectEqual(query.first { $0.name == "duration" }?.value, "123.456")
-        expectTrue(request.value(forHTTPHeaderField: "User-Agent")!.hasPrefix("Floe"))
+        expectTrue(request.value(forHTTPHeaderField: "User-Agent")!.hasPrefix("Tint"))
     }
 
     func testGreyCoverFallsBackAndNavyUsesWhiteText() {

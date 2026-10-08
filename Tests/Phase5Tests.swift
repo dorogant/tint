@@ -65,7 +65,7 @@ private actor MockPlayback: PlaybackAPI {
         return try JSONDecoder().decode(PlaybackQueue.self, from: Data(payload.utf8))
     }
     func playbackDevices() -> [ConnectDevice] {
-        [ConnectDevice(id: "floe", name: "Floe", type: "computer", isActive: true, isRestricted: false, volumePercent: 70, supportsVolume: true),
+        [ConnectDevice(id: "tint", name: "Tint", type: "computer", isActive: true, isRestricted: false, volumePercent: 70, supportsVolume: true),
          ConnectDevice(id: "blocked", name: "Restricted", type: "speaker", isActive: false, isRestricted: true, volumePercent: nil, supportsVolume: false),
          ConnectDevice(id: nil, name: "Unknown", type: "speaker", isActive: false, isRestricted: false, volumePercent: nil, supportsVolume: false)]
     }
@@ -156,7 +156,7 @@ struct Phase5Tests {
         precondition(transferred == nil, "restricted devices must not receive commands")
         await transferModel.transfer(transferModel.devices[0])
         transferred = await mock.transferred
-        precondition(transferred == "floe" && !transferModel.transferring)
+        precondition(transferred == "tint" && !transferModel.transferring)
         await mock.setFailure(); await transferModel.refresh(.queue)
         precondition(transferModel.error?.contains("expired") == true && !transferModel.isLoading)
 

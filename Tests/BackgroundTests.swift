@@ -26,7 +26,8 @@ struct BackgroundTests {
         settingsChecks()
         detectorChecks()
         fluidChecks(device: device)
-        print("PASS: \(checks) background checks (renderer, palette, settings, beats, Fluid)")
+        beamChecks(device: device)
+        print("PASS: \(checks) background checks (renderer, palette, settings, beats, Fluid, Beams, flash rate)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
     }
 
@@ -343,6 +344,162 @@ struct BackgroundTests {
         Previews.sheet(rows, "fluid-sheet")
         check(brightest <= legibleLuma && meanest < 0.32,
               "Fluid at full glow on a pale cover must stay dark enough for white text (peak \(brightest), mean \(meanest))")
+    }
+
+    // MARK: - Beams
+
+    static func beamChecks(device: MTLDevice) {
+        guard let renderer = try? OffscreenRenderer(device: device) else { fail("cannot build the offscreen renderer") }
+        let quietTrack = SyntheticTrack(pad: 0.05)
+        let breakdown = SyntheticTrack(pad: 0.12, hats: 0.02)
+        let drop = SyntheticTrack(kicksPerSecond: 2, kick: 0.95, bass: 0.3, pad: 0.25, hats: 0.12, kickOffset: 4.25)
+        let quietFrames = SyntheticTrack.frames([(quietTrack, 3)])
+        let dropFrames = SyntheticTrack.frames([(breakdown, 4), (drop, 5)])
+        var rows: [[RenderedFrame]] = []
+
+        for (name, cover) in [("sunset", Covers.sunset), ("ocean", Covers.ocean)] {
+            let settings = BackgroundConfiguration(kind: .beams, colors: Covers.palette(cover))
+            var quiet = BackgroundAnimator()
+            quiet.configure(settings, animated: false)
+            for frame in quietFrames { quiet.advance(by: 1 / 30, frame: frame) }
+            let quietFrame = renderer.render(quiet)
+            check(quietFrame.meanLuma < 0.05, "\(name): Beams must stay dim in a quiet passage (\(quietFrame.meanLuma))")
+
+            var animator = BackgroundAnimator()
+            animator.configure(settings, animated: false)
+            var beforeKick: RenderedFrame?, kick: RenderedFrame?, sustained: RenderedFrame?, change: RenderedFrame?
+            var breakdownFrame: RenderedFrame?
+            var changedAt = -1
+            for (i, frame) in dropFrames.enumerated() {
+                let pattern = animator.beams.pattern
+                animator.advance(by: 1 / 30, frame: frame)
+                if i == 119 { breakdownFrame = renderer.render(animator) }
+                if i >= 120, changedAt < 0, animator.beams.pattern != pattern { changedAt = i }
+                if i == changedAt + 5, changedAt >= 0 { change = renderer.render(animator) }
+                // The third kick of the drop, against the frame just before it.
+                if i >= 120 + 30, kick == nil {
+                    let next = dropFrames.indices.contains(i + 1) ? dropFrames[i + 1] : frame
+                    var peek = animator
+                    peek.advance(by: 1 / 30, frame: next)
+                    if peek.pulse.beat > 0 {
+                        beforeKick = renderer.render(animator)
+                        kick = renderer.render(peek)
+                    }
+                }
+                if i == 120 + 75 { sustained = renderer.render(animator) }
+            }
+            guard let beforeKick, let kick, let sustained, let change, let breakdownFrame else {
+                fail("\(name): the drop must beat and change the pattern (changed at \(changedAt))")
+            }
+            check(changedAt <= 120 + 36, "\(name): the drop must switch the pattern within its first beats (frame \(changedAt))")
+            check(kick.meanLuma > quietFrame.meanLuma * 3, "\(name): a kick on the drop must blow the beams up (\(quietFrame.meanLuma) → \(kick.meanLuma))")
+            check(kick.meanLuma > beforeKick.meanLuma * 1.2, "\(name): each kick must punch the beams (\(beforeKick.meanLuma) → \(kick.meanLuma))")
+            check(sustained.meanLuma > breakdownFrame.meanLuma * 1.5, "\(name): the drop must outshine the breakdown before it")
+            for frame in [quietFrame, breakdownFrame, beforeKick, kick, sustained, change] {
+                check(frame.meanLuma < 0.2 && frame.share(above: legibleLuma) < 0.1,
+                      "\(name): the frame must stay dark apart from the beams (mean \(frame.meanLuma), bright \(frame.share(above: legibleLuma)))")
+            }
+
+            var strobe = BackgroundAnimator()
+            strobe.configure(BackgroundConfiguration(kind: .beams, colors: settings.colors, strobe: true), animated: false)
+            var flashFrame: RenderedFrame?
+            for frame in dropFrames {
+                strobe.advance(by: 1 / 30, frame: frame)
+                if flashFrame == nil, strobe.beams.flash == 1 { flashFrame = renderer.render(strobe) }
+            }
+            guard let flashFrame else { fail("\(name): the opt-in strobe must flash on the drop") }
+            Previews.write(quietFrame, "beams-\(name)-1-quiet")
+            Previews.write(breakdownFrame, "beams-\(name)-2-breakdown")
+            Previews.write(kick, "beams-\(name)-3-kick")
+            Previews.write(sustained, "beams-\(name)-4-drop")
+            Previews.write(change, "beams-\(name)-5-pattern-change")
+            Previews.write(flashFrame, "beams-\(name)-6-strobe")
+            rows.append([quietFrame, breakdownFrame, beforeKick, kick, sustained, change, flashFrame])
+        }
+        Previews.sheet(rows, "beams-sheet", scale: 0.4)
+
+        // A steady groove changes the look every few bars, not just on drops.
+        var steady = BackgroundAnimator()
+        steady.configure(BackgroundConfiguration(kind: .beams), animated: false)
+        var patterns: Set<Int> = []
+        for frame in SyntheticTrack.frames([(SyntheticTrack(kicksPerSecond: 2, kick: 0.8, bass: 0.2, pad: 0.15, hats: 0.08), 20)]) {
+            steady.advance(by: 1 / 30, frame: frame)
+            patterns.insert(steady.beams.pattern.rawValue)
+        }
+        check(patterns.count >= 3, "a steady groove must move through patterns every few bars (\(patterns.count))")
+        let four = BackgroundConfiguration(kind: .beams, beamCount: 4)
+        var counted = BackgroundAnimator()
+        counted.configure(four, animated: false)
+        let heads = counted.beamUniforms(width: 512, height: 336)
+        check(heads.size.z == 4 && heads.heads.4 == .zero, "the beam count must limit the heads drawn")
+
+        flashRateChecks(renderer: renderer)
+    }
+
+    /// WCAG 2.3.1: no more than three flashes in any second, over the whole frame
+    /// or any 1/16 of it, while the music hammers eight kicks a second: with the
+    /// strobe at the brightest settings, without it, and at the defaults.
+    static func flashRateChecks(renderer: OffscreenRenderer) {
+        let frantic = SyntheticTrack(kicksPerSecond: 8, kick: 0.95, bass: 0.3, pad: 0.25, hats: 0.12, kickOffset: 2)
+        let frames = SyntheticTrack.frames([(SyntheticTrack(pad: 0.08), 2), (frantic, 4)])
+        let colors = Covers.palette(Covers.sunset)
+        let brightest = BackgroundConfiguration(kind: .beams, colors: colors, reactivity: 2, speed: 2, glow: 2, beamCount: 8)
+        var strobing = brightest
+        strobing.strobe = true
+        for (name, configuration) in [("strobe at maximum", strobing), ("maximum", brightest),
+                                      ("defaults", BackgroundConfiguration(kind: .beams, colors: colors))] {
+            let strobe = configuration.strobe
+            var animator = BackgroundAnimator()
+            animator.configure(configuration, animated: false)
+            var cells: [[Float]] = Array(repeating: [], count: 17)
+            var strobes: [Int] = []
+            for (i, frame) in frames.enumerated() {
+                animator.advance(by: 1 / 30, frame: frame)
+                if animator.beams.flash == 1 { strobes.append(i) }
+                guard i >= 50 else { continue }
+                let rendered = renderer.render(animator)
+                let grid = rendered.relativeLuminance(columns: 4, rows: 4)
+                for (c, value) in grid.enumerated() { cells[c].append(value) }
+                cells[16].append(grid.reduce(0, +) / 16)
+            }
+            let worst = cells.map { mostFlashesPerSecond(transitions($0)) }.max()!
+            check(worst <= 3, "\(name): no region may flash more than 3 times a second (\(worst))")
+            let strobesPerSecond = (0..<frames.count).map { start in strobes.filter { (start..<start + 30).contains($0) }.count }.max()!
+            let whole = mostFlashesPerSecond(transitions(cells[16]))
+            if strobe {
+                check(strobes.count >= 6 && strobesPerSecond <= 3,
+                      "the strobe must fire on the beat, but no more than 3 times a second (\(strobes.count) in 4 s, \(strobesPerSecond) per second)")
+                check(transitions(cells[16]).count >= 2 * strobes.count - 1, "each strobe must flash the whole frame")
+            } else {
+                check(strobes.isEmpty, "\(name): the strobe is opt-in")
+            }
+            if configuration == BackgroundConfiguration(kind: .beams, colors: colors) {
+                check(whole == 0, "at the defaults, the whole frame must never flash (\(whole) a second)")
+            }
+            print("Beams at 8 kicks/s, \(name): \(strobes.count) strobe flashes in 4 s; at most \(whole) WCAG flashes a second over the whole frame, \(worst) in any region")
+        }
+    }
+
+    /// Frames where the luminance rose or fell by at least 0.1 since the last
+    /// turn (with the darker side below 0.8): two of them make one WCAG flash.
+    static func transitions(_ series: [Float], threshold: Float = 0.1) -> [Int] {
+        guard var low = series.first else { return [] }
+        var high = low, trend = 0, times: [Int] = []
+        for (i, value) in series.enumerated() {
+            low = min(low, value)
+            high = max(high, value)
+            if trend <= 0, value - low >= threshold, low < 0.8 {
+                times.append(i); trend = 1; low = value; high = value
+            } else if trend >= 0, high - value >= threshold, value < 0.8 {
+                times.append(i); trend = -1; low = value; high = value
+            }
+        }
+        return times
+    }
+
+    static func mostFlashesPerSecond(_ transitions: [Int]) -> Int {
+        guard let last = transitions.last else { return 0 }
+        return (0...last).map { start in transitions.filter { (start..<start + 30).contains($0) }.count / 2 }.max()!
     }
 
     // MARK: - Helpers

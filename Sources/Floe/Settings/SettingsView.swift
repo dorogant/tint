@@ -108,7 +108,7 @@ struct SettingsView: View {
             } header: {
                 Text("Motion")
             } footer: {
-                note("Fluid swirls the cover's colors like ink, shakes on the beat and glows with the music. Beams sweep stage lights across the screen.")
+                note("Fluid swirls the cover's colors like ink, shakes on the beat and glows with the music. Beams sweep stage lights through haze and punch on every kick. The strobe never flashes more than three times a second.")
             }
             SwiftUI.Section {
                 SettingsSlider("Blur", value: $visuals.backgroundBlur, range: 0...18,

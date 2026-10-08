@@ -78,22 +78,23 @@ struct RenderedFrame {
         for y in 0..<height { for x in 0..<width where luma(x, y) > limit { count += 1 } }
         return Float(count) / Float(width * height)
     }
-    /// WCAG relative luminance, averaged over a cell of a `columns`×`rows` grid.
-    func relativeLuminance(column: Int, row: Int, columns: Int, rows: Int) -> Float {
-        func linear(_ v: UInt8) -> Float {
-            let x = Float(v) / 255
-            return x <= 0.04045 ? x / 12.92 : powf((x + 0.055) / 1.055, 2.4)
-        }
-        let x0 = column * width / columns, x1 = (column + 1) * width / columns
-        let y0 = row * height / rows, y1 = (row + 1) * height / rows
-        var sum: Float = 0
-        for y in y0..<y1 {
-            for x in x0..<x1 {
+    private static let linear: [Float] = (0..<256).map {
+        let x = Float($0) / 255
+        return x <= 0.04045 ? x / 12.92 : powf((x + 0.055) / 1.055, 2.4)
+    }
+
+    /// WCAG relative luminance (over black), averaged over each cell of a grid, row by row.
+    func relativeLuminance(columns: Int, rows: Int) -> [Float] {
+        var sums = [Float](repeating: 0, count: columns * rows)
+        for y in 0..<height {
+            let row = y * rows / height
+            for x in 0..<width {
                 let i = (y * width + x) * 4
-                sum += 0.0722 * linear(bytes[i]) + 0.7152 * linear(bytes[i + 1]) + 0.2126 * linear(bytes[i + 2])
+                sums[row * columns + x * columns / width] += 0.0722 * Self.linear[Int(bytes[i])]
+                    + 0.7152 * Self.linear[Int(bytes[i + 1])] + 0.2126 * Self.linear[Int(bytes[i + 2])]
             }
         }
-        return sum / Float((x1 - x0) * (y1 - y0))
+        return sums.map { $0 / Float(width * height / (columns * rows)) }
     }
     /// Mean absolute difference per channel, 0…1.
     func difference(from other: RenderedFrame) -> Float {

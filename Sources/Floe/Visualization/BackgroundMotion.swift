@@ -32,11 +32,16 @@ struct FluidUniforms {
 
 /// Matches `BeamUniforms` in `ReactiveShader`.
 struct BeamUniforms {
-    var color: SIMD4<Float>
-    /// Time, energy, reactivity, bass.
+    var colors: Palette
+    /// Haze clock, shimmer, strobe flash, glow.
     var motion: SIMD4<Float>
+    /// Drawable width and height, head count, floor beams' intensity.
     var size: SIMD4<Float>
-    var beams: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+    /// The floor beams' angle, spread and two palette slots.
+    var floor: SIMD4<Float>
+    /// Per head: angle from straight down, intensity, spread, palette slot.
+    var heads: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
+                SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 }
 
 /// The live background's state between frames, apart from Metal so tests can
@@ -50,7 +55,7 @@ struct BackgroundAnimator {
     private var to = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
     private var fade: Float = 1
     private(set) var fluid = FluidMotion()
-    private(set) var beams = ClassicBeams()
+    private(set) var beams = BeamRig()
     static let crossfade: Float = 1.6
 
     /// Running changes crossfade the palette; paused ones (and Reduce Motion) apply at once.
@@ -76,7 +81,7 @@ struct BackgroundAnimator {
         fade = min(1, fade + dt / Self.crossfade)
         switch configuration.kind {
         case .fluid: fluid.advance(by: dt, pulse: pulse, configuration: configuration)
-        case .beams: beams.advance(by: dt, frame: frame)
+        case .beams: beams.advance(by: dt, pulse: pulse, configuration: configuration)
         }
     }
 
@@ -100,10 +105,15 @@ struct BackgroundAnimator {
     }
 
     func beamUniforms(width: Float, height: Float) -> BeamUniforms {
-        let accent = colors[0]
-        return BeamUniforms(color: SIMD4(accent, 1),
-                            motion: SIMD4(beams.time, beams.energy, configuration.reactivity, beams.bass),
-                            size: SIMD4(width, height, 0, 0), beams: beams.packed)
+        let count = min(BeamRig.maximumHeads, max(1, configuration.beamCount))
+        // Paired from the palette being faded to, so a crossfade can't swap a pair midway.
+        let pair = beams.colorPair(to)
+        let h = beams.heads(count: count, colors: pair)
+        return BeamUniforms(colors: Self.palette(colors),
+                            motion: SIMD4(beams.haze, beams.shimmer, beams.flash, configuration.glow),
+                            size: SIMD4(width, height, Float(count), beams.floorLevel),
+                            floor: SIMD4(beams.floorAngle, beams.spread, Float(pair.0), Float(pair.1)),
+                            heads: (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]))
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.
@@ -162,43 +172,6 @@ struct FluidMotion {
 
     /// The field punches in slightly on a hit.
     var punch: Float { joltStrength * 0.025 * expf(-joltAge * 9) }
-}
-
-/// The original stage of twelve beams, each following its part of the spectrum.
-struct ClassicBeams {
-    static let count = 12
-    private(set) var time: Float = 0
-    private(set) var energy: Float = 0
-    private(set) var bass: Float = 0
-    private var targets = [Float](repeating: 0, count: count)
-    private var levels = [Float](repeating: 0, count: count)
-
-    mutating func advance(by dt: Float, frame: SpectrumFrame) {
-        time += dt
-        energy = min(1, max(0, frame.rms * 6))
-        // Six band groups per side, mirrored so bass lights the middle beams. The
-        // levels adapt to each song, so every group's hits make its beams flare.
-        let half = Self.count / 2
-        let group = max(1, frame.levels.count / half)
-        for g in 0..<half {
-            let slice = frame.levels.dropFirst(g * group).prefix(group)
-            let level = slice.reduce(0, +) / Float(max(1, slice.count))
-            targets[half - 1 - g] = level
-            targets[half + g] = level
-        }
-        // Quick attack, slower release: beams flare on hits and fall back smoothly.
-        for i in levels.indices {
-            levels[i] += (targets[i] - levels[i]) * (targets[i] > levels[i] ? 0.55 : 0.14)
-        }
-        let low = (targets[half - 1] + targets[half]) / 2
-        bass += (low - bass) * (low > bass ? 0.6 : 0.12)
-    }
-
-    var packed: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) {
-        (SIMD4(levels[0], levels[1], levels[2], levels[3]),
-         SIMD4(levels[4], levels[5], levels[6], levels[7]),
-         SIMD4(levels[8], levels[9], levels[10], levels[11]))
-    }
 }
 
 /// Deterministic, so test renders repeat exactly.

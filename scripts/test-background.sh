@@ -10,6 +10,7 @@ swiftc -swift-version 6 -O \
     "$ROOT/Sources/Floe/Visualization/ReactiveShader.swift" \
     "$ROOT/Sources/Floe/Visualization/BackgroundMotion.swift" \
     "$ROOT/Sources/Floe/Visualization/BeatDetector.swift" \
+    "$ROOT/Sources/Floe/Visualization/BeamRig.swift" \
     "$ROOT/Sources/Floe/Visualization/SpectrumAnalyzer.swift" \
     "$ROOT/Sources/Floe/Visualization/VisualSettings.swift" \
     "$ROOT/Sources/Floe/Images/CoverPalette.swift" \

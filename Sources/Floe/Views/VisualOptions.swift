@@ -45,6 +45,12 @@ struct BackgroundOptions: View {
             SettingsSlider("Shake", value: $settings.shake, range: VisualSettings.shakeRange,
                            displayedValue: percent(settings.shake))
                 .disabled(settings.backgroundKind != .fluid)
+            Group {
+                Stepper(value: $settings.beamCount, in: VisualSettings.beamCountRange) {
+                    LabeledContent("Beam count") { Text("\(settings.beamCount)").monospacedDigit() }
+                }
+                Toggle("Strobe on the beat", isOn: $settings.strobe)
+            }.disabled(settings.backgroundKind != .beams)
         }.disabled(!settings.liveBackground)
         if settings.liveBackground, let error = visualization.backgroundFailure {
             Text(error).font(.callout).foregroundStyle(.orange)

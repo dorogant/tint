@@ -102,7 +102,7 @@ struct PlayPill: View {
 }
 
 /// Round, quiet icon button used in toolbars and the mini player. The symbol
-/// bounces on press and morphs when it changes, like the system's own controls.
+/// bounces on press and morphs when it changes. Shuffle gets a crossover kick.
 struct IconButton: View {
     @Environment(\.coverPalette) private var palette
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -115,6 +115,10 @@ struct IconButton: View {
     @ViewState private var hovering = false
     @ViewState private var presses = 0
 
+    private var animatedShuffle: Bool {
+        systemImage == "shuffle" && !reduceMotion && !systemReduceMotion
+    }
+
     var body: some View {
         Button {
             presses += 1
@@ -123,8 +127,10 @@ struct IconButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: size, weight: .medium))
                 .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion || systemReduceMotion ? 0 : presses)
+                .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion || systemReduceMotion || systemImage == "shuffle" ? 0 : presses)
                 .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
+                .modifier(ShufflePressFeedback(trigger: presses, enabled: animatedShuffle,
+                                               diameter: size * 2.1, tint: palette.highlight))
                 .frame(width: size * 2.1, height: size * 2.1)
                 .background(hovering ? Theme.hover : .clear, in: Circle())
                 .contentShape(Circle())
@@ -132,6 +138,7 @@ struct IconButton: View {
         .buttonStyle(.floe)
         .onHover { hovering = $0 }
         .floeAnimation(value: hovering, duration: 0.18)
+        .floeAnimation(value: active, duration: 0.18)
         .help(help)
     }
 }

@@ -187,6 +187,9 @@ and one group of Visuals, Queue, Devices, Appearance and Settings buttons, all i
 the system's Liquid Glass. Settings is a standard tabbed window with grouped forms.
 The Play buttons and the search field use interactive glass, and SF Symbols morph
 or bounce for play/pause, like, repeat, transport presses and the volume level.
+Shuffle has a half-second crossover twist, elastic squeeze and fading accent
+ripple on each press. It dispatches playback immediately, adds no idle animation,
+and falls back to a quiet state change with app or system Reduce Motion enabled.
 Large panels stay tinted rather than live-blurred, which keeps GPU and memory use down.
 
 Motion is short and event-driven, and app or system Reduce Motion turns it off.

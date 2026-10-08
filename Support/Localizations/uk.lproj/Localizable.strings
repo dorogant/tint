@@ -199,3 +199,6 @@
 "Let consecutive tracks play without a gap." = "Композиції звучатимуть одна за одною без пауз.";
 "320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine." = "320 кбіт/с — найвища якість потокового звуку у Floe. Формат без втрат цей рушій відтворення не підтримує.";
 "Changes waiting to apply" = "Зміни очікують застосування";
+"Repeat off" = "Повтор вимкнено";
+"Repeat all" = "Повторювати все";
+"Repeat one" = "Повторювати одну пісню";

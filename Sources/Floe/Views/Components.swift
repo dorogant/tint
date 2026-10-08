@@ -513,7 +513,7 @@ struct LoadingView: View {
             .opacity(visible ? 1 : 0)
             .frame(maxWidth: .infinity, minHeight: 120)
             .task {
-                try? await Task.sleep(for: .milliseconds(180))
+                guard (try? await Task.sleep(for: .milliseconds(180))) != nil else { return }
                 withAnimation(FloeMotion.fade) { visible = true }
             }
             .accessibilityLabel("Loading")
@@ -543,7 +543,7 @@ struct PagePlaceholder: View {
         }
         .opacity(visible ? 1 : 0)
         .task {
-            try? await Task.sleep(for: .milliseconds(120))
+            guard (try? await Task.sleep(for: .milliseconds(120))) != nil else { return }
             withAnimation(FloeMotion.fade) { visible = true }
         }
         .accessibilityElement()

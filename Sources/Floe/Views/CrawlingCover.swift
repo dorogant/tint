@@ -61,22 +61,23 @@ final class CrawlingCoverView: NSView {
     }
 
     func update(image: CGImage, rim: NSColor, rimWidth: CGFloat, running: Bool, fade: Bool) {
+        // Implicit animations would freeze halfway while the clock is paused, so
+        // every change lands immediately; only a playing cover gets the crossfade.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         if image !== self.image {
-            // A paused clock would freeze the fade halfway, so swap instantly then.
             if fade && running && self.image != nil {
                 let transition = CATransition()
                 transition.type = .fade
                 transition.duration = 0.35
                 imageLayer.add(transition, forKey: "contents")
             }
-            CATransaction.begin()
-            CATransaction.setDisableActions(self.image == nil || !fade)
             imageLayer.contents = image
-            CATransaction.commit()
             self.image = image
         }
         rimLayer.strokeColor = rim.cgColor
         rimLayer.lineWidth = rimWidth
+        CATransaction.commit()
         setRunning(running)
     }
 

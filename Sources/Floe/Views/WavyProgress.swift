@@ -65,8 +65,12 @@ final class WavyProgressView: NSView {
     func update(progress: Double, color: NSColor, moving: Bool, glide: Bool) {
         let jump = abs(progress - self.progress) * bounds.width > 8
         self.progress = min(max(progress, 0), 1)
+        // The wave's clock may be paused, which would freeze an implicit colour fade.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         wave.strokeColor = color.cgColor
         knob.backgroundColor = color.cgColor
+        CATransaction.commit()
         CATransaction.begin()
         if glide && !jump {
             CATransaction.setAnimationDuration(1)

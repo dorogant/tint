@@ -5,21 +5,21 @@ A lightweight native Spotify client for macOS (Apple Silicon): SwiftUI on top of
 Chromium-based official app for everyday listening, with a target of **≤150 MB RAM**
 during playback and ~0% CPU when idle. See [PLAN.md](PLAN.md) for the full plan.
 
-**Status:** Phase 3 (Now Playing & lyrics) implemented. Library, navigation,
-playback and macOS media controls are working. Now Playing adds a cover-art backdrop,
-a slowly morphing cover mask, a wavy seek bar and LRCLIB line-synced lyrics.
-The paint-palette menu switches cover-derived accents and Reduce Motion; the
-system's Reduce Motion preference is respected too. Phase 4 (audio visualizers and
-live background) is next.
+**Status:** Phase 4 (visualizers and live background) implemented. Library,
+navigation, playback, macOS media controls, cover-driven Now Playing and LRCLIB
+synced lyrics work. The waveform toolbar button opens **Visuals**: circular or
+normal visualizers, bars or wave, sensitivity, and an optional reactive Metal
+background. Preferences persist between launches. Phase 5 (settings and polish)
+is next.
 
-
-Measured on this MacBook Air on 2026-10-08, release build, at the restored large
-window size: ~147 MiB physical footprint during Now Playing with synced lyrics,
-~155 MiB RSS during the stable playback sample, and ~120 MiB RSS after pausing.
-Paused CPU settles around 0–0.1%; cover/wave animation uses roughly 9–18% of one
-core while visible. The original ≤150 MiB RSS playback goal still needs a little
-more work. Screenshots temporarily increase memory and are excluded from this
-sample.
+Measured on this MacBook Air on 2026-10-08, release build, restored large window
+(1710×1052 points), without screenshots: stable circular visualization used
+~149–152 MiB RSS and ~195 MiB physical footprint; the optional live background
+in Library used ~154 MiB RSS and ~187 MiB footprint. CPU samples were roughly
+11–21% of one core during visualization and 13–15% with the background. Paused
+CPU settled to 0%; RSS fell to ~125 MiB after a minute. These are short samples,
+not a guaranteed ceiling: the ≤150 MiB RSS target still needs tuning, and physical
+footprint includes compressed memory. The live background defaults off.
 
 > Floe uses librespot, an **unofficial** Spotify client library. That is against
 > Spotify's terms of use; bans are rare but possible, and protocol changes can break
@@ -112,6 +112,32 @@ the output directory. Only synthetic lyrics are captured. Snapshot capture refus
 real-lyrics views even when triggered manually. These tests need only Command Line
 Tools; XCTest is unavailable in the CLT-only installation.
 
+### Visualizers and live background
+
+Open **Visuals** using the waveform icon in the top toolbar. The default is a
+circular bar visualizer around the cover; **Normal** places it across the bottom.
+Both styles support **Bars** and **Wave**. Sensitivity changes only the visual
+response. The optional **Live background** adds slow, audio-reactive color clouds
+behind the cover backdrop; **Reactivity** controls their response.
+
+Analysis runs at about 30 Hz only while an effect is visible and Floe is active.
+The Metal background draws at 15 Hz into a small surface stretched behind the
+glass. Both clocks stop on pause, when effects are disabled, or with app/system
+Reduce Motion. Hidden visualizers stop analysis unless the live background needs
+it. Self-tests temporarily bypass the foreground requirement.
+
+```sh
+scripts/test-phase4.sh
+build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase4 YES
+```
+
+The offline checks cover the bounded stereo tap, FFT frequency response, silence,
+antiphase/right-only stereo, rolling windows, reset/decay and Metal compilation.
+The live check measures real PCM, cadence and audio underruns, exercises every
+style/shape, and verifies pause, hiding, disabled effects and Reduce Motion. Add
+`-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` for synthetic-only visual QA.
+The live test restores visual preferences afterward and leaves playback paused.
+
 ## Layout
 
 ```
@@ -126,6 +152,7 @@ Sources/Floe/         SwiftUI app
   Library/            library state (playlists, pins, liked songs), navigation
   Images/             artwork cache, cover palette and pre-blurred backdrop
   Lyrics/             LRCLIB service, memory cache, LRC parser and view state
+  Visualization/      vDSP FFT, bounded PCM sampling, visual preferences, Metal shader
   Views/              UI
 Support/Info.plist    bundle metadata
 scripts/              build-app.sh, make-icon.swift
@@ -136,8 +163,13 @@ scripts/              build-app.sh, make-icon.swift
 - **Audio path.** librespot decodes on its own thread into a custom `Sink`, which writes
   interleaved f32 PCM into a lock-free ring buffer. An `AVAudioSourceNode` pulls from it
   on the render thread (`floe_render`). Pause closes a gate so audio stops immediately
-  rather than after the buffer drains; seek and load flush the buffer. Volume (and later
-  the visualizer) live on the Swift side of this path.
+  rather than after the buffer drains; seek and load flush the buffer. Volume lives
+  in Swift. A separate 32 KiB stereo tap copies rendered samples before mixer volume
+  without allocating or waiting on the render thread. A utility queue reads the
+  newest samples into a rolling 2048-frame Hann window, computes stereo FFT power
+  using vDSP, and publishes 48 log-spaced bands, 96 waveform points and RMS. A full
+  analysis ring drops visual samples without disrupting playback. Seek, track,
+  pause and enable changes reset the analysis generation; PCM never goes to disk.
 - **Playing context.** Floe runs librespot's Spirc, so it is a Spotify Connect device
   ("Floe"): playlists, albums, artists and Liked Songs play as *contexts*, and Spotify's
   own logic handles queue, shuffle, repeat and autoplay, exactly as in the official apps.

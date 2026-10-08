@@ -16,6 +16,7 @@ enum Theme {
 struct Backdrop: View {
     @Environment(\.coverPalette) private var palette
     @Environment(CoverAppearance.self) private var appearance
+    @Environment(VisualSettings.self) private var visuals
 
     var body: some View {
         GeometryReader { geometry in
@@ -26,6 +27,7 @@ struct Backdrop: View {
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .clipped().opacity(0.45)
                 }
+                if visuals.liveBackground { ReactiveBackground().allowsHitTesting(false) }
                 RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
                                center: .topLeading, startRadius: 0, endRadius: 700)
                 Color.black.opacity(0.28)

@@ -1,0 +1,125 @@
+import Accelerate
+import Foundation
+
+struct SpectrumFrame: Equatable, Sendable {
+    var bands: [Float]
+    var waveform: [Float]
+    var rms: Float
+    static let quiet = SpectrumFrame(bands: Array(repeating: 0, count: 48),
+                                     waveform: Array(repeating: 0, count: 96), rms: 0)
+}
+
+/// Queue-confined, reusable vDSP buffers. Stereo power avoids phase cancellation;
+/// this never runs on Core Audio's render thread and never stores audio to disk.
+final class SpectrumAnalyzer {
+    static let size = 2048
+    static let sampleRate: Float = 44_100
+    static let bandCount = 48
+    private let setup: FFTSetup
+    private let log2Size = vDSP_Length(11)
+    private var window = [Float](repeating: 0, count: size)
+    private var left = [Float](repeating: 0, count: size)
+    private var right = [Float](repeating: 0, count: size)
+    private var weighted = [Float](repeating: 0, count: size)
+    private var real = [Float](repeating: 0, count: size / 2)
+    private var imaginary = [Float](repeating: 0, count: size / 2)
+    private var power = [Float](repeating: 0, count: size / 2)
+    private var stereoPower = [Float](repeating: 0, count: size / 2)
+    private var smoothed = [Float](repeating: 0, count: bandCount)
+    private var level: Float = 0
+    private let ranges: [Range<Int>]
+
+    init?() {
+        guard let setup = vDSP_create_fftsetup(vDSP_Length(11), FFTRadix(kFFTRadix2)) else { return nil }
+        self.setup = setup
+        vDSP_hann_window(&window, vDSP_Length(Self.size), Int32(vDSP_HANN_NORM))
+        ranges = (0..<Self.bandCount).map { i in
+            let lo = 40 * powf(400, Float(i) / Float(Self.bandCount))
+            let hi = 40 * powf(400, Float(i + 1) / Float(Self.bandCount))
+            let start = max(1, Int(lo * Float(Self.size) / Self.sampleRate))
+            let end = min(Self.size / 2, max(start + 1, Int(hi * Float(Self.size) / Self.sampleRate)))
+            return start..<end
+        }
+    }
+
+    deinit { vDSP_destroy_fftsetup(setup) }
+
+    func reset() {
+        left = Array(repeating: 0, count: Self.size)
+        right = Array(repeating: 0, count: Self.size)
+        smoothed = Array(repeating: 0, count: Self.bandCount)
+        level = 0
+    }
+
+    /// Append the newest block to a rolling 46 ms window; input buffers are reusable.
+    func process(left inputLeft: [Float], right inputRight: [Float], count: Int) -> SpectrumFrame {
+        let count = min(max(0, count), Self.size, inputLeft.count, inputRight.count)
+        if count == 0 {
+            for i in smoothed.indices { smoothed[i] *= 0.8 }
+            level *= 0.8
+            return SpectrumFrame(bands: smoothed, waveform: Array(repeating: 0, count: 96), rms: level)
+        }
+        append(inputLeft, count: count, to: &left)
+        append(inputRight, count: count, to: &right)
+        var leftMean: Float = 0, rightMean: Float = 0
+        vDSP_measqv(left, 1, &leftMean, vDSP_Length(Self.size))
+        vDSP_measqv(right, 1, &rightMean, vDSP_Length(Self.size))
+        let rms = sqrtf((leftMean + rightMean) * 0.5)
+        level += (rms - level) * (rms > level ? 0.65 : 0.15)
+        transform(left)
+        stereoPower = power
+        transform(right)
+        let scale = powf(2 / Float(Self.size), 2) * 0.5
+        for i in power.indices { stereoPower[i] = (stereoPower[i] + power[i]) * scale }
+        for (i, range) in ranges.enumerated() {
+            let maximum = range.reduce(Float(0)) { max($0, stereoPower[$1]) }
+            let db = 10 * log10f(max(maximum, 1e-12))
+            let target = min(1, max(0, (db + 65) / 65))
+            smoothed[i] += (target - smoothed[i]) * (target > smoothed[i] ? 0.65 : 0.15)
+        }
+        // Choose the stronger stereo channel in each small segment for the waveform.
+        // Keeping signs preserves the oscillation without cancelling antiphase stereo.
+        let waveform = (0..<96).map { i -> Float in
+            let range = (i * Self.size / 96)..<((i + 1) * Self.size / 96)
+            var peak: Float = 0
+            for j in range {
+                let sample = abs(left[j]) >= abs(right[j]) ? left[j] : right[j]
+                if abs(sample) > abs(peak) { peak = sample }
+            }
+            return min(1, max(-1, peak))
+        }
+        return SpectrumFrame(bands: smoothed, waveform: waveform, rms: level)
+    }
+
+    /// A band center in Hz, useful for deterministic frequency-response tests.
+    static func frequency(forBand index: Int) -> Float {
+        40 * powf(400, (Float(index) + 0.5) / Float(bandCount))
+    }
+
+    private func append(_ input: [Float], count: Int, to buffer: inout [Float]) {
+        buffer.withUnsafeMutableBufferPointer { dest in
+            if count < Self.size {
+                memmove(dest.baseAddress!, dest.baseAddress!.advanced(by: count), (Self.size - count) * MemoryLayout<Float>.size)
+            }
+            input.withUnsafeBufferPointer { source in
+                _ = memcpy(dest.baseAddress!.advanced(by: Self.size - count), source.baseAddress!, count * MemoryLayout<Float>.size)
+            }
+        }
+    }
+
+    private func transform(_ samples: [Float]) {
+        vDSP_vmul(samples, 1, window, 1, &weighted, 1, vDSP_Length(Self.size))
+        real.withUnsafeMutableBufferPointer { re in
+            imaginary.withUnsafeMutableBufferPointer { im in
+                var split = DSPSplitComplex(realp: re.baseAddress!, imagp: im.baseAddress!)
+                weighted.withUnsafeBytes { bytes in
+                    vDSP_ctoz(bytes.bindMemory(to: DSPComplex.self).baseAddress!, 2, &split, 1, vDSP_Length(Self.size / 2))
+                }
+                vDSP_fft_zrip(setup, &split, 1, log2Size, FFTDirection(FFT_FORWARD))
+                // Packed real FFT puts Nyquist in imag[0]; it isn't a complex DC bin.
+                split.imagp[0] = 0
+                vDSP_zvmags(&split, 1, &power, 1, vDSP_Length(Self.size / 2))
+            }
+        }
+    }
+}

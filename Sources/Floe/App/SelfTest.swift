@@ -12,7 +12,8 @@ enum SelfTest {
     private static var allowWrites: Bool { UserDefaults.standard.bool(forKey: "FloeSelfTestWrites") }
 
     static func run(player: PlayerModel, library: LibraryModel, navigator: Navigator, search: SearchModel,
-                    lyrics: LyricsModel, appearance: CoverAppearance) async {
+                    lyrics: LyricsModel, appearance: CoverAppearance,
+                    visualization: VisualizationModel, visuals: VisualSettings) async {
         let start = Date()
         let forward = player.core.onEvent
         player.core.onEvent = { event in
@@ -127,6 +128,10 @@ enum SelfTest {
             try? await Task.sleep(for: .seconds(20))
             say(String(format: "Now Playing during playback: %.1f MB", MemoryFootprint.currentMB))
         }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestPhase4") {
+            ok = await phase4(player: player, navigator: navigator, lyrics: lyrics,
+                              visualization: visualization, visuals: visuals) && ok
+        }
         player.pause()
         say(String(format: "RAM after playback checks: %.1f MB", MemoryFootprint.currentMB))
         if Snapshot.isEnabled || UserDefaults.standard.bool(forKey: "FloeSelfTestTour") {
@@ -150,6 +155,88 @@ enum SelfTest {
             navigator.surface = .nowPlaying
         }
         finish(ok, ok ? "all checks passed" : "a check failed")
+    }
+
+    private static func phase4(player: PlayerModel, navigator: Navigator, lyrics: LyricsModel,
+                               visualization: VisualizationModel, visuals: VisualSettings) async -> Bool {
+        let defaults = UserDefaults.standard
+        let reduced = defaults.object(forKey: "reduceMotion")
+        let original = (visuals.showVisualizer, visuals.style, visuals.shape, visuals.sensitivity,
+                        visuals.liveBackground, visuals.reactivity)
+        defer {
+            visuals.showVisualizer = original.0; visuals.style = original.1; visuals.shape = original.2
+            visuals.sensitivity = original.3; visuals.liveBackground = original.4; visuals.reactivity = original.5
+            if let reduced { defaults.set(reduced, forKey: "reduceMotion") }
+            else { defaults.removeObject(forKey: "reduceMotion") }
+        }
+        defaults.set(false, forKey: "reduceMotion")
+        visuals.showVisualizer = false; visuals.style = .circular; visuals.shape = .bars
+        visuals.liveBackground = false
+        navigator.surface = .nowPlaying
+        try? await Task.sleep(for: .seconds(10))
+        say(String(format: "Phase 4 baseline (effects off): %.1f MiB footprint", MemoryFootprint.currentMB))
+        visuals.showVisualizer = true
+        var ok = true
+        let before = visualization.framesAnalyzed
+        let started = await wait(timeout: 10) {
+            visualization.isRunning && visualization.framesAnalyzed > before + 30 && visualization.frame.rms > 0.001
+        }
+        ok = check(ok, started, "real PCM reaches FFT")
+        try? await Task.sleep(for: .seconds(10)) // exclude startup allocations from the steady sample
+        let count = visualization.framesAnalyzed
+        let stats = player.core.takeStats()
+        try? await Task.sleep(for: .seconds(3))
+        let analyzed = visualization.framesAnalyzed - count
+        let later = player.core.takeStats()
+        ok = check(ok, analyzed >= 60 && analyzed <= 120, "analysis runs near 30 Hz")
+        ok = check(ok, later.frames_rendered - stats.frames_rendered > 110000, "audio keeps flowing with FFT")
+        ok = check(ok, later.underruns == stats.underruns, "no new audio underruns with FFT")
+        say(String(format: "Phase 4: %llu FFT frames / 3 s, RMS %.4f, %.1f MiB footprint",
+                   analyzed, visualization.frame.rms, MemoryFootprint.currentMB))
+        if defaults.bool(forKey: "FloeVisualTest") { lyrics.showVisualTestFixture() }
+        for (style, shape, name) in [(VisualSettings.Style.circular, VisualSettings.Shape.bars, "9-circular-bars"),
+                                     (.circular, .wave, "10-circular-wave"), (.normal, .bars, "11-normal-bars"),
+                                     (.normal, .wave, "12-normal-wave")] {
+            visuals.style = style; visuals.shape = shape
+            try? await Task.sleep(for: .seconds(2))
+            Snapshot.capture(name)
+        }
+        player.pause()
+        _ = await wait(timeout: 3) { !visualization.isRunning }
+        try? await Task.sleep(for: .milliseconds(300))
+        let frozen = visualization.framesAnalyzed
+        try? await Task.sleep(for: .milliseconds(700))
+        ok = check(ok, visualization.framesAnalyzed == frozen, "FFT stops on pause")
+        player.resume()
+        _ = await wait(timeout: 5) { visualization.isRunning }
+        navigator.surface = .library
+        _ = await wait(timeout: 3) { !visualization.isRunning }
+        ok = check(ok, !visualization.isRunning, "hidden visualizer stops analysis")
+        visuals.liveBackground = true
+        let gpuBefore = visualization.backgroundFramesDrawn
+        let gpuStarted = await wait(timeout: 15) { visualization.backgroundFramesDrawn > gpuBefore + 15 }
+        ok = check(ok, gpuStarted && visualization.backgroundFailure == nil, "Metal background renders")
+        try? await Task.sleep(for: .seconds(3))
+        say(String(format: "Phase 4 live background: %llu submitted frames, %.1f MiB footprint",
+                   visualization.backgroundFramesDrawn - gpuBefore, MemoryFootprint.currentMB))
+        Snapshot.capture("13-live-background-library")
+        player.pause()
+        _ = await wait(timeout: 3) { !visualization.isRunning }
+        try? await Task.sleep(for: .milliseconds(500))
+        let gpuFrozen = visualization.backgroundFramesDrawn
+        try? await Task.sleep(for: .milliseconds(700))
+        ok = check(ok, visualization.backgroundFramesDrawn == gpuFrozen, "Metal clock stops on pause")
+        player.resume()
+        _ = await wait(timeout: 5) { visualization.isRunning }
+        defaults.set(true, forKey: "reduceMotion")
+        _ = await wait(timeout: 3) { !visualization.isRunning }
+        ok = check(ok, !visualization.isRunning, "Reduce Motion stops decorative animation")
+        defaults.set(false, forKey: "reduceMotion")
+        visuals.liveBackground = false; visuals.showVisualizer = false
+        _ = await wait(timeout: 3) { !visualization.isRunning }
+        ok = check(ok, !visualization.isRunning, "disabled effects stop analysis")
+        player.pause()
+        return ok
     }
 
     /// Visits each page (and snapshots it when enabled).

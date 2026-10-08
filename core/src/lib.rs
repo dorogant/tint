@@ -9,6 +9,7 @@
 //! Spotify's own context logic (playlists, albums, queue, shuffle, repeat,
 //! autoplay) drives the player, exactly as with the official clients.
 
+mod analysis;
 mod events;
 mod pcm;
 
@@ -571,4 +572,39 @@ pub unsafe extern "C" fn floe_take_stats(out: *mut FloeStats) {
             buffered_ms: s.buffered_ms,
         });
     }
+}
+
+/// Enables the optional rendered-PCM tap. Disabled by default.
+#[unsafe(no_mangle)]
+pub extern "C" fn floe_set_analysis_enabled(enabled: bool) {
+    if let Some(core) = CORE.get() {
+        core.pcm.analysis.set_enabled(enabled);
+    }
+}
+
+/// Analysis queue only. Returns newest stereo frames plus a seek/track generation.
+/// # Safety
+/// `left` and `right` must be distinct writable arrays of `capacity` floats;
+/// `generation` must point to a writable u64.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn floe_read_analysis(
+    left: *mut f32,
+    right: *mut f32,
+    capacity: u32,
+    generation: *mut u64,
+) -> u32 {
+    if left.is_null() || right.is_null() || generation.is_null() {
+        return 0;
+    }
+    let Some(core) = CORE.get() else {
+        unsafe { *generation = 0; }
+        return 0;
+    };
+    let (left, right) = unsafe {
+        (slice::from_raw_parts_mut(left, capacity as usize),
+         slice::from_raw_parts_mut(right, capacity as usize))
+    };
+    let (frames, epoch) = core.pcm.analysis.read_latest(left, right);
+    unsafe { *generation = epoch; }
+    frames as u32
 }

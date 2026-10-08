@@ -17,6 +17,8 @@ use std::{
     time::Duration,
 };
 
+use crate::analysis::AnalysisTap;
+
 use librespot_playback::{
     audio_backend::{Sink, SinkResult},
     convert::Converter,
@@ -34,6 +36,7 @@ const RING_SAMPLES: usize = SAMPLE_RATE / 2 * CHANNELS;
 const MAX_PARKED_SAMPLES: usize = SAMPLE_RATE * CHANNELS * 2;
 
 pub struct Pcm {
+    pub analysis: AnalysisTap,
     // Each half is only ever touched by one thread at a time (player thread /
     // render thread); the mutexes are uncontended except during `flush`.
     producer: Mutex<rtrb::Producer<f32>>,
@@ -64,6 +67,7 @@ impl Pcm {
     pub fn new() -> Arc<Self> {
         let (producer, consumer) = rtrb::RingBuffer::new(RING_SAMPLES);
         Arc::new(Self {
+            analysis: AnalysisTap::new(),
             producer: Mutex::new(producer),
             consumer: Mutex::new(consumer),
             buffered: AtomicUsize::new(0),
@@ -78,11 +82,15 @@ impl Pcm {
 
     pub fn set_gate(&self, open: bool) {
         self.gate_open.store(open, Ordering::Release);
+        if !open {
+            self.analysis.reset();
+        }
     }
 
     /// Drops everything buffered (seek, new track, logout).
     pub fn flush(&self) {
         self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.analysis.reset();
         let mut consumer = lock(&self.consumer);
         let n = consumer.slots();
         if n > 0 {
@@ -128,6 +136,7 @@ impl Pcm {
                 right[i / CHANNELS] = s;
             }
         }
+        self.analysis.capture(&left[..n], &right[..n]);
         chunk.commit_all();
         self.buffered.fetch_sub(n * CHANNELS, Ordering::AcqRel);
         self.frames_rendered.fetch_add(n as u64, Ordering::Relaxed);

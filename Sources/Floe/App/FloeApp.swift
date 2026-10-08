@@ -8,8 +8,18 @@ struct FloeApp: App {
     @ViewState private var navigator = Navigator()
     @ViewState private var search = SearchModel()
     @ViewState private var lyrics = LyricsModel()
+    @ViewState private var visualization = VisualizationModel()
+    @ViewState private var visuals = VisualSettings()
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage("reduceMotion") private var reduceMotion = false
     @ViewState private var appearance = CoverAppearance()
     @AppStorage("accentFromCover") private var accentFromCover = false
+
+    private var needsAnalysis: Bool {
+        player.isPlaying && (scenePhase == .active || SelfTest.isEnabled) && !reduceMotion && !systemReduceMotion
+            && (visuals.liveBackground || (visuals.showVisualizer && navigator.surface == .nowPlaying))
+    }
 
     var body: some Scene {
         Window("Floe", id: "main") {
@@ -20,7 +30,10 @@ struct FloeApp: App {
                 .environment(search)
                 .environment(lyrics)
                 .environment(appearance)
+                .environment(visualization)
+                .environment(visuals)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette())
+                .onChange(of: needsAnalysis, initial: true) { visualization.setRunning(needsAnalysis) }
                 .task(id: player.track) {
                     async let cover: () = appearance.load(player.track?.coverURL)
                     async let words: () = lyrics.load(player.track)
@@ -33,7 +46,7 @@ struct FloeApp: App {
                     await player.restoreSession()
                     await library.start()
                     if SelfTest.isEnabled {
-                        await SelfTest.run(player: player, library: library, navigator: navigator, search: search, lyrics: lyrics, appearance: appearance)
+                        await SelfTest.run(player: player, library: library, navigator: navigator, search: search, lyrics: lyrics, appearance: appearance, visualization: visualization, visuals: visuals)
                     }
                 }
         }

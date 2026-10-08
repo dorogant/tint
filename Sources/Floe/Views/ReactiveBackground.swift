@@ -1,0 +1,138 @@
+import MetalKit
+import SwiftUI
+
+/// A low-resolution Metal layer stretched behind the glass, drawing at 15 Hz.
+/// Its own clock freezes on pause and never recompiles the shader per frame.
+struct ReactiveBackground: NSViewRepresentable {
+    @Environment(VisualizationModel.self) private var visualization
+    @Environment(VisualSettings.self) private var settings
+    @Environment(\.coverPalette) private var palette
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> MTKView {
+        let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
+        view.isPaused = true
+        view.enableSetNeedsDisplay = false
+        view.autoResizeDrawable = false
+        view.colorPixelFormat = .bgra8Unorm
+        view.framebufferOnly = true
+        view.clearColor = MTLClearColorMake(0, 0, 0, 0)
+        view.layer?.isOpaque = false
+        do {
+            let renderer = try BackgroundRenderer(view: view, status: visualization)
+            context.coordinator.renderer = renderer
+            view.delegate = renderer
+        } catch {
+            DispatchQueue.main.async { visualization.backgroundFailure = String(localized: "Live background is unavailable on this Mac.") }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: MTKView, context: Context) {
+        context.coordinator.renderer?.update(running: visualization.isRunning, color: palette.rgb,
+                                            energy: visualization.frame.rms, reactivity: Float(settings.reactivity))
+    }
+
+    static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
+        coordinator.renderer?.stop()
+        coordinator.renderer = nil
+        view.delegate = nil
+    }
+
+    final class Coordinator { var renderer: BackgroundRenderer? }
+}
+
+@MainActor
+final class BackgroundRenderer: NSObject, MTKViewDelegate {
+    enum Failure: Error { case unavailable }
+    private struct Uniforms {
+        var color = SIMD4<Float>(0, 0, 0, 1)
+        var motion = SIMD4<Float>(0, 0, 1, 0)
+        var size = SIMD4<Float>(512, 320, 0, 0)
+    }
+    private weak var view: MTKView?
+    private weak var status: VisualizationModel?
+    private let commandQueue: MTLCommandQueue
+    private let pipeline: MTLRenderPipelineState
+    private var timer: DispatchSourceTimer?
+    private var uniforms = Uniforms()
+    private var time: Float = 0
+    private var previous: Date?
+    private var busy = false
+
+    init(view: MTKView, status: VisualizationModel) throws {
+        guard let device = view.device, let queue = device.makeCommandQueue() else { throw Failure.unavailable }
+        commandQueue = queue
+        let library = try device.makeLibrary(source: ReactiveShader.source, options: nil)
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "floeBackgroundFragment")
+        descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        self.view = view
+        self.status = status
+        super.init()
+        DispatchQueue.main.async { status.backgroundFailure = nil }
+    }
+
+    func update(running: Bool, color: RGB, energy: Float, reactivity: Float) {
+        uniforms.color = SIMD4(Float(color.r), Float(color.g), Float(color.b), 1)
+        uniforms.motion.y = min(1, max(0, energy * 6))
+        uniforms.motion.z = reactivity
+        guard running else {
+            stop()
+            if time == 0 { view?.draw() } // one static frame for Reduce Motion / paused startup
+            return
+        }
+        guard timer == nil else { return }
+        previous = Date()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: .nanoseconds(66_666_667), leeway: .milliseconds(6))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let now = Date()
+            if let previous = self.previous { self.time += Float(now.timeIntervalSince(previous)) }
+            self.previous = now
+            self.uniforms.motion.x = self.time
+            self.view?.draw()
+        }
+        self.timer = timer
+        timer.resume()
+    }
+
+    func stop() {
+        timer?.cancel()
+        timer = nil
+        previous = nil
+    }
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    func draw(in view: MTKView) {
+        guard !busy, view.bounds.width > 0, view.bounds.height > 0 else { return }
+        let aspect = view.bounds.height / view.bounds.width
+        let size = CGSize(width: 512, height: max(160, min(640, 512 * aspect)))
+        if view.drawableSize != size { view.drawableSize = size }
+        uniforms.size = SIMD4(Float(size.width), Float(size.height), 0, 0)
+        guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
+              let command = commandQueue.makeCommandBuffer(), let encoder = command.makeRenderCommandEncoder(descriptor: pass)
+        else { return }
+        busy = true
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        command.present(drawable)
+        command.addCompletedHandler { [weak self] command in
+            let succeeded = command.status == .completed
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.busy = false
+                if succeeded { self.status?.backgroundFramesDrawn += 1 }
+                else { self.status?.backgroundFailure = String(localized: "Live background stopped unexpectedly."); self.stop() }
+            }
+        }
+        command.commit()
+    }
+}

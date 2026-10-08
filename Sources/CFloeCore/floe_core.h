@@ -52,6 +52,13 @@ uint32_t floe_render(float *left, float *right, uint32_t frames);
 
 void floe_take_stats(FloeStats *out);
 
+/// Optional stereo tap of rendered PCM (before the Swift mixer volume). Disabled by default.
+void floe_set_analysis_enabled(bool enabled);
+/// Analysis queue only, never the audio render thread. Returns newest frames.
+/// Arrays must be distinct and hold `capacity` floats each. Generation changes on
+/// track/seek/pause and enable/disable; discard FFT history when it changes.
+uint32_t floe_read_analysis(float *left, float *right, uint32_t capacity, uint64_t *generation);
+
 #pragma clang assume_nonnull end
 
 #endif

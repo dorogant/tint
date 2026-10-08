@@ -34,6 +34,7 @@ struct MainView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
 
+    @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
 
@@ -45,6 +46,11 @@ struct MainView: View {
                 surfaceButton("Library", icon: "square.grid.2x2", surface: .library)
                 surfaceButton("Now Playing", icon: "play.circle", surface: .nowPlaying)
                 surfaceButton("Lyrics", icon: "text.quote", surface: .lyrics)
+                Button { showingVisuals.toggle() } label: {
+                    Image(systemName: "waveform").frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain).help("Visuals")
+                .popover(isPresented: $showingVisuals) { VisualControls() }
                 Menu {
                     Toggle("Accent from cover", isOn: $accentFromCover)
                     Toggle("Reduce motion", isOn: $reduceMotion)

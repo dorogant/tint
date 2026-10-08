@@ -15,13 +15,8 @@ struct VisualizerOptions: View {
                 Text("Bars").tag(VisualSettings.Shape.bars)
                 Text("Wave").tag(VisualSettings.Shape.wave)
             }.pickerStyle(.segmented)
-            LabeledContent("Sensitivity") {
-                HStack {
-                    Slider(value: $settings.sensitivity, in: 0.25...3).labelsHidden()
-                    Text("\(Int(settings.sensitivity * 100))%")
-                        .monospacedDigit().foregroundStyle(.secondary).frame(width: 42, alignment: .trailing)
-                }
-            }
+            SettingsSlider("Sensitivity", value: $settings.sensitivity, range: 0.25...3,
+                           displayedValue: Text("\(Int(settings.sensitivity * 100))%"))
         }.disabled(!settings.showVisualizer)
     }
 }
@@ -32,9 +27,9 @@ struct BackgroundOptions: View {
     var body: some View {
         @Bindable var settings = settings
         Toggle("Live background", isOn: $settings.liveBackground)
-        LabeledContent("Reactivity") {
-            Slider(value: $settings.reactivity, in: 0...2).labelsHidden()
-        }.disabled(!settings.liveBackground)
+        SettingsSlider("Reactivity", value: $settings.reactivity, range: 0...2,
+                       displayedValue: Text("\(Int(settings.reactivity * 100))%"))
+            .disabled(!settings.liveBackground)
         if settings.liveBackground, let error = visualization.backgroundFailure {
             Text(error).font(.callout).foregroundStyle(.orange)
         }

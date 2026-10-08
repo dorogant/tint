@@ -96,7 +96,10 @@ struct FloeApp: App {
                 .environment(player)
                 .environment(visualization)
                 .environment(\.locale, settings.locale)
+                .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
         }
+        .defaultSize(width: 820, height: 600)
+        .windowResizability(.contentMinSize)
 
     }
 }

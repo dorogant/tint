@@ -175,22 +175,30 @@ soft capsules that thicken under the pointer.
 The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics; the
 cover and visualizer slide to the centre and grow.
 
-On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. It
-turns slowly and breathes with the music while playing, and stops on pause. The
-circular visualizer scales with the cover. **Bars** are mirrored radial bars with
-bass at the top; **Wave** is a filled halo whose lobes follow the spectrum. Along
-the bottom, **Bars** are mirrored around the middle (bass at the centre). **Wave**
-is a twisted ribbon of round beads that drifts sideways; each bead swells with the
-part of the spectrum it passes. Colors run from pale at the top to the cover accent
-at the bottom, and all motion freezes with the analysis on pause.
+On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
+cover stays upright; only the scalloped edge crawls around it, deepening and
+wobbling with the music, and it stops on pause. The circular visualizer scales with
+the cover. **Bars** are mirrored radial bars with bass at the top; **Wave** is a
+filled halo whose lobes follow the spectrum. Along the bottom, **Bars** are mirrored
+around the middle (bass at the centre). **Wave** is a twisted ribbon of round beads
+that drifts sideways; each bead swells with the part of the spectrum it passes.
+Colors run from pale at the top to the cover accent at the bottom, and all motion
+freezes with the analysis on pause.
+
+The visualizers and the live background draw adaptive levels rather than raw
+loudness. Each band is measured against its own last couple of seconds, so kicks,
+snares and hi-hats each flare their own part of the ring. A band that's simply
+always loud, like the bass in most songs, settles mid-way instead of pinning the
+top, so each song gets its own shape. The bead ribbon drifts faster when the music
+is louder.
 
 In synced lyrics the current line sits on a frosted pill that glides to the next
-line. Upcoming lines settle one after another with a short spring; lines further
-away dim, shrink and soften. The line clock wakes only when the next line is due,
-about 150 ms early so the motion lands with the vocal. Neighbouring lines glide,
-while opening the view or a long seek jumps straight there. Hover highlights a line,
-and clicking it seeks. After a manual scroll, a glass **Follow lyrics** button resumes
-following.
+line and glows softly, tinted toward the cover. Upcoming lines settle one after
+another with a short spring; lines further away dim, shrink and soften. The line
+clock wakes only when the next line is due, about 150 ms early so the motion lands
+with the vocal. Neighbouring lines glide, while opening the view or a long seek
+jumps straight there. Hover highlights a line, and clicking it seeks. After a manual
+scroll, a glass **Follow lyrics** button resumes following.
 
 `-FloeSelfTest YES -FloeSelfTestDesign YES` plays a liked song and runs the
 real-audio effect checks; add `-FloeVisualTest YES -FloeSnapshotDir <dir>` for

@@ -15,14 +15,14 @@ struct VisualizerView: View {
 
     var body: some View {
         let frame = visualization.frame
-        // Counts analysed frames, so motion runs at 30 Hz and freezes with the analysis.
-        let clock = Double(visualization.framesAnalyzed) / 30
+        // Paced by the music's loudness; freezes with the analysis.
+        let clock = visualization.flow
         let color = palette.highlight
         let pale = color.mix(with: .white, by: 0.55)
         let sensitivity = Float(settings.sensitivity)
         let wave = settings.shape == .wave
         Canvas { context, size in
-            let levels = frame.bands.map { response($0, sensitivity: sensitivity) }
+            let levels = frame.levels.map { response($0, sensitivity: sensitivity) }
             let shading = GraphicsContext.Shading.linearGradient(
                 Gradient(colors: [pale.opacity(0.75), color.opacity(0.95)]),
                 startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height))
@@ -151,9 +151,9 @@ struct VisualizerView: View {
 
     /// Most music sits in the upper half of the analyser's dB range, so a knee drops
     /// the quiet floor and stretches what's left; a soft top keeps loud bands distinct.
+    /// Levels already adapt to each song; sensitivity is a plain visual gain.
     private func response(_ value: Float, sensitivity: Float) -> CGFloat {
-        let x = max(0, value * sensitivity - 0.3) / 0.7
-        return CGFloat(min(1, (1 - exp(-x * 1.4)) / (1 - exp(-1.4))))
+        CGFloat(min(1, max(0, value * sensitivity)))
     }
 
     /// Averages neighbouring bands, then blurs once more so outlines get a few broad lobes.
@@ -169,7 +169,7 @@ struct VisualizerView: View {
 
     /// Smoothing flattens the outline, so stretch each lobe away from the mean:
     /// the shape follows the spectrum while its overall size follows loudness.
-    private func emphasized(_ values: [CGFloat], by factor: CGFloat = 2.2) -> [CGFloat] {
+    private func emphasized(_ values: [CGFloat], by factor: CGFloat = 1.5) -> [CGFloat] {
         let mean = values.reduce(0, +) / CGFloat(max(1, values.count))
         return values.map { min(1, max(0, mean + ($0 - mean) * factor)) }
     }

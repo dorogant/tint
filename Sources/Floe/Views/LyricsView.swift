@@ -178,15 +178,20 @@ private struct LyricRow: View {
     let still: Bool
     let pill: Namespace.ID
     let seek: () -> Void
+    @Environment(\.coverPalette) private var palette
     @ViewState private var hovering = false
 
     var body: some View {
         let current = distance == 0
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        // The sung line glows softly, tinted toward the cover.
+        let glow = palette.highlight.mix(with: .white, by: 0.6)
         Button(action: seek) {
             label
                 .font(.system(size: fontSize, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(opacity))
+                .shadow(color: .white.opacity(current ? 0.35 : 0), radius: current ? 2 : 0)
+                .shadow(color: glow.opacity(current ? 0.6 : 0), radius: current ? 12 : 0)
                 .multilineTextAlignment(.leading)
                 .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)

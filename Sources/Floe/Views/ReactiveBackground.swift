@@ -87,13 +87,12 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         uniforms.motion.y = min(1, max(0, frame.rms * 6))
         uniforms.motion.z = reactivity
         // Six band groups per side, mirrored so bass lights the middle beams. The
-        // knee drops the quiet floor so beams rise and fall with the music.
+        // levels adapt to each song, so every group's hits make its beams flare.
         let half = Self.beamCount / 2
-        let group = max(1, frame.bands.count / half)
+        let group = max(1, frame.levels.count / half)
         for g in 0..<half {
-            let slice = frame.bands.dropFirst(g * group).prefix(group)
-            let mean = slice.reduce(0, +) / Float(max(1, slice.count))
-            let level = min(1, max(0, (mean - 0.3) / 0.6))
+            let slice = frame.levels.dropFirst(g * group).prefix(group)
+            let level = slice.reduce(0, +) / Float(max(1, slice.count))
             targets[half - 1 - g] = level
             targets[half + g] = level
         }

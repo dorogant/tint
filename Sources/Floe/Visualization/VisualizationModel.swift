@@ -11,6 +11,9 @@ final class VisualizationModel {
     private(set) var frame = SpectrumFrame.quiet
     private(set) var isRunning = false
     private(set) var framesAnalyzed: UInt64 = 0
+    /// A clock in seconds that runs faster when the music is louder; drifting
+    /// visuals use it so their pace follows the song. Frozen while analysis is off.
+    private(set) var flow: Double = 0
     @ObservationIgnored private let worker = AnalysisWorker()
     @ObservationIgnored private var generation: UInt64 = 0
 
@@ -24,6 +27,7 @@ final class VisualizationModel {
                 guard let self, self.isRunning, self.generation == generation else { return }
                 self.frame = frame
                 self.framesAnalyzed += 1
+                self.flow += (0.5 + min(1.5, Double(frame.rms) * 5)) / 30
             }
         } else { worker.stop() }
     }

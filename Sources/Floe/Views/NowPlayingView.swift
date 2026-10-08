@@ -113,24 +113,26 @@ private struct FlowerCoverView: View {
             let time = elapsed + (started.map { max(0, context.date.timeIntervalSince($0)) } ?? 0)
             let phase = time * 0.65
             let energy = running && visualization.isRunning ? min(1, Double(visualization.frame.rms) * 3.2) : 0
+            // The cover stays upright; only its scalloped edge crawls around it,
+            // deepening and wobbling with the music.
+            let edge = BlobShape(phase: phase, crawl: time * 0.3, depth: 0.045 + energy * 0.02,
+                                 ripple: 0.14 + energy * 0.5)
             // Flexible inside, so the hero flight can draw it at the mini player's size.
             ZStack {
                 if let image = appearance.image {
                     Image(decorative: image, scale: 2).resizable().scaledToFill()
                         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                        .clipShape(BlobShape(phase: phase))
+                        .clipShape(edge)
                         .id(appearance.imageURL)
                         .transition(.opacity)
                 } else {
-                    BlobShape(phase: phase).fill(.white.opacity(0.06))
+                    edge.fill(.white.opacity(0.06))
                         .overlay(Image(systemName: "music.note").font(.system(size: 60)).foregroundStyle(Theme.tertiary))
                 }
                 // A tinted rim, like a bottle cap's edge, separates the cover from the ring.
-                BlobShape(phase: phase)
-                    .stroke(palette.highlight.mix(with: .black, by: 0.45).opacity(0.9),
+                edge.stroke(palette.highlight.mix(with: .black, by: 0.45).opacity(0.9),
                             lineWidth: max(2, size * 0.014))
             }
-            .rotationEffect(.degrees(time * 18))
             .scaleEffect(1 + energy * 0.018)
             .floeAnimation(value: appearance.imageURL, duration: 0.35)
         }

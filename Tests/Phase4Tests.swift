@@ -7,7 +7,7 @@ struct Phase4Tests {
         let silence = SpectrumAnalyzer()!
         let zero = [Float](repeating: 0, count: SpectrumAnalyzer.size)
         let quiet = silence.process(left: zero, right: zero, count: zero.count)
-        precondition(quiet.rms == 0 && quiet.bands.allSatisfy { $0 == 0 })
+        precondition(quiet.rms == 0 && quiet.bands.allSatisfy { $0 == 0 } && quiet.levels.allSatisfy { $0 == 0 })
 
         for frequency: Float in [220, 1000, 8000] {
             let analyzer = SpectrumAnalyzer()!
@@ -39,17 +39,31 @@ struct Phase4Tests {
         let reset = rolling.process(left: zero, right: zero, count: zero.count)
         precondition(reset == SpectrumFrame.quiet, "reset must erase the previous track")
 
+        // Fine-tuned per song, not scripted: a steady band settles below the top,
+        // and a new sound elsewhere in the spectrum stands out above it.
+        let adaptive = SpectrumAnalyzer()!
+        let low = tone(220)
+        var settled = SpectrumFrame.quiet
+        for _ in 0..<150 { settled = adaptive.process(left: low, right: low, count: low.count) }
+        let lowBand = settled.bands.indices.max { settled.bands[$0] < settled.bands[$1] }!
+        precondition(settled.levels[lowBand] < 0.75, "a steady band must settle, not stay pinned")
+        let mixed = zip(low, tone(4000)).map { $0 + $1 }
+        let hit = adaptive.process(left: mixed, right: mixed, count: mixed.count)
+        let highBand = (lowBand + 1..<SpectrumAnalyzer.bandCount).max { hit.bands[$0] < hit.bands[$1] }!
+        precondition(hit.levels[highBand] > settled.levels[lowBand] + 0.1, "a new sound must stand out")
+        precondition(hit.levels.allSatisfy { $0.isFinite && (0...1).contains($0) })
+
         let decay = SpectrumAnalyzer()!
         let loud = decay.process(left: input, right: input, count: input.count)
         var drained = loud
         for _ in 0..<30 { drained = decay.process(left: [], right: [], count: 0) }
-        precondition(drained.rms < 0.001 && drained.bands.max()! < 0.001)
+        precondition(drained.rms < 0.001 && drained.bands.max()! < 0.001 && drained.levels.max()! < 0.001)
         if let device = MTLCreateSystemDefaultDevice() {
             let library = try! device.makeLibrary(source: ReactiveShader.source, options: nil)
             precondition(library.functionNames.contains("floeBackgroundVertex") && library.functionNames.contains("floeBackgroundFragment"))
             print("PASS: Metal background shader compiles")
         } else { print("SKIP: Metal device unavailable") }
-        print("PASS: 9 synthetic FFT checks (silence, frequency bands, stereo, rolling input, reset, decay)")
+        print("PASS: 10 synthetic FFT checks (silence, frequency bands, stereo, rolling input, reset, adaptive levels, decay)")
     }
 
     private static func tone(_ frequency: Float) -> [Float] {

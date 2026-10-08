@@ -2,9 +2,14 @@ import Accelerate
 import Foundation
 
 struct SpectrumFrame: Equatable, Sendable {
+    /// Absolute band energy, 0…1 across a 65 dB range.
     var bands: [Float]
+    /// What the visuals draw: each band relative to its own recent range, so a
+    /// song's fixed tilt (bass always louder) doesn't decide the shape.
+    var levels: [Float]
     var rms: Float
-    static let quiet = SpectrumFrame(bands: Array(repeating: 0, count: 48), rms: 0)
+    static let quiet = SpectrumFrame(bands: Array(repeating: 0, count: 48),
+                                     levels: Array(repeating: 0, count: 48), rms: 0)
 }
 
 /// Queue-confined, reusable vDSP buffers. Stereo power avoids phase cancellation;
@@ -24,6 +29,10 @@ final class SpectrumAnalyzer {
     private var power = [Float](repeating: 0, count: size / 2)
     private var stereoPower = [Float](repeating: 0, count: size / 2)
     private var smoothed = [Float](repeating: 0, count: bandCount)
+    private var average = [Float](repeating: 0, count: bandCount)
+    private var spread = [Float](repeating: 0, count: bandCount)
+    private var levels = [Float](repeating: 0, count: bandCount)
+    private var adapted = 0
     private var level: Float = 0
     private let ranges: [Range<Int>]
 
@@ -46,6 +55,10 @@ final class SpectrumAnalyzer {
         left = Array(repeating: 0, count: Self.size)
         right = Array(repeating: 0, count: Self.size)
         smoothed = Array(repeating: 0, count: Self.bandCount)
+        average = Array(repeating: 0, count: Self.bandCount)
+        spread = Array(repeating: 0, count: Self.bandCount)
+        levels = Array(repeating: 0, count: Self.bandCount)
+        adapted = 0
         level = 0
     }
 
@@ -55,7 +68,8 @@ final class SpectrumAnalyzer {
         if count == 0 {
             for i in smoothed.indices { smoothed[i] *= 0.78 }
             level *= 0.78
-            return SpectrumFrame(bands: smoothed, rms: level)
+            adapt()
+            return SpectrumFrame(bands: smoothed, levels: levels, rms: level)
         }
         append(inputLeft, count: count, to: &left)
         append(inputRight, count: count, to: &right)
@@ -75,7 +89,25 @@ final class SpectrumAnalyzer {
             let target = min(1, max(0, (db + 65) / 65))
             smoothed[i] += (target - smoothed[i]) * (target > smoothed[i] ? 0.82 : 0.18)
         }
-        return SpectrumFrame(bands: smoothed, rms: level)
+        adapt()
+        return SpectrumFrame(bands: smoothed, levels: levels, rms: level)
+    }
+
+    /// Shows each band against its own last couple of seconds: hits stand out
+    /// wherever they land in the spectrum, and a band that's simply always loud
+    /// settles mid-way. A share of absolute energy keeps quiet bands low, and
+    /// silence stays flat.
+    private func adapt() {
+        adapted += 1
+        let rate = max(0.02, 1 / Float(adapted)) // learn quickly after a reset
+        for i in 0..<Self.bandCount {
+            let value = smoothed[i]
+            average[i] += (value - average[i]) * rate
+            spread[i] += (abs(value - average[i]) - spread[i]) * rate
+            let relative = 0.5 + (value - average[i]) / max(spread[i], 0.03) * 0.22
+            let presence = min(1, max(0, (value - 0.12) / 0.3))
+            levels[i] = min(1, max(0, 0.75 * relative + 0.25 * value)) * presence
+        }
     }
 
     /// A band center in Hz, useful for deterministic frequency-response tests.

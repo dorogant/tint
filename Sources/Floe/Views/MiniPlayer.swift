@@ -88,19 +88,21 @@ struct ProgressBar: View {
 
     var body: some View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
-        // The mini player updates once a second; Now Playing animates the wave at 12 Hz.
-        TimelineView(.animation(minimumInterval: wavy && !reduceMotion && !systemReduceMotion ? 1 / 12 : 1,
-                                paused: !player.isPlaying || dragFraction != nil)) { context in
+        // Both bars tick once a second; Core Animation scrolls the Now Playing wave
+        // and glides its playhead in between.
+        TimelineView(SteadySchedule(interval: 1, paused: !player.isPlaying || dragFraction != nil)) { context in
             let fraction = dragFraction ?? min(player.positionMs(at: context.date) / duration, 1)
+            // Aim the glide at where playback will be on the next tick.
+            let ahead = dragFraction ?? min(player.positionMs(at: context.date.addingTimeInterval(1)) / duration, 1)
             HStack(spacing: 8) {
                 Text(Format.duration(ms: fraction * duration))
                     .frame(width: 36, alignment: .trailing)
                 GeometryReader { geometry in
                     Group {
                         if wavy {
-                            WavyProgress(progress: fraction,
-                                         phase: reduceMotion || systemReduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate * 1.2,
-                                         color: palette.highlight)
+                            let playing = player.isPlaying && dragFraction == nil
+                            WavyProgress(progress: playing ? ahead : fraction, color: palette.highlight,
+                                         moving: playing && !reduceMotion && !systemReduceMotion, glide: playing)
                         } else {
                             SliderTrack(fraction: fraction, active: hovering || dragFraction != nil,
                                         tint: dragFraction == nil ? .white.opacity(0.85) : palette.accent)

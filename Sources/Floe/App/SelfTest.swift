@@ -32,6 +32,11 @@ enum SelfTest {
             player.pause()
             return finish(passed, "song switching checks")
         }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestPerf") {
+            let passed = await performance(player: player, library: library, navigator: navigator, lyrics: lyrics,
+                                           visualization: visualization, visuals: visuals)
+            return finish(passed, "performance and equalizer-shape measurements")
+        }
         if UserDefaults.standard.bool(forKey: "FloeSelfTestDesign") {
             guard let song = try? await library.api.savedTracks(offset: 0).items.first?.track,
                   let profile = library.profile else { return finish(false, "needs a liked song") }
@@ -383,6 +388,194 @@ enum SelfTest {
         try? await Task.sleep(for: .milliseconds(150))
         Snapshot.capture("17-to-library-mid")
         try? await Task.sleep(for: .seconds(1.5))
+    }
+
+    /// Holds each visual scenario steady and reports Floe's CPU, frame rates and
+    /// memory, then compares equalizer shapes on two songs. Brings the window to
+    /// the front, since hidden windows barely draw. Restores every preference.
+    private static func performance(player: PlayerModel, library: LibraryModel, navigator: Navigator,
+                                    lyrics: LyricsModel, visualization: VisualizationModel,
+                                    visuals: VisualSettings) async -> Bool {
+        guard let page = try? await library.api.savedTracks(offset: 0), let profile = library.profile,
+              let first = page.items.first?.track else { return false }
+        // A second song by someone else, so the shapes have something to differ on.
+        let second = page.items.map(\.track).first { $0.artistLine != first.artistLine } ?? first
+        let defaults = UserDefaults.standard
+        let saved = (defaults.object(forKey: "reduceMotion"), defaults.object(forKey: "nowPlayingLyrics"))
+        let original = (visuals.showVisualizer, visuals.style, visuals.shape, visuals.liveBackground, navigator.surface)
+        defer {
+            visuals.showVisualizer = original.0; visuals.style = original.1; visuals.shape = original.2
+            visuals.liveBackground = original.3; navigator.surface = original.4
+            for (key, value) in [("reduceMotion", saved.0), ("nowPlayingLyrics", saved.1)] {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
+        defaults.set(false, forKey: "reduceMotion")
+        defaults.set(true, forKey: "nowPlayingLyrics")
+        NSApp.activate()
+        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+
+        func play(_ track: Track) async -> Bool {
+            player.play(PlayRequest(contextURI: "spotify:user:\(profile.id):collection", startURI: track.uri), selectedTrack: track)
+            return await wait(timeout: 20) { player.isPlaying && !player.isLoading && player.displayTrack?.uri == track.uri }
+        }
+        guard await play(first) else { return false }
+        var ok = true
+        // `-FloeSelfTestPerfOnly <name>` holds one scenario for 30 s, e.g. for `sample`.
+        let only = defaults.string(forKey: "FloeSelfTestPerfOnly")
+        var profiles: [(raw: [Float], adaptive: [Float])] = []
+        for (index, track) in (only == nil ? [first, second] : []).enumerated() {
+            if index > 0 { ok = check(ok, await play(track), "second song starts") }
+            navigator.surface = .nowPlaying
+            visuals.liveBackground = false; visuals.showVisualizer = true
+            visuals.style = .circular; visuals.shape = .wave
+            try? await Task.sleep(for: .seconds(6)) // let the levels adapt to this song
+            profiles.append(await shape(of: visualization, song: index + 1))
+            if defaults.bool(forKey: "FloeVisualTest") {
+                lyrics.showVisualTestFixture()
+                for (style, shape) in [(VisualSettings.Style.circular, VisualSettings.Shape.wave), (.circular, .bars)] {
+                    visuals.style = style; visuals.shape = shape
+                    for moment in 1...2 {
+                        try? await Task.sleep(for: .milliseconds(700))
+                        Snapshot.capture("song\(index + 1)-\(shape.rawValue)-\(moment)")
+                    }
+                }
+            }
+        }
+        if profiles.count == 2 {
+            say(String(format: "shape: songs' average outlines correlate %.2f raw vs %.2f adaptive",
+                       correlation(profiles[0].raw, profiles[1].raw), correlation(profiles[0].adaptive, profiles[1].adaptive)))
+        }
+
+        struct Scenario { let name: String; let surface: Navigator.Surface; let visualizer: VisualSettings.Style?
+                          let shape: VisualSettings.Shape; let background: Bool
+                          var still = false; var lyrics = true; var changingLines = false }
+        let scenarios = [
+            Scenario(name: "library, effects off", surface: .library, visualizer: nil, shape: .bars, background: false),
+            Scenario(name: "now playing, effects off", surface: .nowPlaying, visualizer: nil, shape: .bars, background: false),
+            Scenario(name: "now playing, effects off, reduce motion", surface: .nowPlaying, visualizer: nil, shape: .bars,
+                     background: false, still: true),
+            Scenario(name: "now playing, effects off, no lyrics", surface: .nowPlaying, visualizer: nil, shape: .bars,
+                     background: false, lyrics: false),
+            Scenario(name: "now playing, lyrics changing", surface: .nowPlaying, visualizer: nil, shape: .bars,
+                     background: false, changingLines: true),
+            Scenario(name: "now playing, circular bars", surface: .nowPlaying, visualizer: .circular, shape: .bars, background: false),
+            Scenario(name: "now playing, circular halo", surface: .nowPlaying, visualizer: .circular, shape: .wave, background: false),
+            Scenario(name: "now playing, bottom beads", surface: .nowPlaying, visualizer: .normal, shape: .wave, background: false),
+            Scenario(name: "library, live background", surface: .library, visualizer: nil, shape: .bars, background: true),
+            Scenario(name: "now playing, circular bars + background", surface: .nowPlaying, visualizer: .circular, shape: .bars, background: true),
+            Scenario(name: "lyrics view", surface: .lyrics, visualizer: nil, shape: .bars, background: false),
+        ]
+        for scenario in scenarios where only.map(scenario.name.contains) ?? true {
+            navigator.surface = scenario.surface
+            visuals.showVisualizer = scenario.visualizer != nil
+            if let style = scenario.visualizer { visuals.style = style }
+            visuals.shape = scenario.shape
+            visuals.liveBackground = scenario.background
+            defaults.set(scenario.still, forKey: "reduceMotion")
+            defaults.set(scenario.lyrics, forKey: "nowPlayingLyrics")
+            if scenario.changingLines {
+                // Synthetic lines every 1.25 s, so every sample window sees line changes.
+                lyrics.showVisualTestFixture(from: player.positionMs(at: Date()) / 1000 + 2, every: 1.25, count: 24)
+            }
+            try? await Task.sleep(for: .seconds(4))
+            if scenario.surface == .nowPlaying && !scenario.still {
+                ok = check(ok, await coverAndWaveMove(), "cover rim and progress wave move while playing")
+            }
+            say("perf-begin \(Int(Date().timeIntervalSince1970)) \(scenario.name)")
+            let sample = await usage(over: only == nil || scenarios.filter({ $0.name.contains(only!) }).count > 1 ? 10 : 30,
+                                     visualization: visualization)
+            say(String(format: "perf %@: %.1f%% CPU, %.0f analysis/s, %.0f background/s, %.0f MiB footprint",
+                       scenario.name, sample.cpu, sample.analysis, sample.background, MemoryFootprint.currentMB))
+        }
+        player.pause()
+        navigator.surface = .nowPlaying
+        visuals.showVisualizer = true; visuals.style = .circular; visuals.liveBackground = true
+        try? await Task.sleep(for: .seconds(4))
+        ok = check(ok, !(await coverAndWaveMove()), "cover rim and progress wave hold still while paused")
+        say("perf-begin \(Int(Date().timeIntervalSince1970)) paused")
+        let paused = await usage(over: 10, visualization: visualization)
+        say(String(format: "perf paused, effects on: %.1f%% CPU, %.0f analysis/s, %.0f background/s, %.0f MiB footprint",
+                   paused.cpu, paused.analysis, paused.background, MemoryFootprint.currentMB))
+        return check(ok, paused.analysis == 0 && paused.background == 0, "effects stop while paused")
+    }
+
+    /// Core Animation runs these, so snapshots can't show motion; compare the
+    /// on-screen state half a second apart instead.
+    private static func coverAndWaveMove() async -> Bool {
+        func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
+            guard let view else { return nil }
+            if let match = view as? T { return match }
+            for child in view.subviews { if let match = find(type, in: child) { return match } }
+            return nil
+        }
+        let root = NSApp.windows.first { $0.canBecomeMain }?.contentView
+        guard let cover = find(CrawlingCoverView.self, in: root), let wave = find(WavyProgressView.self, in: root)
+        else { return false }
+        let before = (cover.crawlAngle, wave.scrollOffset)
+        try? await Task.sleep(for: .milliseconds(500))
+        return cover.crawlAngle != before.0 && wave.scrollOffset != before.1
+    }
+
+    private static func usage(over seconds: Double, visualization: VisualizationModel) async
+        -> (cpu: Double, analysis: Double, background: Double) {
+        func cpuSeconds() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        let cpu = cpuSeconds(), start = Date()
+        let analysis = visualization.framesAnalyzed, background = visualization.backgroundFramesDrawn
+        try? await Task.sleep(for: .seconds(seconds))
+        let wall = Date().timeIntervalSince(start)
+        return ((cpuSeconds() - cpu) / wall * 100, Double(visualization.framesAnalyzed - analysis) / wall,
+                Double(visualization.backgroundFramesDrawn - background) / wall)
+    }
+
+    /// Samples the ring for 10 s: how often the bass (top) group is the biggest,
+    /// how much the outline moves frame to frame, and the average outline.
+    private static func shape(of visualization: VisualizationModel, song: Int) async -> (raw: [Float], adaptive: [Float]) {
+        func groups(_ values: [Float]) -> [Float] {
+            stride(from: 0, to: values.count, by: 8).map { start in
+                values[start..<min(values.count, start + 8)].reduce(0, +) / 8
+            }
+        }
+        var raw = [Float](repeating: 0, count: 6), adaptive = raw
+        var topRaw = 0, topAdaptive = 0, samples = 0
+        var upperRaw: Float = 0, upperAdaptive: Float = 0
+        var motionRaw: Float = 0, motionAdaptive: Float = 0
+        var previous: (raw: [Float], adaptive: [Float])?
+        for _ in 0..<100 {
+            try? await Task.sleep(for: .milliseconds(100))
+            let frame = visualization.frame
+            let r = groups(frame.bands), a = groups(frame.levels)
+            if r.firstIndex(of: r.max()!) == 0 { topRaw += 1 }
+            if a.firstIndex(of: a.max()!) == 0 { topAdaptive += 1 }
+            // The ring's upper half draws the lower half of the spectrum.
+            upperRaw += r[0..<3].reduce(0, +) / max(1e-6, r.reduce(0, +))
+            upperAdaptive += a[0..<3].reduce(0, +) / max(1e-6, a.reduce(0, +))
+            if let previous {
+                motionRaw += zip(r, previous.raw).map { abs($0 - $1) }.reduce(0, +) / 6
+                motionAdaptive += zip(a, previous.adaptive).map { abs($0 - $1) }.reduce(0, +) / 6
+            }
+            previous = (r, a)
+            for i in 0..<6 { raw[i] += r[i]; adaptive[i] += a[i] }
+            samples += 1
+        }
+        let n = Float(max(samples, 1))
+        say(String(format: "shape song %d: upper half holds %.0f%% of the ring raw vs %.0f%% adaptive; "
+                   + "bass group biggest in %.0f%% vs %.0f%% of frames; frame-to-frame motion %.3f vs %.3f", song,
+                   upperRaw / n * 100, upperAdaptive / n * 100, Float(topRaw) / n * 100, Float(topAdaptive) / n * 100,
+                   motionRaw / n, motionAdaptive / n))
+        return (raw.map { $0 / n }, adaptive.map { $0 / n })
+    }
+
+    private static func correlation(_ a: [Float], _ b: [Float]) -> Float {
+        let ma = a.reduce(0, +) / Float(a.count), mb = b.reduce(0, +) / Float(b.count)
+        let cov = zip(a, b).map { ($0 - ma) * ($1 - mb) }.reduce(0, +)
+        let va = a.map { ($0 - ma) * ($0 - ma) }.reduce(0, +), vb = b.map { ($0 - mb) * ($0 - mb) }.reduce(0, +)
+        return cov / max(1e-9, (va * vb).squareRoot())
     }
 
     /// Visits each page (and snapshots it when enabled).

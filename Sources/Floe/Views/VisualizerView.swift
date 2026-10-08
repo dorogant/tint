@@ -1,55 +1,200 @@
+import AppKit
 import SwiftUI
 
-/// Canvas consumes only the compact analysis frame; no animation timeline or
-/// access to the player/library forces unrelated views to redraw at 30 Hz.
-/// Every style shares one look: rounded strokes, pale at the top and saturated
-/// at the bottom, with a faint glow underneath.
-struct VisualizerView: View {
+/// The visualizer, drawn by Core Animation: GPU shape layers carry a gradient
+/// fill, a soft glow and a rim, and a 30 Hz timer feeds them each analysis
+/// frame directly. Driving a SwiftUI Canvas instead put the whole window through
+/// a SwiftUI update every frame (~15% CPU). Every style shares one look: rounded
+/// strokes, pale at the top and saturated at the bottom, with a faint glow beneath.
+struct VisualizerView: NSViewRepresentable {
+    var circular = false
     @Environment(VisualizationModel.self) private var visualization
     @Environment(VisualSettings.self) private var settings
     @Environment(\.coverPalette) private var palette
-    var circular = false
 
     /// The circular ring reaches this multiple of the cover's radius.
-    static let ringScale: CGFloat = 1.5
+    nonisolated static let ringScale: CGFloat = 1.5
 
-    var body: some View {
-        let frame = visualization.frame
-        // Paced by the music's loudness; freezes with the analysis.
-        let clock = visualization.flow
-        let color = palette.highlight
-        let pale = color.mix(with: .white, by: 0.55)
-        let sensitivity = Float(settings.sensitivity)
-        let wave = settings.shape == .wave
-        Canvas { context, size in
-            let levels = frame.levels.map { response($0, sensitivity: sensitivity) }
-            let shading = GraphicsContext.Shading.linearGradient(
-                Gradient(colors: [pale.opacity(0.75), color.opacity(0.95)]),
-                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height))
-            switch (circular, wave) {
-            case (true, false): drawRadialBars(&context, size: size, levels: levels, color: color, shading: shading)
-            case (true, true): drawHalo(&context, size: size, levels: levels, color: color, shading: shading)
-            case (false, false): drawBars(&context, size: size, levels: levels, color: color, shading: shading)
-            case (false, true):
-                let ribbon = GraphicsContext.Shading.linearGradient(
-                    Gradient(colors: [color.opacity(0.95), pale.opacity(0.7), color.opacity(0.95)]),
-                    startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height))
-                drawBeads(&context, size: size, levels: levels, clock: clock, color: color, shading: ribbon)
-            }
+    func makeNSView(context: Context) -> VisualizerLayerView { VisualizerLayerView(model: visualization) }
+
+    func updateNSView(_ view: VisualizerLayerView, context: Context) {
+        // Only settings and colours come through SwiftUI; frames never do.
+        view.configure(style: circular ? (settings.shape == .wave ? .halo : .radialBars)
+                                       : (settings.shape == .wave ? .beads : .bars),
+                       sensitivity: Float(settings.sensitivity), color: NSColor(palette.highlight),
+                       pale: NSColor(palette.highlight.mix(with: .white, by: 0.55)),
+                       running: visualization.isRunning)
+    }
+}
+
+final class VisualizerLayerView: NSView {
+    enum Style { case radialBars, halo, bars, beads }
+
+    private weak var model: VisualizationModel?
+    private let container = CALayer()
+    private let glow = CAShapeLayer()
+    private let echo = CAGradientLayer()
+    private let echoMask = CAShapeLayer()
+    private let fill = CAGradientLayer()
+    private let fillMask = CAShapeLayer()
+    private let rim = CAShapeLayer()
+    private var style = Style.radialBars
+    private var sensitivity: Float = 1
+    private var color = NSColor.white
+    private var running = false
+    private var timer: DispatchSourceTimer?
+    private var drawnFrame: UInt64?
+
+    init(model: VisualizationModel) {
+        self.model = model
+        super.init(frame: .zero)
+        wantsLayer = true
+        setAccessibilityElement(false)
+        layer?.addSublayer(container)
+        echo.opacity = 0.35
+        echo.mask = echoMask
+        fill.mask = fillMask
+        for layer in [glow, echo, fill, rim] { container.addSublayer(layer) }
+        for shape in [glow, rim, echoMask, fillMask] {
+            shape.lineCap = .round
+            shape.lineJoin = .round
         }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        glow.fillColor = nil
+        rim.fillColor = nil
     }
 
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// Top-down, like the geometry below; AppKit carries this to the layers.
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(style: Style, sensitivity: Float, color: NSColor, pale: NSColor, running: Bool) {
+        self.style = style
+        self.sensitivity = sensitivity
+        self.color = color
+        let beads = style == .beads
+        let top = pale.withAlphaComponent(0.75).cgColor, bottom = color.withAlphaComponent(0.95).cgColor
+        let gradient = beads ? [bottom, pale.withAlphaComponent(0.7).cgColor, bottom] : [top, bottom]
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layer in [fill, echo] {
+            layer.colors = gradient
+            layer.startPoint = CGPoint(x: 0.5, y: 0)
+            layer.endPoint = CGPoint(x: 0.5, y: 1)
+        }
+        echo.isHidden = !beads
+        rim.isHidden = style == .bars || style == .radialBars
+        rim.strokeColor = beads ? color.blended(withFraction: 0.45, of: .black)?.withAlphaComponent(0.7).cgColor
+                                : color.withAlphaComponent(0.45).cgColor
+        rim.lineWidth = beads ? 1.2 : 1.5
+        // Bars are stroked shapes; the halo and beads are filled outlines.
+        let stroked = style == .bars || style == .radialBars
+        fillMask.fillColor = stroked ? nil : NSColor.black.cgColor
+        fillMask.strokeColor = stroked ? NSColor.black.cgColor : nil
+        echoMask.fillColor = NSColor.black.cgColor
+        CATransaction.commit()
+        drawnFrame = nil
+        redraw()
+        setRunning(running)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        container.frame = bounds
+        for layer in [glow, echo, echoMask, fill, fillMask, rim] { layer.frame = bounds }
+        CATransaction.commit()
+        drawnFrame = nil
+        redraw()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        for layer in [container, glow, echo, echoMask, fill, fillMask, rim] { layer.contentsScale = scale }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        let wanted = running
+        running = false
+        setRunning(wanted)
+    }
+
+    private func setRunning(_ running: Bool) {
+        let active = running && window != nil
+        self.running = running
+        guard active != (timer != nil) else { return }
+        if active {
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333), leeway: .milliseconds(4))
+            timer.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.redraw() } }
+            self.timer = timer
+            timer.resume()
+        } else {
+            timer?.cancel()
+            timer = nil
+        }
+    }
+
+    /// Redraws only when a new analysis frame has arrived.
+    private func redraw() {
+        guard let model, bounds.width > 0, bounds.height > 0, drawnFrame != model.framesAnalyzed else { return }
+        drawnFrame = model.framesAnalyzed
+        let size = bounds.size
+        let levels = model.frame.levels.map { CGFloat(min(1, max(0, $0 * sensitivity))) }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        switch style {
+        case .radialBars:
+            let (path, width) = VisualizerGeometry.radialBars(size: size, levels: levels)
+            stroke(path.cgPath, width: width, glowWidth: width * 2.2, glowAlpha: 0.14)
+        case .bars:
+            let (path, width) = VisualizerGeometry.bars(size: size, levels: levels)
+            stroke(path.cgPath, width: width, glowWidth: width * 1.8, glowAlpha: 0.1)
+        case .halo:
+            let path = VisualizerGeometry.halo(size: size, levels: levels).cgPath
+            outline(path, glowWidth: 10, glowAlpha: 0.12)
+        case .beads:
+            let (front, back) = VisualizerGeometry.beads(size: size, levels: levels, clock: model.flow)
+            outline(front.cgPath, glowWidth: 6, glowAlpha: 0.12)
+            echoMask.path = back.cgPath.subtracting(front.cgPath)
+        }
+        CATransaction.commit()
+    }
+
+    private func stroke(_ path: CGPath, width: CGFloat, glowWidth: CGFloat, glowAlpha: CGFloat) {
+        glow.path = path
+        glow.lineWidth = glowWidth
+        glow.strokeColor = color.withAlphaComponent(glowAlpha).cgColor
+        fillMask.path = path
+        fillMask.lineWidth = width
+    }
+
+    private func outline(_ path: CGPath, glowWidth: CGFloat, glowAlpha: CGFloat) {
+        glow.path = path
+        glow.lineWidth = glowWidth
+        glow.strokeColor = color.withAlphaComponent(glowAlpha).cgColor
+        fillMask.path = path
+        rim.path = path
+    }
+}
+
+/// Outlines for each style, top-down in the view's size. Levels are 0…1, one per
+/// analyser band, already adapted to the song.
+enum VisualizerGeometry {
     /// Mirrored radial bars around the cover: bass at the top, treble at the bottom.
-    private func drawRadialBars(_ context: inout GraphicsContext, size: CGSize, levels: [CGFloat],
-                                color: Color, shading: GraphicsContext.Shading) {
+    static func radialBars(size: CGSize, levels: [CGFloat]) -> (Path, CGFloat) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let outer = min(size.width, size.height) / 2
         let count = levels.count * 2
-        let inner = outer / Self.ringScale + 3
+        let inner = outer / VisualizerView.ringScale + 3
         let width = max(1.5, 2 * .pi * inner / CGFloat(count) * 0.5)
-        // Round caps stay clear of the cover outline and the canvas edge.
+        // Round caps stay clear of the cover outline and the view's edge.
         let start = inner + width / 2
         let room = outer - start - width / 2
         var path = Path()
@@ -60,16 +205,14 @@ struct VisualizerView: View {
             path.move(to: point(center, angle, start))
             path.addLine(to: point(center, angle, start + length))
         }
-        context.stroke(path, with: .color(color.opacity(0.14)), style: StrokeStyle(lineWidth: width * 2.2, lineCap: .round))
-        context.stroke(path, with: shading, style: StrokeStyle(lineWidth: width, lineCap: .round))
+        return (path, width)
     }
 
     /// A soft filled halo whose few broad lobes follow the spectrum.
-    private func drawHalo(_ context: inout GraphicsContext, size: CGSize, levels: [CGFloat],
-                          color: Color, shading: GraphicsContext.Shading) {
+    static func halo(size: CGSize, levels: [CGFloat]) -> Path {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let outer = min(size.width, size.height) / 2
-        let cover = outer / Self.ringScale
+        let cover = outer / VisualizerView.ringScale
         let room = outer - cover - 4
         let lobes = emphasized(smoothed(levels, groups: 12))
         let half = Double(lobes.count)
@@ -81,14 +224,11 @@ struct VisualizerView: View {
             .map { point(center, $0.angle, $0.radius) }
         var path = Path()
         addCurve(through: points, to: &path, closed: true)
-        context.stroke(path, with: .color(color.opacity(0.12)), style: StrokeStyle(lineWidth: 10, lineJoin: .round))
-        context.fill(path, with: shading)
-        context.stroke(path, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+        return path
     }
 
     /// The ring unrolled: bass in the middle, mirrored out to treble at both ends.
-    private func drawBars(_ context: inout GraphicsContext, size: CGSize, levels: [CGFloat],
-                          color: Color, shading: GraphicsContext.Shading) {
+    static func bars(size: CGSize, levels: [CGFloat]) -> (Path, CGFloat) {
         let mirrored = levels.reversed() + levels
         let step = size.width / CGFloat(mirrored.count)
         let width = max(2, step * 0.5)
@@ -99,15 +239,13 @@ struct VisualizerView: View {
             path.move(to: CGPoint(x: x, y: bottom))
             path.addLine(to: CGPoint(x: x, y: bottom - (size.height - width) * (0.04 + 0.96 * level)))
         }
-        context.stroke(path, with: .color(color.opacity(0.1)), style: StrokeStyle(lineWidth: width * 1.8, lineCap: .round))
-        context.stroke(path, with: shading, style: StrokeStyle(lineWidth: width, lineCap: .round))
+        return (path, width)
     }
 
     /// A twisted ribbon of beads drifting sideways, bass in the middle. Each bead
     /// takes its height from the spectrum at its own centre, so beads stay round
     /// and swell or shrink as they pass; a dimmer chain shows through the pinches.
-    private func drawBeads(_ context: inout GraphicsContext, size: CGSize, levels: [CGFloat], clock: Double,
-                           color: Color, shading: GraphicsContext.Shading) {
+    static func beads(size: CGSize, levels: [CGFloat], clock: Double) -> (front: Path, echo: Path) {
         let mid = size.height / 2
         let half = smoothed(levels, groups: levels.count)
         let mirrored = half.reversed() + half
@@ -138,26 +276,11 @@ struct VisualizerView: View {
             return path
         }
         let phase = clock * 1.1
-        let front = chain(phase: phase)
-        var echo = context
-        echo.opacity = 0.35
-        echo.clip(to: front, options: .inverse)
-        echo.fill(chain(phase: phase + .pi / 2), with: shading)
-        context.stroke(front, with: .color(color.opacity(0.12)), style: StrokeStyle(lineWidth: 6, lineJoin: .round))
-        context.fill(front, with: shading)
-        context.stroke(front, with: .color(color.mix(with: .black, by: 0.45).opacity(0.7)),
-                       style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
-    }
-
-    /// Most music sits in the upper half of the analyser's dB range, so a knee drops
-    /// the quiet floor and stretches what's left; a soft top keeps loud bands distinct.
-    /// Levels already adapt to each song; sensitivity is a plain visual gain.
-    private func response(_ value: Float, sensitivity: Float) -> CGFloat {
-        CGFloat(min(1, max(0, value * sensitivity)))
+        return (chain(phase: phase), chain(phase: phase + .pi / 2))
     }
 
     /// Averages neighbouring bands, then blurs once more so outlines get a few broad lobes.
-    private func smoothed(_ levels: [CGFloat], groups: Int) -> [CGFloat] {
+    private static func smoothed(_ levels: [CGFloat], groups: Int) -> [CGFloat] {
         let averaged = (0..<groups).map { g in
             let range = (g * levels.count / groups)..<((g + 1) * levels.count / groups)
             return levels[range].reduce(0, +) / CGFloat(max(1, range.count))
@@ -169,20 +292,19 @@ struct VisualizerView: View {
 
     /// Smoothing flattens the outline, so stretch each lobe away from the mean:
     /// the shape follows the spectrum while its overall size follows loudness.
-    private func emphasized(_ values: [CGFloat], by factor: CGFloat = 1.5) -> [CGFloat] {
+    private static func emphasized(_ values: [CGFloat], by factor: CGFloat = 1.5) -> [CGFloat] {
         let mean = values.reduce(0, +) / CGFloat(max(1, values.count))
         return values.map { min(1, max(0, mean + ($0 - mean) * factor)) }
     }
 
-    private func point(_ center: CGPoint, _ angle: Double, _ radius: CGFloat) -> CGPoint {
+    private static func point(_ center: CGPoint, _ angle: Double, _ radius: CGFloat) -> CGPoint {
         CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
     }
 
     /// Catmull-Rom through every point, so peaks stay where the data puts them.
-    /// Continues an existing path from its current point, or starts a new one.
-    private func addCurve(through points: [CGPoint], to path: inout Path, closed: Bool) {
+    private static func addCurve(through points: [CGPoint], to path: inout Path, closed: Bool) {
         guard points.count > 1 else { return }
-        if path.isEmpty { path.move(to: points[0]) } else { path.addLine(to: points[0]) }
+        path.move(to: points[0])
         func point(_ index: Int) -> CGPoint {
             points[closed ? (index + points.count) % points.count : min(points.count - 1, max(0, index))]
         }

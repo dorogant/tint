@@ -1,36 +1,148 @@
+import AppKit
 import SwiftUI
 
-/// Elapsed part as a sine wave (phase scrolls while playing), the rest as a flat line.
-struct WavyProgress: View {
+/// Elapsed part as a scrolling sine wave, the rest as a flat line, and a knob
+/// at the playhead. Core Animation scrolls the wave and glides the playhead
+/// between SwiftUI's once-a-second updates, so playback costs no per-frame work
+/// in the app. Seeks and drags jump instead of gliding.
+struct WavyProgress: NSViewRepresentable {
     var progress: Double
-    var phase: Double
-    var color: Color = .white
-    var amplitude: CGFloat = 3.5
-    var wavelength: CGFloat = 26
+    var color: Color
+    /// Scroll the wave; false while paused or with Reduce Motion.
+    var moving: Bool
+    /// Glide to the new playhead over the next second of playback.
+    var glide: Bool
 
-    var body: some View {
-        Canvas { context, size in
-            let mid = size.height / 2
-            let split = size.width * progress
-            var wave = Path()
-            var x: CGFloat = 0
-            wave.move(to: CGPoint(x: 0, y: mid))
-            while x <= split {
-                // Ease the amplitude in near the playhead so the wave meets the line smoothly.
-                let fade = min(1, (split - x) / 12)
-                let y = mid + sin(x / wavelength * 2 * .pi - phase) * amplitude * fade
-                wave.addLine(to: CGPoint(x: x, y: y))
-                x += 1.5
-            }
-            context.stroke(wave, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round))
-            var rest = Path()
-            rest.move(to: CGPoint(x: split + 6, y: mid))
-            rest.addLine(to: CGPoint(x: size.width, y: mid))
-            context.stroke(rest, with: .color(.white.opacity(0.25)), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-            let knob = Path(roundedRect: CGRect(x: split - 2.5, y: mid - 9, width: 5, height: 18), cornerRadius: 2.5)
-            context.fill(knob, with: .color(color))
-        }
-        .frame(height: 24)
+    func makeNSView(context: Context) -> WavyProgressView { WavyProgressView() }
+
+    func updateNSView(_ view: WavyProgressView, context: Context) {
+        view.update(progress: progress, color: NSColor(color), moving: moving, glide: glide)
     }
 }
 
+final class WavyProgressView: NSView {
+    private static let amplitude: CGFloat = 3.5
+    private static let wavelength: CGFloat = 26
+    private static let lineWidth: CGFloat = 3.5
+    /// One wavelength scrolls past in this time (the old 1.2 rad/s phase).
+    private static let period: CFTimeInterval = 2 * .pi / 1.2
+
+    private let elapsed = CALayer()
+    private let wave = CAShapeLayer()
+    private let rest = CAShapeLayer()
+    private let knob = CALayer()
+    private var progress = 0.0
+    private var moving = false
+    private var pathWidth: CGFloat = 0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        for layer in [rest, elapsed, knob] { self.layer?.addSublayer(layer) }
+        elapsed.masksToBounds = true
+        elapsed.addSublayer(wave)
+        for shape in [wave, rest] {
+            shape.fillColor = nil
+            shape.lineWidth = Self.lineWidth
+            shape.lineCap = .round
+            shape.lineJoin = .round
+        }
+        rest.strokeColor = NSColor.white.withAlphaComponent(0.25).cgColor
+        knob.cornerRadius = 2.5
+        wave.speed = 0
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// The wave's on-screen scroll, for the self-test's motion check.
+    var scrollOffset: Double {
+        (wave.presentation()?.value(forKeyPath: "transform.translation.x") as? Double) ?? 0
+    }
+
+    func update(progress: Double, color: NSColor, moving: Bool, glide: Bool) {
+        let jump = abs(progress - self.progress) * bounds.width > 8
+        self.progress = min(max(progress, 0), 1)
+        wave.strokeColor = color.cgColor
+        knob.backgroundColor = color.cgColor
+        CATransaction.begin()
+        if glide && !jump {
+            CATransaction.setAnimationDuration(1)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .linear))
+        } else {
+            CATransaction.setDisableActions(true)
+        }
+        placePlayhead()
+        CATransaction.commit()
+        setMoving(moving)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if bounds.width != pathWidth, bounds.width > 0 {
+            pathWidth = bounds.width
+            drawPaths()
+        }
+        placePlayhead()
+        CATransaction.commit()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        for layer in [elapsed, wave, rest, knob] { layer.contentsScale = scale }
+    }
+
+    /// The wave runs a wavelength past both ends so scrolling never shows a gap.
+    private func drawPaths() {
+        let mid = bounds.midY
+        let path = CGMutablePath()
+        var x = -Self.wavelength
+        path.move(to: CGPoint(x: x, y: mid))
+        while x <= bounds.width + Self.wavelength {
+            path.addLine(to: CGPoint(x: x, y: mid + sin(x / Self.wavelength * 2 * .pi) * Self.amplitude))
+            x += 1.5
+        }
+        wave.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        wave.path = path
+        let scroll = CABasicAnimation(keyPath: "transform.translation.x")
+        scroll.fromValue = 0
+        scroll.toValue = Self.wavelength
+        scroll.duration = Self.period
+        scroll.repeatCount = .infinity
+        wave.add(scroll, forKey: "scroll")
+    }
+
+    private func placePlayhead() {
+        let split = bounds.width * progress
+        let mid = bounds.midY
+        // Inset by the stroke so the wave's round end stays inside the clip.
+        elapsed.frame = CGRect(x: 0, y: 0, width: max(0, split), height: bounds.height)
+        let line = CGMutablePath()
+        line.move(to: CGPoint(x: min(bounds.width, split + 6), y: mid))
+        line.addLine(to: CGPoint(x: bounds.width, y: mid))
+        rest.frame = bounds
+        rest.path = split + 6 < bounds.width ? line : nil
+        knob.frame = CGRect(x: split - 2.5, y: mid - 9, width: 5, height: 18)
+    }
+
+    /// Pauses the wave's own clock, so it resumes where it stopped.
+    private func setMoving(_ moving: Bool) {
+        guard moving != self.moving else { return }
+        self.moving = moving
+        if moving {
+            let pausedAt = wave.timeOffset
+            wave.speed = 1
+            wave.timeOffset = 0
+            wave.beginTime = 0
+            wave.beginTime = wave.convertTime(CACurrentMediaTime(), from: nil) - pausedAt
+        } else {
+            wave.timeOffset = wave.convertTime(CACurrentMediaTime(), from: nil)
+            wave.speed = 0
+        }
+    }
+}

@@ -30,8 +30,10 @@ struct ReactiveBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MTKView, context: Context) {
+        // The renderer reads each analysis frame itself; observing it here would
+        // put the whole window through a SwiftUI update 30 times a second.
         context.coordinator.renderer?.update(running: visualization.isRunning, color: palette.rgb,
-                                            frame: visualization.frame, reactivity: Float(settings.reactivity))
+                                            reactivity: Float(settings.reactivity))
     }
 
     static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
@@ -82,20 +84,9 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         DispatchQueue.main.async { status.backgroundFailure = nil }
     }
 
-    func update(running: Bool, color: RGB, frame: SpectrumFrame, reactivity: Float) {
+    func update(running: Bool, color: RGB, reactivity: Float) {
         uniforms.color = SIMD4(Float(color.r), Float(color.g), Float(color.b), 1)
-        uniforms.motion.y = min(1, max(0, frame.rms * 6))
         uniforms.motion.z = reactivity
-        // Six band groups per side, mirrored so bass lights the middle beams. The
-        // levels adapt to each song, so every group's hits make its beams flare.
-        let half = Self.beamCount / 2
-        let group = max(1, frame.levels.count / half)
-        for g in 0..<half {
-            let slice = frame.levels.dropFirst(g * group).prefix(group)
-            let level = slice.reduce(0, +) / Float(max(1, slice.count))
-            targets[half - 1 - g] = level
-            targets[half + g] = level
-        }
         guard running else {
             stop()
             if time == 0 { view?.draw() } // one static frame for Reduce Motion / paused startup
@@ -111,11 +102,26 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             if let previous = self.previous { self.time += Float(now.timeIntervalSince(previous)) }
             self.previous = now
             self.uniforms.motion.x = self.time
+            if let frame = self.status?.frame { self.aim(at: frame) }
             self.ease()
             self.view?.draw()
         }
         self.timer = timer
         timer.resume()
+    }
+
+    private func aim(at frame: SpectrumFrame) {
+        uniforms.motion.y = min(1, max(0, frame.rms * 6))
+        // Six band groups per side, mirrored so bass lights the middle beams. The
+        // levels adapt to each song, so every group's hits make its beams flare.
+        let half = Self.beamCount / 2
+        let group = max(1, frame.levels.count / half)
+        for g in 0..<half {
+            let slice = frame.levels.dropFirst(g * group).prefix(group)
+            let level = slice.reduce(0, +) / Float(max(1, slice.count))
+            targets[half - 1 - g] = level
+            targets[half + g] = level
+        }
     }
 
     /// Quick attack, slower release: beams flare on hits and fall back smoothly.

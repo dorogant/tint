@@ -22,14 +22,27 @@ additional Spotify consent. Live queue and device-list requests pass with that
 permission; response decoding, access gating and transfer requests also pass
 offline tests. Device transfer has not been exercised against another live device.
 
-Measured on this MacBook Air on 2026-10-08, release build, restored large window
-(1710×1052 points), without screenshots: stable circular visualization used
-~149–152 MiB RSS and ~195 MiB physical footprint; the optional live background
-in Library used ~154 MiB RSS and ~187 MiB footprint. CPU samples were roughly
-11–21% of one core during visualization and 13–15% with the background. Paused
-CPU settled to 0%; RSS fell to ~125 MiB after a minute. These are short samples,
-not a guaranteed ceiling: the ≤150 MiB RSS target still needs tuning, and physical
-footprint includes compressed memory. The live background defaults off.
+Measured on this MacBook Air on 2026-10-08 with the release build, playing music
+in a visible window. Each figure is Floe's own CPU over 10–30 s, from the
+`-FloeSelfTestPerf` mode described under [Design and motion](#design-and-motion):
+
+| Scenario | CPU before → after | Footprint |
+|---|---|---|
+| Library, effects off | 2.2% → 2.4% | ~90–110 MiB |
+| Now Playing, effects off | 16–20% → 2.4–2.6% | ~95–115 MiB |
+| Now Playing, circular bars | ~18% → 4.5% (one run) | ~100–110 MiB |
+| Library, live background | 14–16.5% → 7.2% | ~155–165 MiB |
+| Now Playing, bars and live background | 22–25% → 13.5% | ~160–175 MiB |
+| Lyrics view | ~2.2% | ~105–110 MiB |
+| Paused, effects on | 0–0.7% | ~95–110 MiB |
+
+Most of the saving comes from moving continuous motion out of SwiftUI. Each SwiftUI
+update re-lays out the whole window (~1.5 ms on the main thread), so animating the
+cover and progress wave through SwiftUI cost ~15% of a core. The crawling cover rim,
+the progress wave and the visualizer now run on Core Animation layers, and the live
+background reads analysis frames itself. Lyric line changes still animate through
+SwiftUI with a short spring; in a dense section they add a few percent while they run.
+The live background defaults off.
 
 > Floe uses librespot, an **unofficial** Spotify client library. That is against
 > Spotify's terms of use; bans are rare but possible, and protocol changes can break
@@ -176,8 +189,8 @@ The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics;
 cover and visualizer slide to the centre and grow.
 
 On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
-cover stays upright; only the scalloped edge crawls around it, deepening and
-wobbling with the music, and it stops on pause. The circular visualizer scales with
+cover stays upright; only the scalloped edge crawls around it and slowly breathes,
+and both stop on pause. The circular visualizer scales with
 the cover. **Bars** are mirrored radial bars with bass at the top; **Wave** is a
 filled halo whose lobes follow the spectrum. Along the bottom, **Bars** are mirrored
 around the middle (bass at the centre). **Wave** is a twisted ribbon of round beads
@@ -202,13 +215,17 @@ scroll, a glass **Follow lyrics** button resumes following.
 
 `-FloeSelfTest YES -FloeSelfTestDesign YES` plays a liked song and runs the
 real-audio effect checks; add `-FloeVisualTest YES -FloeSnapshotDir <dir>` for
-synthetic-only snapshots of every visualizer style and the lyrics view. On
-2026-10-08 the release build passed it: 90 FFT frames per 3 s, audio flow without
-new underruns, and analysis stopping on pause, hiding, disabled effects and Reduce
-Motion. During that run (which also holds snapshot buffers) the footprint was
-~204 MiB with effects off, ~244 MiB with the circular visualizer and ~205 MiB with
-the live background. A clean launch, connected and idle, used ~117 MiB RSS and a
-~125 MB footprint at 0% CPU.
+synthetic-only snapshots of every visualizer style and the lyrics view.
+`-FloeSelfTest YES -FloeSelfTestPerf YES` holds each visual scenario for 10 s and
+logs CPU, analysis and background frame rates, and footprint. It also checks that
+the cover rim and progress wave move while playing and stop on pause, and compares
+raw and adaptive equalizer shapes on two of your liked songs.
+`-FloeSelfTestPerfOnly <name>` holds matching scenarios instead, for 30 s when only
+one matches (useful with `sample`). It restores every preference afterwards.
+
+Window snapshots can't show Core Animation masks or motion, so the cover, wave and
+visualizer layers were also checked with an offscreen `CARenderer` render of the real
+views inside flipped and unflipped AppKit parents.
 
 ### Settings and recovery
 

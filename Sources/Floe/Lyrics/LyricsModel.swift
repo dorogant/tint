@@ -34,20 +34,18 @@ final class LyricsModel {
         }
     }
     /// Synthetic content only for the opt-in visual self-test. Never export real lyrics.
-    func showVisualTestFixture() {
+    /// By default the lines start at 0:00, 4 s apart; the performance test starts
+    /// them at the current position and spaces them closer so lines keep changing.
+    func showVisualTestFixture(from start: TimeInterval = 0, every spacing: TimeInterval = 4, count: Int = 8) {
         guard UserDefaults.standard.bool(forKey: "FloeVisualTest") else { return }
+        let texts = ["A quiet start", "Colors drift across the glass", "A little rhythm in the light",
+                     "Follow the sound", "Another synthetic line", "", "The shapes move slowly",
+                     "And settle when we pause"]
         revision += 1
         isSynthetic = true
-        state = .loaded(.synced(LRC.parse("""
-        [00:00] A quiet start
-        [00:04] Colors drift across the glass
-        [00:08] A little rhythm in the light
-        [00:12] Follow the sound
-        [00:16] Another synthetic line
-        [00:20]
-        [00:24] The shapes move slowly
-        [00:28] And settle when we pause
-        """)))
+        state = .loaded(.synced((0..<count).map { index in
+            LyricLine(id: index, time: start + Double(index) * spacing, text: texts[index % texts.count])
+        }))
     }
 
 }

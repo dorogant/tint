@@ -91,53 +91,36 @@ struct NowPlayingView: View {
     }
 }
 
-/// The clock counts active playback, so pause/resume never jumps to wall time.
+/// The petals crawl around an upright cover and the edge breathes, both run by
+/// Core Animation (see `CrawlingCover`), so playback costs no per-frame work here.
 private struct FlowerCoverView: View {
     let size: CGFloat
     @Environment(PlayerModel.self) private var player
     @Environment(CoverAppearance.self) private var appearance
-    @Environment(VisualizationModel.self) private var visualization
     @Environment(\.coverPalette) private var palette
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
-    @ViewState private var elapsed: TimeInterval = 0
-    @ViewState private var started: Date?
 
-    private var running: Bool {
-        player.isPlaying && !reduceMotion && !systemReduceMotion && scenePhase == .active
-    }
+    private var still: Bool { reduceMotion || systemReduceMotion }
+    private var running: Bool { player.isPlaying && !still && scenePhase == .active }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !running)) { context in
-            let time = elapsed + (started.map { max(0, context.date.timeIntervalSince($0)) } ?? 0)
-            let phase = time * 0.65
-            let energy = running && visualization.isRunning ? min(1, Double(visualization.frame.rms) * 3.2) : 0
-            // The cover stays upright; only its scalloped edge crawls around it,
-            // deepening and wobbling with the music.
-            let edge = BlobShape(phase: phase, crawl: time * 0.3, depth: 0.045 + energy * 0.02,
-                                 ripple: 0.14 + energy * 0.5)
-            // Flexible inside, so the hero flight can draw it at the mini player's size.
-            ZStack {
-                if let image = appearance.image {
-                    Image(decorative: image, scale: 2).resizable().scaledToFill()
-                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                        .clipShape(edge)
-                        .id(appearance.imageURL)
-                        .transition(.opacity)
-                } else {
-                    edge.fill(.white.opacity(0.06))
-                        .overlay(Image(systemName: "music.note").font(.system(size: 60)).foregroundStyle(Theme.tertiary))
-                }
-                // A tinted rim, like a bottle cap's edge, separates the cover from the ring.
-                edge.stroke(palette.highlight.mix(with: .black, by: 0.45).opacity(0.9),
-                            lineWidth: max(2, size * 0.014))
+        // A tinted rim, like a bottle cap's edge, separates the cover from the ring.
+        let rim = palette.highlight.mix(with: .black, by: 0.45).opacity(0.9)
+        // Flexible inside, so the hero flight can draw it at the mini player's size.
+        Group {
+            if let image = appearance.image {
+                CrawlingCover(image: image, rim: NSColor(rim), rimWidth: max(2, size * 0.014),
+                              running: running, fade: !still)
+            } else {
+                BlobShape(phase: 0).fill(.white.opacity(0.06))
+                    .overlay(Image(systemName: "music.note").font(.system(size: 60)).foregroundStyle(Theme.tertiary))
+                    .overlay(BlobShape(phase: 0).stroke(rim, lineWidth: max(2, size * 0.014)))
             }
-            .scaleEffect(1 + energy * 0.018)
-            .floeAnimation(value: appearance.imageURL, duration: 0.35)
         }
         // A new cover dips and springs back as it arrives.
-        .keyframeAnimator(initialValue: 1.0, trigger: reduceMotion || systemReduceMotion ? nil : appearance.imageURL) {
+        .keyframeAnimator(initialValue: 1.0, trigger: still ? nil : appearance.imageURL) {
             content, scale in content.scaleEffect(scale)
         } keyframes: { _ in
             KeyframeTrack {
@@ -147,11 +130,7 @@ private struct FlowerCoverView: View {
         }
         .heroCover()
         .frame(width: size, height: size)
-        .onChange(of: running, initial: true) {
-            let now = Date()
-            if let started { elapsed += max(0, now.timeIntervalSince(started)) }
-            started = running ? now : nil
-        }
+        .accessibilityElement()
         .accessibilityLabel("Album cover")
     }
 }

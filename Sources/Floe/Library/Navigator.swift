@@ -19,17 +19,19 @@ final class Navigator {
     var canGoBack: Bool { stack.count > 1 }
 
     /// What the sidebar highlights. Search opens over the page you were on, so
-    /// while its results (or a page opened from them) show, Search is the section.
+    /// while its results (or a page opened from them) show, Search is the
+    /// section and no sidebar row is lit.
     var section: Route { stack.contains(.search) ? .search : root }
 
-    /// Bumped each time Search is asked for (⌘F), so the sidebar field takes
+    /// Bumped each time Search is asked for (⌘F), so the toolbar field takes
     /// focus even when Search is already showing. Going Back to Search doesn't.
     private(set) var searchFocusRequest = 0
     /// The last request the field acted on.
     @ObservationIgnored var searchFocusHandled = 0
 
-    /// Sidebar picks start a new stack. Search is the exception: it's a field,
-    /// not a row, so asking for it focuses the field and shows the results.
+    /// Sidebar picks start a new stack. Search is the exception: it's the
+    /// toolbar's field, so asking for it (from any surface) focuses the field
+    /// and shows the results over the current page.
     func select(_ route: Route) {
         surface = .library
         if route == .search {

@@ -135,7 +135,7 @@ final class PlayerModel {
         request.repeatMode = repeatMode.rawValue
         lastError = nil
         guard core.load(request) else {
-            lastError = L10n.string("Couldn't start playback. Is Floe connected?")
+            lastError = L10n.string("Couldn't start playback. Is Tint connected?")
             return
         }
         lastRequest = request

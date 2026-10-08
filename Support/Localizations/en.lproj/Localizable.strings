@@ -1,4 +1,4 @@
-// Floe interface strings.
+// Tint interface strings.
 "%lld songs" = "%lld songs";
 "160 kbps" = "160 kbps";
 "320 kbps" = "320 kbps";
@@ -34,7 +34,7 @@
 "Copy Spotify Link" = "Copy Spotify Link";
 "Couldn't add this song to the queue." = "Couldn't add this song to the queue.";
 "Couldn't load lyrics. Try again later." = "Couldn't load lyrics. Try again later.";
-"Couldn't start playback. Is Floe connected?" = "Couldn't start playback. Is Floe connected?";
+"Couldn't start playback. Is Tint connected?" = "Couldn't start playback. Is Tint connected?";
 "Crossfade" = "Crossfade";
 "Custom order" = "Custom order";
 "Date added" = "Date added";
@@ -62,9 +62,9 @@
 "Home" = "Home";
 "Instrumental" = "Instrumental";
 "Language" = "Language";
-"Lets Floe read your library, search, and save songs. Uses your developer app's client ID." = "Lets Floe read your library, search, and save songs. Uses your developer app's client ID.";
-"Lets Floe read your playlists, saved music and history through your developer app." = "Lets Floe read your playlists, saved music and history through your developer app.";
-"Lets Floe stream music as a Spotify Connect device." = "Lets Floe stream music as a Spotify Connect device.";
+"Lets Tint read your library, search, and save songs. Uses your developer app's client ID." = "Lets Tint read your library, search, and save songs. Uses your developer app's client ID.";
+"Lets Tint read your playlists, saved music and history through your developer app." = "Lets Tint read your playlists, saved music and history through your developer app.";
+"Lets Tint stream music as a Spotify Connect device." = "Lets Tint stream music as a Spotify Connect device.";
 "Library" = "Library";
 "Like" = "Like";
 "Liked" = "Liked";
@@ -76,7 +76,7 @@
 "Login response didn't match the request; try again." = "Login response didn't match the request; try again.";
 "Lyrics" = "Lyrics";
 "Lyrics: LRCLIB" = "Lyrics: LRCLIB";
-"Motion stops when playback pauses or Floe is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy." = "Motion stops when playback pauses or Floe is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy.";
+"Motion stops when playback pauses or Tint is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy." = "Motion stops when playback pauses or Tint is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy.";
 "Next" = "Next";
 "Next song" = "Next song";
 "No devices found." = "No devices found.";
@@ -85,7 +85,7 @@
 "Normalize volume" = "Normalize volume";
 "Now Playing" = "Now Playing";
 "Now playing" = "Now playing";
-"Offline downloads are unavailable. Floe does not save audio to disk." = "Offline downloads are unavailable. Floe does not save audio to disk.";
+"Offline downloads are unavailable. Tint does not save audio to disk." = "Offline downloads are unavailable. Tint does not save audio to disk.";
 "Pause" = "Pause";
 "Pick a song to see its lyrics." = "Pick a song to see its lyrics.";
 "Pick something to play" = "Pick something to play";
@@ -93,11 +93,11 @@
 "Pin to Sidebar" = "Pin to Sidebar";
 "Pinned Playlists" = "Pinned Playlists";
 "Play" = "Play";
-"Play on Floe" = "Play on Floe";
+"Play on Tint" = "Play on Tint";
 "Play/Pause (Space)" = "Play/Pause (Space)";
 "Playback" = "Playback";
-"Playback changes apply after reconnecting or restarting Floe." = "Playback changes apply after reconnecting or restarting Floe.";
-"Playback connection lost. Floe will try to reconnect." = "Playback connection lost. Floe will try to reconnect.";
+"Playback changes apply after reconnecting or restarting Tint." = "Playback changes apply after reconnecting or restarting Tint.";
+"Playback connection lost. Tint will try to reconnect." = "Playback connection lost. Tint will try to reconnect.";
 "Playback engine: librespot" = "Playback engine: librespot";
 "Playback position" = "Playback position";
 "Playlist" = "Playlist";
@@ -129,7 +129,7 @@
 "Song titles, artist names and lyrics stay in their original language." = "Song titles, artist names and lyrics stay in their original language.";
 "Songs" = "Songs";
 "Sort by" = "Sort by";
-"Spotify asks for two approvals, both in your browser. Floe never sees your password." = "Spotify asks for two approvals, both in your browser. Floe never sees your password.";
+"Spotify asks for two approvals, both in your browser. Tint never sees your password." = "Spotify asks for two approvals, both in your browser. Tint never sees your password.";
 "Spotify authorization expired. Reconnect Queue and Devices." = "Spotify authorization expired. Reconnect Queue and Devices.";
 "Spotify authorization expired. Reconnect your library." = "Spotify authorization expired. Reconnect your library.";
 "Spotify authorization failed (HTTP %lld). Try signing in again." = "Spotify authorization failed (HTTP %lld). Try signing in again.";
@@ -157,14 +157,14 @@
 "Up next" = "Up next";
 "Version %@" = "Version %@";
 "Violet" = "Violet";
-"Visual only. Audio is sampled about 30 times per second while Floe is active. Playback volume is unchanged." = "Visual only. Audio is sampled about 30 times per second while Floe is active. Playback volume is unchanged.";
+"Visual only. Audio is sampled about 30 times per second while Tint is active. Playback volume is unchanged." = "Visual only. Audio is sampled about 30 times per second while Tint is active. Playback volume is unchanged.";
 "Visualizer" = "Visualizer";
 "Visuals" = "Visuals";
 "Volume" = "Volume";
 "Volume Down" = "Volume Down";
 "Volume Up" = "Volume Up";
 "Wave" = "Wave";
-"Welcome to Floe" = "Welcome to Floe";
+"Welcome to Tint" = "Welcome to Tint";
 "What do you want to play?" = "What do you want to play?";
 "Your Spotify library isn't connected." = "Your Spotify library isn't connected.";
 "Your playlists" = "Your playlists";
@@ -176,7 +176,7 @@
 "Reconnecting keeps the current song and position. Manually queued songs may be reset." = "Reconnecting keeps the current song and position. Manually queued songs may be reset.";
 "No queued songs." = "No queued songs.";
 "Only songs are shown." = "Only songs are shown.";
-"Floe volume" = "Floe volume";
+"Tint volume" = "Tint volume";
 "This device does not accept remote control." = "This device does not accept remote control.";
 "Switch playback to this device" = "Switch playback to this device";
 "View" = "View";
@@ -193,11 +193,11 @@
 "Set the atmosphere behind your music." = "Set the atmosphere behind your music.";
 "Choose how your music sounds and flows." = "Choose how your music sounds and flows.";
 "Your music streams directly from Spotify." = "Your music streams directly from Spotify.";
-"Make Floe feel like yours." = "Make Floe feel like yours.";
+"Make Tint feel like yours." = "Make Tint feel like yours.";
 "A small, native home for your music." = "A small, native home for your music.";
 "Keep loud and quiet tracks at a similar volume." = "Keep loud and quiet tracks at a similar volume.";
 "Let consecutive tracks play without a gap." = "Let consecutive tracks play without a gap.";
-"320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine." = "320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine.";
+"320 kbps is Tint's highest streaming quality. Lossless is unavailable in this playback engine." = "320 kbps is Tint's highest streaming quality. Lossless is unavailable in this playback engine.";
 "Changes waiting to apply" = "Changes waiting to apply";
 "Save to Liked Songs" = "Save to Liked Songs";
 "Remove from Liked Songs" = "Remove from Liked Songs";

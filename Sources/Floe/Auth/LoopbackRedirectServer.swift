@@ -127,10 +127,10 @@ final class LoopbackRedirectServer: @unchecked Sendable {
 
     private static func page(succeeded: Bool) -> String {
         let message = succeeded
-            ? "Floe is connected to Spotify. You can close this tab."
-            : "Login was cancelled. You can close this tab and try again in Floe."
+            ? "Tint is connected to Spotify. You can close this tab."
+            : "Login was cancelled. You can close this tab and try again in Tint."
         return """
-        <!doctype html><meta charset="utf-8"><title>Floe</title>
+        <!doctype html><meta charset="utf-8"><title>Tint</title>
         <body style="font:16px -apple-system,sans-serif;display:grid;place-items:center;height:90vh;\
         background:#121212;color:#eee"><p>\(message)</p></body>
         """

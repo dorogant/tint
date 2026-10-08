@@ -1,4 +1,4 @@
-// Floe interface strings.
+// Tint interface strings.
 "%lld songs" = "%lld пісень";
 "160 kbps" = "160 кбіт/с";
 "320 kbps" = "320 кбіт/с";
@@ -34,7 +34,7 @@
 "Copy Spotify Link" = "Копіювати посилання Spotify";
 "Couldn't add this song to the queue." = "Не вдалося додати цю пісню до черги.";
 "Couldn't load lyrics. Try again later." = "Не вдалося завантажити текст. Спробуйте пізніше.";
-"Couldn't start playback. Is Floe connected?" = "Не вдалося почати відтворення. Перевірте підключення Floe.";
+"Couldn't start playback. Is Tint connected?" = "Не вдалося почати відтворення. Перевірте підключення Tint.";
 "Crossfade" = "Плавний перехід";
 "Custom order" = "Власний порядок";
 "Date added" = "Дата додавання";
@@ -62,9 +62,9 @@
 "Home" = "Головна";
 "Instrumental" = "Інструментальна композиція";
 "Language" = "Мова";
-"Lets Floe read your library, search, and save songs. Uses your developer app's client ID." = "Дозволяє Floe читати медіатеку, шукати та зберігати пісні через ваш застосунок розробника.";
-"Lets Floe read your playlists, saved music and history through your developer app." = "Дозволяє Floe читати ваші плейлисти, збережену музику та історію через ваш застосунок розробника.";
-"Lets Floe stream music as a Spotify Connect device." = "Дозволяє Floe відтворювати музику як пристрій Spotify Connect.";
+"Lets Tint read your library, search, and save songs. Uses your developer app's client ID." = "Дозволяє Tint читати медіатеку, шукати та зберігати пісні через ваш застосунок розробника.";
+"Lets Tint read your playlists, saved music and history through your developer app." = "Дозволяє Tint читати ваші плейлисти, збережену музику та історію через ваш застосунок розробника.";
+"Lets Tint stream music as a Spotify Connect device." = "Дозволяє Tint відтворювати музику як пристрій Spotify Connect.";
 "Library" = "Медіатека";
 "Like" = "Вподобати";
 "Liked" = "Вподобано";
@@ -76,7 +76,7 @@
 "Login response didn't match the request; try again." = "Відповідь входу не відповідає запиту; спробуйте ще раз.";
 "Lyrics" = "Текст пісні";
 "Lyrics: LRCLIB" = "Тексти пісень: LRCLIB";
-"Motion stops when playback pauses or Floe is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy." = "Рух зупиняється на паузі або коли Floe працює у тлі. Зменшення руху вимикає анімацію. Живе тло споживає більше енергії.";
+"Motion stops when playback pauses or Tint is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy." = "Рух зупиняється на паузі або коли Tint працює у тлі. Зменшення руху вимикає анімацію. Живе тло споживає більше енергії.";
 "Next" = "Далі";
 "Next song" = "Наступна пісня";
 "No devices found." = "Пристроїв не знайдено.";
@@ -85,7 +85,7 @@
 "Normalize volume" = "Нормалізувати гучність";
 "Now Playing" = "Зараз грає";
 "Now playing" = "Зараз грає";
-"Offline downloads are unavailable. Floe does not save audio to disk." = "Офлайн-завантаження недоступні. Floe не зберігає аудіо на диск.";
+"Offline downloads are unavailable. Tint does not save audio to disk." = "Офлайн-завантаження недоступні. Tint не зберігає аудіо на диск.";
 "Pause" = "Пауза";
 "Pick a song to see its lyrics." = "Виберіть пісню, щоб побачити її текст.";
 "Pick something to play" = "Виберіть, що послухати";
@@ -93,11 +93,11 @@
 "Pin to Sidebar" = "Закріпити на бічній панелі";
 "Pinned Playlists" = "Закріплені плейлисти";
 "Play" = "Грати";
-"Play on Floe" = "Грати на Floe";
+"Play on Tint" = "Грати на Tint";
 "Play/Pause (Space)" = "Грати/Пауза (Пробіл)";
 "Playback" = "Відтворення";
-"Playback changes apply after reconnecting or restarting Floe." = "Зміни відтворення застосовуються після повторного підключення або перезапуску Floe.";
-"Playback connection lost. Floe will try to reconnect." = "З'єднання для відтворення втрачено. Floe спробує підключитися знову.";
+"Playback changes apply after reconnecting or restarting Tint." = "Зміни відтворення застосовуються після повторного підключення або перезапуску Tint.";
+"Playback connection lost. Tint will try to reconnect." = "З'єднання для відтворення втрачено. Tint спробує підключитися знову.";
 "Playback engine: librespot" = "Рушій відтворення: librespot";
 "Playback position" = "Позиція відтворення";
 "Playlist" = "Плейлист";
@@ -129,7 +129,7 @@
 "Song titles, artist names and lyrics stay in their original language." = "Назви пісень, імена виконавців і тексти залишаються мовою оригіналу.";
 "Songs" = "Пісні";
 "Sort by" = "Сортувати за";
-"Spotify asks for two approvals, both in your browser. Floe never sees your password." = "Spotify запитає два дозволи у браузері. Floe не має доступу до вашого пароля.";
+"Spotify asks for two approvals, both in your browser. Tint never sees your password." = "Spotify запитає два дозволи у браузері. Tint не має доступу до вашого пароля.";
 "Spotify authorization expired. Reconnect Queue and Devices." = "Дозвіл Spotify закінчився. Повторно підключіть чергу та пристрої.";
 "Spotify authorization expired. Reconnect your library." = "Дозвіл Spotify закінчився. Повторно підключіть медіатеку.";
 "Spotify authorization failed (HTTP %lld). Try signing in again." = "Не вдалося авторизуватися у Spotify (HTTP %lld). Спробуйте увійти знову.";
@@ -157,14 +157,14 @@
 "Up next" = "Далі в черзі";
 "Version %@" = "Версія %@";
 "Violet" = "Фіолетовий";
-"Visual only. Audio is sampled about 30 times per second while Floe is active. Playback volume is unchanged." = "Лише візуальний ефект. Звук аналізується приблизно 30 разів на секунду, поки Floe активний. Гучність відтворення не змінюється.";
+"Visual only. Audio is sampled about 30 times per second while Tint is active. Playback volume is unchanged." = "Лише візуальний ефект. Звук аналізується приблизно 30 разів на секунду, поки Tint активний. Гучність відтворення не змінюється.";
 "Visualizer" = "Візуалізатор";
 "Visuals" = "Візуальні ефекти";
 "Volume" = "Гучність";
 "Volume Down" = "Зменшити гучність";
 "Volume Up" = "Збільшити гучність";
 "Wave" = "Хвиля";
-"Welcome to Floe" = "Ласкаво просимо до Floe";
+"Welcome to Tint" = "Ласкаво просимо до Tint";
 "What do you want to play?" = "Що бажаєте послухати?";
 "Your Spotify library isn't connected." = "Вашу медіатеку Spotify не підключено.";
 "Your playlists" = "Ваші плейлисти";
@@ -176,7 +176,7 @@
 "Reconnecting keeps the current song and position. Manually queued songs may be reset." = "Повторне підключення зберігає поточну пісню та позицію. Пісні, додані до черги вручну, можуть бути скинуті.";
 "No queued songs." = "У черзі немає пісень.";
 "Only songs are shown." = "Показано лише пісні.";
-"Floe volume" = "Гучність Floe";
+"Tint volume" = "Гучність Tint";
 "This device does not accept remote control." = "Цей пристрій не дозволяє дистанційне керування.";
 "Switch playback to this device" = "Перемкнути відтворення на цей пристрій";
 "View" = "Розділ";
@@ -193,11 +193,11 @@
 "Set the atmosphere behind your music." = "Створіть атмосферу для вашої музики.";
 "Choose how your music sounds and flows." = "Оберіть, як звучить і плине ваша музика.";
 "Your music streams directly from Spotify." = "Ваша музика транслюється напряму зі Spotify.";
-"Make Floe feel like yours." = "Налаштуйте Floe під себе.";
+"Make Tint feel like yours." = "Налаштуйте Tint під себе.";
 "A small, native home for your music." = "Невеликий нативний дім для вашої музики.";
 "Keep loud and quiet tracks at a similar volume." = "Гучні й тихі композиції звучатимуть з подібною гучністю.";
 "Let consecutive tracks play without a gap." = "Композиції звучатимуть одна за одною без пауз.";
-"320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine." = "320 кбіт/с — найвища якість потокового звуку у Floe. Формат без втрат цей рушій відтворення не підтримує.";
+"320 kbps is Tint's highest streaming quality. Lossless is unavailable in this playback engine." = "320 кбіт/с — найвища якість потокового звуку у Tint. Формат без втрат цей рушій відтворення не підтримує.";
 "Changes waiting to apply" = "Зміни очікують застосування";
 "Save to Liked Songs" = "Зберегти в улюблених піснях";
 "Remove from Liked Songs" = "Видалити з улюблених пісень";

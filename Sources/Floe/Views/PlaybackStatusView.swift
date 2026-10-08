@@ -17,7 +17,7 @@ struct PlaybackStatusView: View {
         if player.hasConnected && !player.isConnected {
             HStack(spacing: 12) {
                 Image(systemName: "wifi.exclamationmark")
-                Text("Playback connection lost. Floe will try to reconnect.").font(.callout)
+                Text("Playback connection lost. Tint will try to reconnect.").font(.callout)
                 Spacer()
                 Button("Reconnect now") { player.reconnectPlayback() }
                 Button("Sign in again") { player.logIn() }.disabled(player.session == .authorizing)

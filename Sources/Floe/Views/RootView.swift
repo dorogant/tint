@@ -253,16 +253,16 @@ struct OnboardingView: View {
                 Image(systemName: "circle.hexagongrid.fill")
                     .font(.system(size: 30))
                     .foregroundStyle(palette.accent)
-                Text("Welcome to Floe").font(.system(size: 26, weight: .heavy))
+                Text("Welcome to Tint").font(.system(size: 26, weight: .heavy))
             }
-            Text("Spotify asks for two approvals, both in your browser. Floe never sees your password.")
+            Text("Spotify asks for two approvals, both in your browser. Tint never sees your password.")
                 .foregroundStyle(Theme.secondary)
 
-            stepRow(number: 1, title: "Playback", detail: "Lets Floe stream music as a Spotify Connect device.",
+            stepRow(number: 1, title: "Playback", detail: "Lets Tint stream music as a Spotify Connect device.",
                     done: step == .library, busy: player.session == .authorizing || player.session == .connecting,
                     error: playbackError, action: player.logIn)
             stepRow(number: 2, title: "Library",
-                    detail: "Lets Floe read your playlists, saved music and history through your developer app.",
+                    detail: "Lets Tint read your playlists, saved music and history through your developer app.",
                     done: false, busy: library.connection == .connecting,
                     error: libraryError, enabled: step == .library) {
                 Task { await library.connect() }

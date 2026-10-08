@@ -66,7 +66,7 @@ struct VisualControls: View {
             Divider()
             // Tighter than the sections around it: the background has the most rows.
             VStack(alignment: .leading, spacing: 9) { BackgroundOptions() }
-            Text("Motion stops when playback pauses or Floe is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy.")
+            Text("Motion stops when playback pauses or Tint is in the background. Reduce Motion keeps the effects still. Live backgrounds use extra energy.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .environment(\.settingsLabelWidth, 92) // one label column, so the sliders line up

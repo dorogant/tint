@@ -117,8 +117,8 @@ struct ConnectPanel: View {
                 Text("No devices found.").foregroundStyle(Theme.secondary).padding(.horizontal, 8)
             }
             Divider().padding(.vertical, 4)
-            Button("Play on Floe") { player.resume() }.disabled(!player.isConnected)
-            caption("Floe volume")
+            Button("Play on Tint") { player.resume() }.disabled(!player.isConnected)
+            caption("Tint volume")
             VolumeControl()
             Text("To change your Mac's audio output, use Control Center.")
                 .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)

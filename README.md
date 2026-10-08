@@ -1,9 +1,13 @@
-# Floe
+# Tint
 
 A lightweight native Spotify client for macOS (Apple Silicon): SwiftUI on top of
 [librespot](https://github.com/librespot-org/librespot) in Rust. It replaces the
 Chromium-based official app for everyday listening, with a target of **≤150 MB RAM**
 during playback and ~0% CPU when idle. See [PLAN.md](PLAN.md) for the full plan.
+
+Tint was called Floe. Names you never see keep the old one so logins and settings
+carry over: the bundle ID `com.antonchurchyn.floe`, the Swift package and `Floe`
+module, the Rust `floe_core` crate, and the `-Floe…` development flags.
 
 **Status:** Phase 5 settings and polish implemented. The gear button or **⌘,**
 opens a native settings window with Visualizer, Background, Playback, Downloads,
@@ -11,7 +15,7 @@ Appearance and About. English and Ukrainian interface text is bundled; choose a
 language in Appearance. Queue and Devices have dedicated toolbar panels and an
 opt-in Spotify permission flow. Playback quality, normalization and gapless
 settings now reach librespot, and reconnecting preserves the song, position and
-pause state. Floe has a new native flower-and-rhythm icon (version 0.2.0).
+pause state. Tint has a new native flower-and-rhythm icon (version 0.2.0).
 A design pass adds a standard macOS toolbar and Settings window, Liquid Glass
 controls, smooth transitions, redesigned lyrics and reference-style visualizers
 (see [Design and motion](#design-and-motion)).
@@ -23,7 +27,7 @@ permission; response decoding, access gating and transfer requests also pass
 offline tests. Device transfer has not been exercised against another live device.
 
 Measured on this MacBook Air on 2026-10-08 with the release build, playing music
-in a visible window. Each figure is Floe's own CPU over 10–30 s, from the
+in a visible window. Each figure is Tint's own CPU over 10–30 s, from the
 `-FloeSelfTestPerf` mode described under [Design and motion](#design-and-motion):
 
 | Scenario | CPU before → after | Footprint |
@@ -44,10 +48,10 @@ background reads analysis frames itself. Lyric line changes still animate throug
 SwiftUI with a short spring; in a dense section they add a few percent while they run.
 The live background defaults off.
 
-> Floe uses librespot, an **unofficial** Spotify client library. That is against
+> Tint uses librespot, an **unofficial** Spotify client library. That is against
 > Spotify's terms of use; bans are rare but possible, and protocol changes can break
 > playback until librespot catches up. It needs **Spotify Premium**, and offline
-> downloads are not possible. Floe is not affiliated with Spotify.
+> downloads are not possible. Tint is not affiliated with Spotify.
 
 ## Requirements
 
@@ -58,7 +62,7 @@ The live background defaults off.
 ## Build and run
 
 ```sh
-scripts/build-app.sh          # -> build/Floe.app (release, ad-hoc signed)
+scripts/build-app.sh          # -> build/Tint.app (release, ad-hoc signed)
 scripts/build-app.sh --open   # build, then launch
 scripts/build-app.sh --install # install/update Applications + Desktop icon
 ```
@@ -68,27 +72,27 @@ assembles the bundle (Info.plist, generated native icon) and signs it (see below
 
 ### Desktop launch icon
 
-Double-click **Floe** on the Desktop to open the app without a terminal. The icon
-points to `~/Applications/Floe.app`, a signed copy of the native macOS app bundle.
+Double-click **Tint** on the Desktop to open the app without a terminal. The icon
+points to `~/Applications/Tint.app`, a signed copy of the native macOS app bundle.
 Rebuild with `scripts/build-app.sh --install` to update that copy while keeping the
 same Desktop icon. To install an already-built app, run `scripts/install-app.sh`.
-The installer verifies its signature before replacing an existing Floe bundle and
+The installer verifies its signature before replacing an existing Tint bundle and
 does not overwrite unrelated items with the same name.
 
-Floe keeps your Spotify login in private files (see *Credentials* under How it
+Tint keeps your Spotify login in private files (see *Credentials* under How it
 works), so rebuilds don't ask for your password. Builds before that used the
 Keychain: the first launch after updating may ask once for each of the two saved
-logins while Floe moves them out. Enter your password and choose **Allow**; it
+logins while Tint moves them out. Enter your password and choose **Allow**; it
 doesn't ask again. The installer does not read or change credentials.
 
-On first launch Floe asks for two approvals in the browser: **playback** (librespot,
+On first launch Tint asks for two approvals in the browser: **playback** (librespot,
 Spotify's own client ID) and **library** (the Web API, through your own developer app).
 
 ### Signing
 
 The build script signs with a local code-signing certificate when there is one, so
 every build keeps the same code identity; an ad-hoc signature changes on every build.
-Floe's login no longer depends on it, but the certificate lets Floe delete its old
+Tint's login no longer depends on it, but the certificate lets Tint delete its old
 Keychain items without asking. Create it once; the build script uses it
 automatically (or set `FLOE_SIGN_IDENTITY`):
 
@@ -110,7 +114,7 @@ Plays music, so don't touch playback while it runs. It checks the library API, s
 Liked Songs context playback, next/previous, audio flow and Now Playing, and logs to stdout:
 
 ```sh
-build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES
+build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES
 ```
 
 Options: `-FloeSelfTestWrites YES` likes and then unlikes one song (no net change);
@@ -128,7 +132,7 @@ click **Follow lyrics**. Untimed lyrics, instrumental songs, missing lyrics and
 request failures have separate states.
 
 LRCLIB matches the track title, first artist, album and duration in seconds, with a
-±2-second duration tolerance. Floe preserves version names to avoid syncing a live,
+±2-second duration tolerance. Tint preserves version names to avoid syncing a live,
 remixed or slowed recording to another version. Lyrics have a bounded, expiring
 memory cache and never go to disk, logs or snapshots. The newer `hasWordSync` and
 `lyricsfile` fields are ignored; this phase uses line timing from `syncedLyrics`.
@@ -145,7 +149,7 @@ lyrics, checks seeking, plays for 20 seconds and pauses. It reports counts and
 memory only, never lyric text:
 
 ```sh
-build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase3 YES
+build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES -FloeSelfTestPhase3 YES
 ```
 
 For visual QA, add `-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` after creating
@@ -163,7 +167,7 @@ twelve beams rise from the bottom edge, bass in the middle. Each reaches higher 
 glows brighter with its part of the spectrum as the beams sway, a bass bloom pulses
 from below, and colour clouds drift behind. **Reactivity** scales the response.
 
-Analysis runs at about 30 Hz only while an effect is visible and Floe is active.
+Analysis runs at about 30 Hz only while an effect is visible and Tint is active.
 The Metal background draws at 30 Hz into a small surface stretched behind the
 glass. Both clocks stop on pause, when effects are disabled, or with app/system
 Reduce Motion. Hidden visualizers stop analysis unless the live background needs
@@ -171,7 +175,7 @@ it. Self-tests temporarily bypass the foreground requirement.
 
 ```sh
 scripts/test-phase4.sh
-build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase4 YES
+build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES -FloeSelfTestPhase4 YES
 ```
 
 The offline checks cover the bounded stereo tap, FFT frequency response, silence,
@@ -183,7 +187,7 @@ The live test restores visual preferences afterward and leaves playback paused.
 
 ### Design and motion
 
-Floe follows macOS conventions where they fit. The window has a standard unified
+Tint follows macOS conventions where they fit. The window has a standard unified
 toolbar beside the window controls: Back, a Library / Now Playing / Lyrics switcher,
 and one group of Visuals, Queue, Devices, Appearance and Settings buttons, all in
 the system's Liquid Glass. Settings is a standard tabbed window with grouped forms.
@@ -264,7 +268,7 @@ lines, measures CPU during steady/changing/paused lyrics, checks line-clock wake
 then closes it. It needs neither Spotify nor saved credentials. An optional first
 argument selects another `LyricsView.swift` to benchmark against the same fixture.
 The production lyric clock now sleeps until the next line, and stops waking after
-the final line or during pauses. Progress motion also stops while Floe is inactive
+the final line or during pauses. Progress motion also stops while Tint is inactive
 and with Reduce Motion. Now Playing bounds the cover and visualizer by the available
 column width so they fit in tall, narrow windows.
 
@@ -287,7 +291,7 @@ catalogue metadata and lyrics retain their original language.
 
 Streaming quality (96/160/320 kbps), normalization and gapless playback take effect
 on the next playback session. **Apply and reconnect** preserves the current song,
-position and whether it was paused, and reloads Floe's context. Manually queued
+position and whether it was paused, and reloads Tint's context. Manually queued
 songs may be reset. Session loss stops the UI clock and retries with backoff;
 **Reconnect now** and **Sign in again** provide recovery. Unavailable tracks show a
 human-readable, dismissible error with **Next song**. Expired/revoked library tokens
@@ -297,7 +301,7 @@ credentials.
 Queue/Devices fetch only when opened, on track changes in Queue, or on **Refresh**.
 Queue shows songs (episode/local entries without usable song metadata are skipped),
 retaining duplicate entries. Restricted devices cannot receive transfers. Transfers
-preserve the current play/pause state. The volume control applies to Floe; use macOS
+preserve the current play/pause state. The volume control applies to Tint; use macOS
 Control Center to choose the Mac's audio output.
 
 Use **Connect Queue and Devices** once to grant `user-read-playback-state`,
@@ -310,7 +314,7 @@ and [transfer](https://developer.spotify.com/documentation/web-api/reference/tra
 ```sh
 scripts/test-phase5.sh
 scripts/test-artwork.sh
-build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase5 YES
+build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES -FloeSelfTestPhase5 YES
 ```
 
 Offline checks use synthetic tokens, devices and metadata: configuration and paused
@@ -334,12 +338,12 @@ the clock. A seek-only or ignored command therefore cannot leave a permanent
 spinner or close audio output. Manual skips flush the old audio at the confirmed
 track change, including ready preloads which omit a loading event. At the first
 song, Previous restarts at zero and preserves play/pause. If history is temporarily
-unknown and the engine stops at that boundary, Floe reloads the same song once;
+unknown and the engine stops at that boundary, Tint reloads the same song once;
 an intervening Connect takeover cancels that recovery.
 
 ```sh
 scripts/test-transport.sh
-build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestTransport YES
+build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES -FloeSelfTestTransport YES
 ```
 
 The offline suite exercises the production playback model using synthetic events,
@@ -349,7 +353,7 @@ playable playlist, verifies audio after double Previous and a forward/back round
 trip, then leaves playback paused. It does not edit the library or capture lyrics.
 
 ```sh
-build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestSwitching YES
+build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES -FloeSelfTestSwitching YES
 ```
 
 This opt-in live check plays four liked songs, checks rapid selections and monitors
@@ -365,7 +369,7 @@ was ~115 MiB before those extra interactions; footprint after browsing/switching
 was ~221 MiB. Earlier rapid stress tests logged temporary Connect state-update 429s.
 
 The pinned librespot player waits for its **during-playback** read-ahead window
-before starting audio. Floe reduces this window from five seconds to one, which
+before starting audio. Tint reduces this window from five seconds to one, which
 fits inside the initial 64 KiB compressed-data request at 320 kbps. Adaptive
 prefetch, decoder block size and network timeouts retain upstream defaults. This
 also reduces the explicit read-ahead during playback; congested networks have not
@@ -413,8 +417,8 @@ scripts/              build-app.sh, make-icon.swift
   using vDSP, and publishes 48 log-spaced bands, 96 waveform points and RMS. A full
   analysis ring drops visual samples without disrupting playback. Seek, track,
   pause and enable changes reset the analysis generation; PCM never goes to disk.
-- **Playing context.** Floe runs librespot's Spirc, so it is a Spotify Connect device
-  ("Floe"): playlists, albums, artists and Liked Songs play as *contexts*, and Spotify's
+- **Playing context.** Tint runs librespot's Spirc, so it is a Spotify Connect device
+  ("Tint"): playlists, albums, artists and Liked Songs play as *contexts*, and Spotify's
   own logic handles queue, shuffle, repeat and autoplay, exactly as in the official apps.
   It can be controlled from the phone, and Play takes over from another device. Chosen
   over an own queue in Swift, which would re-implement all of that and still not be a
@@ -423,10 +427,10 @@ scripts/              build-app.sh, make-icon.swift
   Results come back as JSON events through one callback. UniFFI would add a code
   generator for no real gain at this size.
 - **Login.** librespot's session must be authorised with *Spotify's own* client ID
-  (`streaming` scope): Spotify rejects third-party client IDs there. Floe runs the PKCE
+  (`streaming` scope): Spotify rejects third-party client IDs there. Tint runs the PKCE
   flow in the browser with a one-shot listener on `127.0.0.1:5588/login`, gets
   reusable credentials back from librespot, and stores only those. The Web API uses
-  Floe's own client ID with PKCE on `127.0.0.1:8898/callback`; its refresh token is
+  Tint's own client ID with PKCE on `127.0.0.1:8898/callback`; its refresh token is
   stored too. No client secret is used or stored anywhere.
 - **Credentials.** Both logins are files in `~/Library/Application Support/Floe/Credentials`
   (folder 0700, files 0600, written atomically, excluded from backups). Any process
@@ -434,17 +438,17 @@ scripts/              build-app.sh, make-icon.swift
   protects them at rest. The Keychain would be stricter, but without a developer
   Team ID macOS ties its items to each build's code hash, so it asked for your
   password after every rebuild. Builds before this kept both logins in the Keychain;
-  Floe moves each one into its file on first read and deletes the old item, once.
+  Tint moves each one into its file on first read and deletes the old item, once.
   `scripts/test-credentials.sh` checks this offline, with a temporary folder and a
   fake Keychain.
-- **Web API limits (Development Mode, 2026).** Floe uses only endpoints still open to
+- **Web API limits (Development Mode, 2026).** Tint uses only endpoints still open to
   Development Mode apps. Consequences: playlists you don't own show their header and
   Play but no track list; Spotify-made playlists 404 (Play still works); no artist top
   tracks; search and artist albums return at most 10 per request; `market=from_token`
-  needs a scope Floe doesn't request (and isn't needed with a user token).
+  needs a scope Tint doesn't request (and isn't needed with a user token).
   PLAN.md's fallback of Web API tokens from the librespot session no longer works
   (tested 2026-10-08): keymaster answers 403, and api.spotify.com throttles login5
-  tokens (429, `Retry-After` up to 86400 s). Floe doesn't send them.
+  tokens (429, `Retry-After` up to 86400 s). Tint doesn't send them.
 - **librespot version.** Pinned to a commit on `dev` (see `core/Cargo.toml`): the 0.8.0
   release doesn't build from crates.io (librespot-org/librespot#1760). Bump it on purpose.
 

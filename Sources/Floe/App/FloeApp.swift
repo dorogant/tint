@@ -30,7 +30,7 @@ struct FloeApp: App {
     }
 
     var body: some Scene {
-        Window("Floe", id: "main") {
+        Window("Tint", id: "main") {
             RootView()
                 .environment(player)
                 .environment(library)
@@ -115,7 +115,7 @@ enum SpaceToPlay {
         installed = true
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard event.keyCode == 49, modifiers.isEmpty, NSApp.keyWindow?.title == "Floe",
+            guard event.keyCode == 49, modifiers.isEmpty, NSApp.keyWindow?.title == "Tint",
                   !(NSApp.keyWindow?.firstResponder is NSText)
             else { return event }
             player.togglePlayPause()

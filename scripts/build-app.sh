@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Builds build/Floe.app with only the Command Line Tools (no Xcode):
+# Builds build/Tint.app with only the Command Line Tools (no Xcode):
 #   1. Rust core      cargo build --release        -> core/target/release/libfloe_core.a
 #   2. Swift app      swift build -c release       -> .build/release/Floe
-#   3. Bundle         Info.plist, icon, executable -> build/Floe.app
+#   3. Bundle         Info.plist, icon, executable -> build/Tint.app
 #   4. Sign           with the local "Floe Local Signing" certificate if present,
 #                     otherwise ad-hoc (see README: Signing)
 #
 # Usage: scripts/build-app.sh [--debug] [--install] [--open]
 #   --debug  Swift debug build (the Rust core is always release)
 #   --open   launch the app when done
-#   --install update ~/Applications/Floe.app and its Desktop shortcut
+#   --install update ~/Applications/Tint.app and its Desktop shortcut
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Floe"
+# The app is Tint; its Swift package product keeps the original name, Floe.
+APP_NAME="Tint"
+PRODUCT="Floe"
 OUT="$ROOT/build"
 APP="$OUT/$APP_NAME.app"
 # Signing certificate: $FLOE_SIGN_IDENTITY, else the git-ignored per-machine file
@@ -45,7 +47,7 @@ step "Rust core (cargo build --release)"
 cargo build --release --manifest-path "$ROOT/core/Cargo.toml"
 
 step "Swift app (swift build -c $CONFIG)"
-swift build --package-path "$ROOT" -c "$CONFIG" --product "$APP_NAME"
+swift build --package-path "$ROOT" -c "$CONFIG" --product "$PRODUCT"
 BIN_DIR="$(swift build --package-path "$ROOT" -c "$CONFIG" --show-bin-path)"
 
 step "Icon"
@@ -65,14 +67,14 @@ fi
 step "Assemble $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
+cp "$BIN_DIR/$PRODUCT" "$APP/Contents/MacOS/$APP_NAME"
 cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
 cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$ROOT/Support/Localizations/"*.lproj "$APP/Contents/Resources/"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 
-# A stable certificate keeps Floe's code identity across rebuilds (ad-hoc signatures
+# A stable certificate keeps Tint's code identity across rebuilds (ad-hoc signatures
 # change every build), so it can delete older builds' Keychain items without a prompt.
 if security find-identity -p codesigning 2>/dev/null | grep -qF -e "\"$SIGN_IDENTITY\"" -e " $SIGN_IDENTITY "; then
     step "Sign ($SIGN_IDENTITY)"

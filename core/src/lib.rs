@@ -275,7 +275,7 @@ fn player_config(settings: PlaybackSettings) -> PlayerConfig {
 
 fn connect_config(volume: u16) -> ConnectConfig {
     ConnectConfig {
-        name: "Floe".to_string(),
+        name: "Tint".to_string(),
         device_type: DeviceType::Computer,
         initial_volume: volume,
         emit_set_queue_events: true,

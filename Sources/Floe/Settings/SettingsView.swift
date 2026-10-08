@@ -21,7 +21,7 @@ struct SettingsView: View {
             case .background: "Set the atmosphere behind your music."
             case .playback: "Choose how your music sounds and flows."
             case .downloads: "Your music streams directly from Spotify."
-            case .appearance: "Make Floe feel like yours."
+            case .appearance: "Make Tint feel like yours."
             case .about: "A small, native home for your music."
             }
         }
@@ -46,7 +46,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationTitle("Floe")
+            .navigationTitle("Tint")
             .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 230)
         } detail: {
             ZStack {
@@ -100,7 +100,7 @@ struct SettingsView: View {
             } header: {
                 Text("Display")
             } footer: {
-                note("Visual only. Audio is sampled about 30 times per second while Floe is active. Playback volume is unchanged.")
+                note("Visual only. Audio is sampled about 30 times per second while Tint is active. Playback volume is unchanged.")
             }
         case .background:
             SwiftUI.Section {
@@ -124,7 +124,7 @@ struct SettingsView: View {
             SwiftUI.Section {
                 HStack(alignment: .top, spacing: 14) {
                     Image(systemName: "wifi").font(.title2).foregroundStyle(palette.highlight)
-                    settingLabel("Streaming only", detail: "Offline downloads are unavailable. Floe does not save audio to disk.")
+                    settingLabel("Streaming only", detail: "Offline downloads are unavailable. Tint does not save audio to disk.")
                 }.padding(.vertical, 8)
             }
         case .appearance:
@@ -149,7 +149,7 @@ struct SettingsView: View {
         } header: {
             Text("Audio")
         } footer: {
-            note("320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine.")
+            note("320 kbps is Tint's highest streaming quality. Lossless is unavailable in this playback engine.")
         }
         SwiftUI.Section {
             Toggle(isOn: $settings.gapless) {
@@ -166,7 +166,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Changes waiting to apply", systemImage: "arrow.triangle.2.circlepath")
                         .font(.headline).foregroundStyle(palette.highlight)
-                    note("Playback changes apply after reconnecting or restarting Floe.")
+                    note("Playback changes apply after reconnecting or restarting Tint.")
                     Button("Apply and reconnect") { player.reconnectPlayback() }
                         .buttonStyle(.borderedProminent).disabled(!player.isConnected)
                 }.padding(.vertical, 4)
@@ -210,7 +210,7 @@ struct SettingsView: View {
             HStack(spacing: 16) {
                 Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 64, height: 64)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Floe").font(.title2.bold())
+                    Text("Tint").font(.title2.bold())
                     Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
                         .foregroundStyle(.secondary)
                 }

@@ -55,7 +55,7 @@ actor LyricsService {
             url.queryItems?.append(URLQueryItem(name: "duration", value: String(signature.duration)))
         }
         var request = URLRequest(url: url.url!)
-        request.setValue("Floe v0.1.0 (personal macOS client; com.antonchurchyn.floe)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Tint v0.1.0 (personal macOS client; com.antonchurchyn.floe)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         return request
     }

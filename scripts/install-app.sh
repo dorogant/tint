@@ -3,15 +3,18 @@
 # The shortcut keeps pointing at the same location after future updates.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SOURCE="$ROOT/build/Floe.app"
+SOURCE="$ROOT/build/Tint.app"
 APP_DIRECTORY="$HOME/Applications"
-INSTALLED="$APP_DIRECTORY/Floe.app"
-DESKTOP_LINK="$HOME/Desktop/Floe.app"
+INSTALLED="$APP_DIRECTORY/Tint.app"
+DESKTOP_LINK="$HOME/Desktop/Tint.app"
+# The app used to be called Floe. Its old copy shares the bundle ID, so it goes.
+LEGACY="$APP_DIRECTORY/Floe.app"
+LEGACY_LINK="$HOME/Desktop/Floe.app"
 
 [[ -d "$SOURCE" ]] || { echo 'Build Floe first: scripts/build-app.sh'; exit 1; }
 codesign --verify --strict "$SOURCE"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$SOURCE/Contents/Info.plist")"
-[[ "$BUNDLE_ID" == 'com.antonchurchyn.floe' ]] || { echo 'Source is not the Floe app'; exit 1; }
+[[ "$BUNDLE_ID" == 'com.antonchurchyn.floe' ]] || { echo 'Source is not the Tint app'; exit 1; }
 
 if [[ -e "$INSTALLED" || -L "$INSTALLED" ]]; then
     [[ ! -L "$INSTALLED" && -d "$INSTALLED" ]] || { echo "Cannot replace $INSTALLED"; exit 1; }
@@ -24,7 +27,7 @@ if [[ -e "$DESKTOP_LINK" || -L "$DESKTOP_LINK" ]]; then
 fi
 
 mkdir -p "$APP_DIRECTORY"
-STAGING="$(mktemp -d "$APP_DIRECTORY/.floe-install.XXXXXX")"
+STAGING="$(mktemp -d "$APP_DIRECTORY/.tint-install.XXXXXX")"
 cleanup() {
     # Restore the previous installed build if moving the new bundle failed.
     if [[ ! -e "$INSTALLED" && -d "$STAGING/Previous.app" ]]; then
@@ -33,9 +36,14 @@ cleanup() {
     rm -rf "$STAGING"
 }
 trap cleanup EXIT
-ditto "$SOURCE" "$STAGING/Floe.app"
-codesign --verify --strict "$STAGING/Floe.app"
+ditto "$SOURCE" "$STAGING/Tint.app"
+codesign --verify --strict "$STAGING/Tint.app"
 if [[ -d "$INSTALLED" ]]; then mv "$INSTALLED" "$STAGING/Previous.app"; fi
-mv "$STAGING/Floe.app" "$INSTALLED"
+mv "$STAGING/Tint.app" "$INSTALLED"
 if [[ ! -L "$DESKTOP_LINK" ]]; then ln -s "$INSTALLED" "$DESKTOP_LINK"; fi
+if [[ -d "$LEGACY" && ! -L "$LEGACY" ]] && [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+        "$LEGACY/Contents/Info.plist" 2>/dev/null || true)" == "$BUNDLE_ID" ]]; then
+    mv "$LEGACY" "$STAGING/Legacy.app"
+fi
+if [[ -L "$LEGACY_LINK" && "$(readlink "$LEGACY_LINK")" == "$LEGACY" ]]; then rm "$LEGACY_LINK"; fi
 printf 'Installed: %s\nDesktop icon: %s\n' "$INSTALLED" "$DESKTOP_LINK"

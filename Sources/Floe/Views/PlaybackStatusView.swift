@@ -5,7 +5,7 @@ import SwiftUI
 /// springs the content below aside to make room (see `key`).
 struct PlaybackStatusView: View {
     @Environment(PlayerModel.self) private var player
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
 
     /// Which banner is up, so the window can animate the room it takes.
     static func key(_ player: PlayerModel) -> String? {
@@ -43,8 +43,8 @@ struct PlaybackStatusView: View {
     private var banner: AnyTransition {
         let dropped = AnyTransition.modifier(active: BannerPhase(shown: false, still: still),
                                              identity: BannerPhase(shown: true, still: still))
-        return .asymmetric(insertion: dropped.animation(still ? PlaybackMotion.fade : PlaybackMotion.enter),
-                           removal: dropped.animation(still ? PlaybackMotion.fade : PlaybackMotion.exit))
+        return .asymmetric(insertion: dropped.animation(still ? FloeMotion.fade : FloeMotion.enter),
+                           removal: dropped.animation(still ? FloeMotion.fade : FloeMotion.exit))
     }
 }
 

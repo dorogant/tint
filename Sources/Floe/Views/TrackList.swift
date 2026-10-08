@@ -94,20 +94,10 @@ struct TrackRow: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage("reduceMotion") private var reduceMotion = false
+    /// With Reduce Motion the row still lights up, it just doesn't move or scale.
+    @ReducedMotion private var still
     /// Local to the row, so hovering redraws one row rather than the list.
     @ViewState private var hovering = false
-
-    /// With Reduce Motion the row still lights up, it just doesn't move or scale.
-    private var still: Bool { reduceMotion || systemReduceMotion }
-
-    /// Quick in, a little slower out, so a fast sweep down the list leaves a
-    /// short soft wake instead of flicker. Springs retarget from wherever they
-    /// are, so reversing half-way never jumps. Reduce Motion gets a dissolve.
-    private var hoverAnimation: Animation {
-        still ? .easeOut(duration: hovering ? 0.15 : 0.22) : .spring(duration: hovering ? 0.17 : 0.24, bounce: 0)
-    }
 
     var body: some View {
         let track = entry.track
@@ -178,7 +168,9 @@ struct TrackRow: View {
         .background { highlight(isCurrent: isCurrent) }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .animation(hoverAnimation, value: hovering)
+        // Quick in, a little slower out, so a fast sweep down the list leaves a
+        // short soft wake instead of flicker.
+        .floeHover(hovering)
         .floeAnimation(value: isCurrent, duration: 0.2)
         .onTapGesture(count: 2) { if playable { play() } }
         .contextMenu { TrackMenuItems(track: track) }
@@ -302,6 +294,25 @@ struct LinkText: View {
             .lineLimit(1)
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
+    }
+}
+
+/// Text that brightens and underlines under the pointer and acts as a link,
+/// keeping whatever colour it has at rest.
+struct TitleLink: View {
+    let text: String
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Text(text)
+            .underline(hovering)
+            .brightness(hovering ? 0.18 : 0)
+            .onHover { hovering = $0 }
+            .onTapGesture(perform: action)
+            .floeHover(hovering)
+            .accessibilityAddTraits(.isLink)
+            .accessibilityAction { action() }
     }
 }
 

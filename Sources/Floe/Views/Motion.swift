@@ -34,6 +34,9 @@ enum FloeMotion {
     static let release = Animation.spring(duration: 0.3, bounce: 0.12)
     static let glide = Animation.spring(duration: 0.4, bounce: 0.12)
     static let reveal = Animation.spring(duration: 0.42, bounce: 0)
+    /// Things that arrive (banners, a new song's title) and leave; exits are quicker.
+    static let enter = Animation.spring(duration: 0.4, bounce: 0.1)
+    static let exit = Animation.spring(duration: 0.22, bounce: 0)
     /// With Reduce Motion nothing moves or scales, but colour and opacity still fade.
     static let fade = Animation.easeOut(duration: 0.18)
 

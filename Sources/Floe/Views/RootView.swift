@@ -39,7 +39,7 @@ struct MainView: View {
     @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
 
     var body: some View {
         VStack(spacing: 10) {
@@ -81,7 +81,7 @@ struct MainView: View {
         .environment(\.heroNamespace, hero)
         .floeAnimation(value: navigator.surface, duration: 0.45, bounce: 0.12)
         // A status banner's room opens on the same spring it drops in on.
-        .animation(still ? nil : PlaybackMotion.enter, value: PlaybackStatusView.key(player))
+        .animation(still ? nil : FloeMotion.enter, value: PlaybackStatusView.key(player))
         .toolbar { toolbarContent }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
@@ -150,7 +150,7 @@ struct MainView: View {
 private struct SurfaceSwitcher: View {
     @Binding var selection: Navigator.Surface
     @Namespace private var pill
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
 
     var body: some View {
         HStack(spacing: 0) {
@@ -163,7 +163,7 @@ private struct SurfaceSwitcher: View {
             }
         }
         .padding(3)
-        .animation(still ? PlaybackMotion.fade : PlaybackMotion.glide, value: selection)
+        .animation(still ? FloeMotion.fade : FloeMotion.glide, value: selection)
         .accessibilityRepresentation {
             Picker("View", selection: $selection) {
                 ForEach(Navigator.Surface.allCases, id: \.self) { surface in
@@ -206,7 +206,7 @@ private struct SurfaceSegment: View {
         }
         .buttonStyle(TactileButtonStyle(pressedScale: 0.97))
         .onHover { hovering = $0 }
-        .hoverMotion(hovering)
+        .floeHover(hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -227,7 +227,7 @@ private struct ToolbarSymbol: View {
     let systemImage: String
     let open: Bool
     @Environment(\.coverPalette) private var palette
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var opens = 0
 
     var body: some View {
@@ -235,7 +235,7 @@ private struct ToolbarSymbol: View {
             .symbolEffect(.bounce, options: .speed(1.3), value: opens)
             .foregroundStyle(open ? AnyShapeStyle(palette.highlight) : AnyShapeStyle(.primary))
             .onChange(of: open) { if open && !still { opens += 1 } }
-            .animation(PlaybackMotion.fade, value: open)
+            .animation(FloeMotion.fade, value: open)
     }
 }
 

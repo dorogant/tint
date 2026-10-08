@@ -3,7 +3,7 @@ import SwiftUI
 struct NowPlayingView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(VisualSettings.self) private var settings
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @AppStorage("nowPlayingLyrics") private var showLyrics = true
     @ViewState private var ringShown = false
 
@@ -37,7 +37,7 @@ struct NowPlayingView: View {
                                     .id(track.uri)
                                     .transition(.trackChange(distance: 14, still: still))
                             }
-                            .animation(still ? PlaybackMotion.fade : PlaybackMotion.enter, value: track.uri)
+                            .animation(still ? FloeMotion.fade : FloeMotion.enter, value: track.uri)
                             .padding(.top, compact ? 14 : 26)
                             VStack(spacing: compact ? 4 : 8) {
                                 ProgressBar(wavy: true).frame(maxWidth: 480)
@@ -59,7 +59,7 @@ struct NowPlayingView: View {
                     if normal { VisualizerView().frame(height: 84).padding(.horizontal, 24) }
                 }
                 .padding(12)
-                .animation(still ? nil : PlaybackMotion.enter, value: showLyrics)
+                .animation(still ? nil : FloeMotion.enter, value: showLyrics)
             }
             .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(18) }
             .onAppear {
@@ -79,8 +79,8 @@ struct NowPlayingView: View {
     private var lyricsTransition: AnyTransition {
         let moved = AnyTransition.opacity.combined(with: .offset(x: 40))
             .combined(with: .modifier(active: Soften(radius: 4), identity: Soften(radius: 0)))
-        return still ? AnyTransition.opacity.animation(PlaybackMotion.fade)
-            : .asymmetric(insertion: moved.animation(PlaybackMotion.enter),
+        return still ? AnyTransition.opacity.animation(FloeMotion.fade)
+            : .asymmetric(insertion: moved.animation(FloeMotion.enter),
                           removal: moved.animation(.spring(duration: 0.26, bounce: 0)))
     }
 }
@@ -98,7 +98,7 @@ private struct CoverStage<Ring: View>: View {
     let size: CGFloat
     let ring: CGFloat
     @ViewBuilder var ringView: Ring
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
@@ -119,7 +119,7 @@ private struct CoverStage<Ring: View>: View {
         }
         .frame(width: size * ring, height: size * ring)
         .scaleEffect(lifted ? 1.02 : 1)
-        .hoverMotion(hovering)
+        .floeHover(hovering)
     }
 }
 
@@ -173,25 +173,6 @@ private struct TrackTitle: View {
     }
 }
 
-/// Text that brightens and underlines under the pointer and acts as a link,
-/// keeping whatever colour it has at rest.
-private struct TitleLink: View {
-    let text: String
-    let action: () -> Void
-    @ViewState private var hovering = false
-
-    var body: some View {
-        Text(text)
-            .underline(hovering)
-            .brightness(hovering ? 0.18 : 0)
-            .onHover { hovering = $0 }
-            .onTapGesture(perform: action)
-            .hoverMotion(hovering)
-            .accessibilityAddTraits(.isLink)
-            .accessibilityAction { action() }
-    }
-}
-
 /// A capsule with its label, so it reads as the switch for the column beside
 /// it. On, it takes a tint from the cover; ⇧⌘L toggles it from the keyboard.
 private struct LyricsToggle: View {
@@ -215,8 +196,8 @@ private struct LyricsToggle: View {
         }
         .buttonStyle(.floe)
         .onHover { hovering = $0 }
-        .hoverMotion(hovering)
-        .animation(PlaybackMotion.fade, value: on)
+        .floeHover(hovering)
+        .animation(FloeMotion.fade, value: on)
         .keyboardShortcut("l", modifiers: [.command, .shift])
         .help(on ? "Hide lyrics" : "Show lyrics")
         .accessibilityAddTraits(on ? .isSelected : [])
@@ -231,7 +212,7 @@ private struct FlowerCoverView: View {
     @Environment(CoverAppearance.self) private var appearance
     @Environment(\.coverPalette) private var palette
     @Environment(\.scenePhase) private var scenePhase
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
 
     private var running: Bool { player.isPlaying && !still && scenePhase == .active }
 

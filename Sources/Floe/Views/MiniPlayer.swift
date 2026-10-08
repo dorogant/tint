@@ -6,7 +6,7 @@ struct MiniPlayerView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
@@ -33,7 +33,7 @@ struct MiniPlayerView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .clipped()
-                        .animation(still ? PlaybackMotion.fade : PlaybackMotion.enter, value: track.uri)
+                        .animation(still ? FloeMotion.fade : FloeMotion.enter, value: track.uri)
                         extras(track)
                         LikeButton(uri: track.uri)
                     }
@@ -61,7 +61,7 @@ struct MiniPlayerView: View {
 
     private func details(_ track: TrackInfo) -> some View {
         HStack(spacing: 8) {
-            LinkText(track.name) { openAlbum(track) }
+            TitleLink(text: track.name) { openAlbum(track) }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
             Text("·").foregroundStyle(Theme.tertiary)
@@ -100,7 +100,7 @@ struct MiniPlayerView: View {
         .opacity(shown ? 1 : 0)
         .offset(x: shown || still ? 0 : 6)
         .allowsHitTesting(shown)
-        .animation(still ? PlaybackMotion.fade : (shown ? PlaybackMotion.enter : PlaybackMotion.exit), value: shown)
+        .animation(still ? FloeMotion.fade : (shown ? FloeMotion.enter : FloeMotion.exit), value: shown)
     }
 
     @ViewBuilder
@@ -145,7 +145,7 @@ struct MiniPlayerView: View {
 private struct MiniCover: View {
     let url: URL?
     let open: () -> Void
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
@@ -170,7 +170,7 @@ private struct MiniCover: View {
         }
         .buttonStyle(TactileButtonStyle())
         .onHover { hovering = $0 }
-        .hoverMotion(hovering)
+        .floeHover(hovering)
         .help("Now Playing")
         .accessibilityLabel("Now Playing")
     }
@@ -197,7 +197,7 @@ private struct MiniAction: View {
         }
         .buttonStyle(TactileButtonStyle())
         .onHover { hovering = $0 }
-        .hoverMotion(hovering)
+        .floeHover(hovering)
         .help(help)
         .accessibilityLabel(help)
         .accessibilityAddTraits(active ? .isSelected : [])
@@ -210,7 +210,7 @@ private struct MiniAction: View {
 struct ProgressBar: View {
     @Environment(\.coverPalette) private var palette
     var wavy = false
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @Environment(\.scenePhase) private var scenePhase
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragFraction: Double?
@@ -246,7 +246,7 @@ struct ProgressBar: View {
                     .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .onHover { hovering = $0 }
-                    .hoverMotion(hovering || scrubbing)
+                    .floeHover(hovering || scrubbing)
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { dragFraction = min(max($0.location.x / max(geometry.size.width, 1), 0), 1) }
                         .onEnded { _ in
@@ -284,7 +284,7 @@ struct ProgressBar: View {
 struct VolumeControl: View {
     @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var dragging = false
     @ViewState private var hovering = false
     @ViewState private var speakerHovering = false
@@ -303,7 +303,7 @@ struct VolumeControl: View {
             }
             .buttonStyle(TactileButtonStyle())
             .onHover { speakerHovering = $0 }
-            .hoverMotion(speakerHovering)
+            .floeHover(speakerHovering)
             .help(player.volume > 0 ? "Mute" : "Unmute")
             .accessibilityLabel(player.volume > 0 ? "Mute" : "Unmute")
             GeometryReader { geometry in
@@ -320,7 +320,7 @@ struct VolumeControl: View {
             }
             .frame(width: 110, height: 14)
             .onHover { hovering = $0 }
-            .hoverMotion(hovering || dragging)
+            .floeHover(hovering || dragging)
         }
         .help("Volume")
         .accessibilityElement(children: .contain)
@@ -333,7 +333,7 @@ struct VolumeControl: View {
 
     /// A click, so the fill glides; held volume keys step without queueing springs.
     private func toggleMute() {
-        withAnimation(still ? nil : PlaybackMotion.glide) {
+        withAnimation(still ? nil : FloeMotion.glide) {
             if player.volume > 0 { audibleVolume = player.volume; player.setVolume(0) }
             else { player.setVolume(audibleVolume) }
         }
@@ -360,7 +360,7 @@ private struct SliderTrack: View {
     var active: Bool
     var grabbed = false
     var tint: Color
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
 
     var body: some View {
         GeometryReader { geometry in

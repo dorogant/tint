@@ -47,7 +47,7 @@ private struct TransportButton: View {
     var value: LocalizedStringKey?
     let action: () -> Void
     @Environment(\.coverPalette) private var palette
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var hovering = false
     @ViewState private var presses = 0
 
@@ -86,8 +86,8 @@ private struct TransportButton: View {
         }
         .buttonStyle(TactileButtonStyle(nudge: CGSize(width: nudge * 3, height: 0)))
         .onHover { hovering = $0 }
-        .hoverMotion(hovering)
-        .animation(still ? PlaybackMotion.fade : PlaybackMotion.pressUp, value: on)
+        .floeHover(hovering)
+        .animation(still ? FloeMotion.fade : FloeMotion.release, value: on)
         .help(label)
         .accessibilityLabel(label)
         .accessibilityValue(value.map { Text($0) } ?? Text(""))
@@ -101,7 +101,7 @@ private struct PlayPauseButton: View {
     let size: CGFloat
     @Environment(PlayerModel.self) private var player
     @Environment(\.coverPalette) private var palette
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
@@ -134,7 +134,7 @@ private struct PlayPauseButton: View {
                 .accessibilityHidden(true)
         }
         .onHover { hovering = $0 }
-        .hoverMotion(hovering)
+        .floeHover(hovering)
         .help(busy ? "Pause" : "Play")
         .accessibilityLabel(busy ? "Pause" : "Play")
     }
@@ -144,7 +144,7 @@ private struct PlayPauseButton: View {
 /// than horizontally, like a soft key, then springs back.
 private struct PlayButtonStyle: ButtonStyle {
     let hovering: Bool
-    @PlaybackMotion.Still private var still
+    @ReducedMotion private var still
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed
@@ -152,6 +152,6 @@ private struct PlayButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(x: still ? 1 : (pressed ? 0.975 : rest), y: still ? 1 : (pressed ? 0.95 : rest))
             .brightness(pressed ? -0.05 : 0)
-            .animation(PlaybackMotion.press(pressed, still: still), value: pressed)
+            .animation(still ? FloeMotion.fade : FloeMotion.press(pressed), value: pressed)
     }
 }

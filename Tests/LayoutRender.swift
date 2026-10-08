@@ -92,7 +92,7 @@ struct LayoutRender {
             print(condition ? "  ✓ \(name)" : "  ✗ \(name)")
             if !condition { failures += 1 }
         }
-        check(!(window.firstResponder is NSText), "the sidebar search field doesn't take focus on its own")
+        check(!(window.firstResponder is NSText), "the search field doesn't take focus on its own")
         if environment["FLOE_LAYOUT_DUMP_SCROLL"] == "1" {
             print("first Home:")
             dumpScrollViews(window.contentView!)
@@ -111,12 +111,17 @@ struct LayoutRender {
         let scenarios: [(String, @MainActor () async -> Void)] = [
             ("home", { navigator.select(.home) }),
             ("search", {
-                // ⌘F over a playlist, then type: results open over it.
+                // Open a playlist, go to Now Playing, ⌘F and type: results open over the playlist.
                 navigator.select(playlist)
                 await settle(window)
+                check(searchField(in: window) != nil, "the search field is in the toolbar")
+                navigator.surface = .nowPlaying
+                await settle(window, steps: 10)
+                check(searchField(in: window) != nil, "the search field stays in the toolbar on Now Playing")
                 navigator.select(.search)
-                await settle(window, steps: 5)
-                check(window.firstResponder is NSText, "⌘F focuses the sidebar field")
+                await settle(window, steps: 10)
+                check(window.firstResponder is NSText && navigator.surface == .library,
+                      "⌘F from Now Playing focuses the toolbar field and brings Library back")
                 search.text = "tame impala"
                 check(navigator.stack == [playlist, .search], "results open over the page you were on")
             }),
@@ -125,7 +130,7 @@ struct LayoutRender {
                 navigator.push(.artist("tame-impala"))
                 await settle(window, steps: 5)
                 check(!(window.firstResponder is NSText), "opening a result hands the keyboard back")
-                check(navigator.section == .search, "Search stays the sidebar's selection under a result")
+                check(navigator.section == .search, "Search stays the section under a result")
                 navigator.select(.search)
                 await settle(window, steps: 5)
                 let editor = window.firstResponder as? NSTextView
@@ -142,6 +147,17 @@ struct LayoutRender {
                 await settle(window, steps: 5)
                 check(search.text.isEmpty && navigator.stack == [playlist], "Escape clears and returns to the page")
                 check(!(window.firstResponder is NSText), "Escape lets go of the keyboard")
+                // Click into the field on Lyrics and type: Library comes back with the results.
+                navigator.surface = .lyrics
+                await settle(window, steps: 10)
+                if let field = searchField(in: window) { window.makeFirstResponder(field) }
+                await settle(window, steps: 5)
+                search.text = "tame"
+                await settle(window, steps: 5)
+                check(navigator.surface == .library && navigator.current == .search, "typing on Lyrics shows the results")
+                window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+                await settle(window, steps: 10)
+                check(search.text.isEmpty && navigator.current != .search, "Escape returns from those results too")
                 navigator.select(.search)
             }),
             ("playlist", {
@@ -179,6 +195,16 @@ struct LayoutRender {
         window.close()
         print(failures == 0 ? "PASS: layout renders written to \(output.path)" : "FAIL: \(failures) check(s)")
         if failures > 0 { exit(1) }
+    }
+
+    /// The toolbar's search field (the system's, inside the titlebar).
+    static func searchField(in window: NSWindow) -> NSSearchField? {
+        func find(_ view: NSView) -> NSSearchField? {
+            if let field = view as? NSSearchField { return field }
+            for child in view.subviews { if let field = find(child) { return field } }
+            return nil
+        }
+        return window.contentView?.superview.flatMap(find)
     }
 
     /// Nothing has been scrolled in the harness, so every scroll view should sit

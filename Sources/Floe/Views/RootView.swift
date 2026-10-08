@@ -92,6 +92,8 @@ struct MainView: View {
         // A status banner's room opens on the same spring it drops in on.
         .animation(still ? nil : FloeMotion.enter, value: PlaybackStatusView.key(player))
         .toolbar { toolbarContent }
+        // The one search field: the toolbar's own, trailing, so it's there on every surface.
+        .modifier(ToolbarSearch())
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 

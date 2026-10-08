@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Home
@@ -434,6 +435,72 @@ struct SearchView: View {
         }
         .revealScope()
         .task(id: search.text) { await search.search(library.api) }
+    }
+}
+
+/// Search lives in the toolbar, as in Music and Finder, so it's reachable from
+/// Now Playing and Lyrics too. It's the system's search field: it collapses to
+/// a button when the window is narrow and grows when focused.
+///
+/// Typing (or ⌘F) shows the results over the page you were on, switching back
+/// to Library first. Escape or the clear button empties it and goes back to that
+/// page; deleting the query by hand stays on Search, ready for another. Opening
+/// a result hands the keyboard back, so Space plays and pauses again.
+struct ToolbarSearch: ViewModifier {
+    @Environment(Navigator.self) private var navigator
+    @Environment(SearchModel.self) private var search
+    @FocusState private var focused: Bool
+    /// False just after the window opens, when AppKit hands its keyboard focus
+    /// to the first text field it finds. Search only takes focus when asked.
+    @ViewState private var acceptsFocus = false
+
+    func body(content: Content) -> some View {
+        @Bindable var search = search
+        content
+            .searchable(text: $search.text, placement: .toolbar, prompt: Text("Search"))
+            .searchFocused($focused)
+            .onSubmit(of: .search) { showResults() }
+            .onChange(of: search.text) { old, new in
+                if focused { showResults() }
+                if !old.isEmpty, new.isEmpty, !Self.deletedByHand { navigator.closeSearch() }
+            }
+            .onChange(of: focused) {
+                if focused && !acceptsFocus { focused = false } else if focused { showResults() }
+            }
+            .onChange(of: navigator.current) { if navigator.current != .search { focused = false } }
+            .task {
+                try? await Task.sleep(for: .milliseconds(500))
+                acceptsFocus = true
+            }
+            .task(id: navigator.searchFocusRequest) { await takeRequestedFocus() }
+    }
+
+    private func showResults() {
+        if !search.text.trimmingCharacters(in: .whitespaces).isEmpty { navigator.showSearch() }
+    }
+
+    /// Backspace or forward-delete emptied the field, rather than Escape or ✕.
+    private static var deletedByHand: Bool {
+        guard let event = NSApp.currentEvent, event.type == .keyDown else { return false }
+        return event.keyCode == 51 || event.keyCode == 117
+    }
+
+    /// Only explicit requests (⌘F) take focus; re-renders and Back never do.
+    /// The window may be bringing Library back at the same moment, so keep
+    /// asking for a few frames until focus sticks.
+    private func takeRequestedFocus() async {
+        guard navigator.searchFocusRequest != navigator.searchFocusHandled else { return }
+        navigator.searchFocusHandled = navigator.searchFocusRequest
+        acceptsFocus = true
+        if focused {
+            // Asked again while typing: select the query, ready to replace.
+            (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
+            return
+        }
+        for _ in 0..<12 where !Task.isCancelled && !focused {
+            focused = true
+            try? await Task.sleep(for: .milliseconds(16))
+        }
     }
 }
 

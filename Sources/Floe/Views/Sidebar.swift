@@ -1,18 +1,13 @@
-import AppKit
 import SwiftUI
 
 struct SidebarView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(LibraryModel.self) private var library
-    /// One selection indicator, shared by every row and the search field, so it glides between them.
+    /// One selection indicator, shared by every row, so it glides between them.
     @Namespace private var selection
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Search stays put above the list, as in Music; the plates below line up with it.
-            SearchField(selection: selection)
-                .padding([.horizontal, .top], SidebarMetrics.inset)
-                .padding(.bottom, 12)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     NavRow(title: "Home", systemImage: "house.fill", route: .home, selection: selection)
@@ -31,9 +26,12 @@ struct SidebarView: View {
                                     showsSelection: !library.isPinned(playlist.id))
                     }
                 }
-                .padding(.horizontal, SidebarMetrics.inset)
-                .padding(.bottom, SidebarMetrics.inset)
+                // The first plate nests in the panel's corner: the same inset on top as at the sides.
+                .padding([.horizontal, .bottom], SidebarMetrics.inset)
+                .padding(.top, SidebarMetrics.inset - 1)
             }
+            // Clear of the toolbar's edge, as the page's scroll view is (see MainView).
+            .padding(.top, 1)
             .floeGlide(value: navigator.section)
             Rectangle().fill(Theme.panelStroke).frame(height: 1)
             AccountRow()
@@ -55,111 +53,6 @@ private enum SidebarMetrics {
     static let radius = Theme.corner - inset
     /// Covers nest inside a row's plate.
     static let coverRadius = radius - padding
-}
-
-/// Search at the top of the sidebar, as in Music. Typing shows the results
-/// over the current page; Escape clears the query and returns there. While
-/// the results show, the field carries the sidebar's selection.
-private struct SearchField: View {
-    @Environment(\.coverPalette) private var palette
-    @Environment(Navigator.self) private var navigator
-    @Environment(SearchModel.self) private var search
-    let selection: Namespace.ID
-    @FocusState private var focused: Bool
-    @ViewState private var hovering = false
-    /// False just after the field joins a window, when AppKit hands a new
-    /// window's keyboard focus to its first text field. Search only takes
-    /// focus when asked (a click, ⌘F), so Space keeps playing and pausing.
-    @ViewState private var acceptsFocus = false
-
-    var body: some View {
-        @Bindable var search = search
-        let selected = navigator.section == .search
-        let shape = RoundedRectangle(cornerRadius: SidebarMetrics.radius, style: .continuous)
-        HStack(spacing: SidebarMetrics.spacing) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selected ? palette.highlight : (focused || hovering ? .white : Theme.secondary))
-                .frame(width: SidebarMetrics.column)
-                .onTapGesture { focused = true }
-                .accessibilityHidden(true)
-            TextField("Search", text: $search.text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .focused($focused)
-                .onSubmit { navigator.showSearch() }
-                .onExitCommand(perform: cancel)
-            if !search.text.isEmpty {
-                Button {
-                    search.text = ""
-                    focused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill").frame(width: 20, height: 20).contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.secondary)
-                .help("Clear")
-                .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, SidebarMetrics.padding)
-        .frame(height: 32)
-        .background {
-            ZStack {
-                shape.fill(.white.opacity(focused || hovering ? 0.09 : 0.06))
-                if selected { SelectionIndicator(namespace: selection) }
-            }
-        }
-        .overlay(shape.strokeBorder(focused ? palette.accent.opacity(0.6) : .clear))
-        .onHover { hovering = $0 }
-        .floeHover(hovering)
-        .floeState(value: focused)
-        .floeState(value: search.text.isEmpty)
-        // Typing, or coming back to a query, shows its results.
-        .onChange(of: search.text) { if focused { showResults() } }
-        .onChange(of: focused) {
-            if focused && !acceptsFocus { focused = false } else if focused { showResults() }
-        }
-        // Opening a result (or going Back) hands the keyboard back to the page,
-        // so Space doesn't type into the query and pull the results up again.
-        .onChange(of: navigator.current) { if navigator.current != .search { focused = false } }
-        .task {
-            try? await Task.sleep(for: .milliseconds(500))
-            acceptsFocus = true
-        }
-        .task(id: navigator.searchFocusRequest) { await takeRequestedFocus() }
-    }
-
-    private func showResults() {
-        if !search.text.trimmingCharacters(in: .whitespaces).isEmpty { navigator.showSearch() }
-    }
-
-    /// Escape clears the query and goes back to the page Search opened over,
-    /// and lets go of the keyboard so Space plays and pauses again.
-    private func cancel() {
-        search.text = ""
-        navigator.closeSearch()
-        focused = false
-    }
-
-    /// Focus set while the field is still being inserted (⌘F from Now Playing
-    /// brings the sidebar back) is dropped before its text field joins the
-    /// window, so keep asking for a few frames until it sticks. Only explicit
-    /// requests count: re-renders and Back never steal focus.
-    private func takeRequestedFocus() async {
-        guard navigator.searchFocusRequest != navigator.searchFocusHandled else { return }
-        navigator.searchFocusHandled = navigator.searchFocusRequest
-        acceptsFocus = true
-        if focused {
-            // Asked again while typing (⌘F): select the query, ready to replace.
-            (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
-            return
-        }
-        for _ in 0..<12 where !Task.isCancelled && !focused {
-            focused = true
-            try? await Task.sleep(for: .milliseconds(16))
-        }
-    }
 }
 
 private struct GroupTitle: View {

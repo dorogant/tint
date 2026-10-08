@@ -15,6 +15,8 @@ struct VisualizerView: View {
 
     var body: some View {
         let frame = visualization.frame
+        // Counts analysed frames, so motion runs at 30 Hz and freezes with the analysis.
+        let clock = Double(visualization.framesAnalyzed) / 30
         let color = palette.highlight
         let pale = color.mix(with: .white, by: 0.55)
         let sensitivity = Float(settings.sensitivity)
@@ -32,7 +34,7 @@ struct VisualizerView: View {
                 let ribbon = GraphicsContext.Shading.linearGradient(
                     Gradient(colors: [color.opacity(0.95), pale.opacity(0.7), color.opacity(0.95)]),
                     startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height))
-                drawRibbon(&context, size: size, levels: levels, color: color, shading: ribbon)
+                drawBeads(&context, size: size, levels: levels, clock: clock, color: color, shading: ribbon)
             }
         }
         .allowsHitTesting(false)
@@ -101,25 +103,50 @@ struct VisualizerView: View {
         context.stroke(path, with: shading, style: StrokeStyle(lineWidth: width, lineCap: .round))
     }
 
-    /// The halo unrolled: a ribbon around the centre line, bass in the middle,
-    /// tapered at both ends.
-    private func drawRibbon(_ context: inout GraphicsContext, size: CGSize, levels: [CGFloat],
-                            color: Color, shading: GraphicsContext.Shading) {
+    /// A twisted ribbon of beads drifting sideways, bass in the middle. Each bead
+    /// takes its height from the spectrum at its own centre, so beads stay round
+    /// and swell or shrink as they pass; a dimmer chain shows through the pinches.
+    private func drawBeads(_ context: inout GraphicsContext, size: CGSize, levels: [CGFloat], clock: Double,
+                           color: Color, shading: GraphicsContext.Shading) {
         let mid = size.height / 2
-        let half = emphasized(smoothed(levels, groups: 14))
-        let lobes = half.reversed() + half
-        let top = [CGPoint(x: 0, y: mid)]
-            + lobes.enumerated().map { g, level in
-                CGPoint(x: (CGFloat(g) + 0.5) / CGFloat(lobes.count) * size.width,
-                        y: mid - (mid - 3) * (0.06 + 0.94 * level))
+        let half = smoothed(levels, groups: levels.count)
+        let mirrored = half.reversed() + half
+        let beads = 12.0
+        func height(at t: Double) -> CGFloat {
+            let x = min(max(t, 0), 1) * Double(mirrored.count - 1)
+            let i = Int(x), f = CGFloat(x - Double(i))
+            let level = mirrored[i] * (1 - f) + mirrored[min(i + 1, mirrored.count - 1)] * f
+            return (mid - 3) * (0.08 + 0.92 * level) * CGFloat(sin(.pi * min(max(t, 0), 1)).squareRoot())
+        }
+        func chain(phase: Double) -> Path {
+            let steps = Int(beads * 24)
+            var path = Path()
+            var top: [CGPoint] = []
+            for i in 0...steps {
+                let t = Double(i) / Double(steps)
+                let angle = .pi * beads * t + phase
+                let center = ((angle / .pi).rounded(.down) + 0.5) * .pi
+                // Beads cut by the strip's edge still close to a point.
+                let edge = CGFloat(min(1, sin(.pi * t) * 4))
+                let swell = height(at: (center - phase) / (.pi * beads)) * CGFloat(abs(sin(angle))) * edge
+                top.append(CGPoint(x: t * size.width, y: mid - swell))
             }
-            + [CGPoint(x: size.width, y: mid)]
-        var path = Path()
-        addCurve(through: top, to: &path, closed: false)
-        addCurve(through: top.reversed().map { CGPoint(x: $0.x, y: 2 * mid - $0.y) }, to: &path, closed: false)
-        path.closeSubpath()
-        context.stroke(path, with: .color(color.opacity(0.12)), style: StrokeStyle(lineWidth: 8, lineJoin: .round))
-        context.fill(path, with: shading)
+            path.move(to: top[0])
+            for point in top.dropFirst() { path.addLine(to: point) }
+            for point in top.reversed() { path.addLine(to: CGPoint(x: point.x, y: 2 * mid - point.y)) }
+            path.closeSubpath()
+            return path
+        }
+        let phase = clock * 1.1
+        let front = chain(phase: phase)
+        var echo = context
+        echo.opacity = 0.35
+        echo.clip(to: front, options: .inverse)
+        echo.fill(chain(phase: phase + .pi / 2), with: shading)
+        context.stroke(front, with: .color(color.opacity(0.12)), style: StrokeStyle(lineWidth: 6, lineJoin: .round))
+        context.fill(front, with: shading)
+        context.stroke(front, with: .color(color.mix(with: .black, by: 0.45).opacity(0.7)),
+                       style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
     }
 
     /// Most music sits in the upper half of the analyser's dB range, so a knee drops

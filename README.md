@@ -166,9 +166,11 @@ crossfade, and app or system Reduce Motion turns it off.
 On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. It
 turns slowly and breathes with the music while playing, and stops on pause. The
 circular visualizer scales with the cover. **Bars** are mirrored radial bars with
-bass at the top; **Wave** is a filled halo whose lobes follow the spectrum. The
-bottom strip unrolls the same look into mirrored bars or a ribbon, with bass in the
-middle. Colors run from pale at the top to the cover accent at the bottom.
+bass at the top; **Wave** is a filled halo whose lobes follow the spectrum. Along
+the bottom, **Bars** are mirrored around the middle (bass at the centre). **Wave**
+is a twisted ribbon of round beads that drifts sideways; each bead swells with the
+part of the spectrum it passes. Colors run from pale at the top to the cover accent
+at the bottom, and all motion freezes with the analysis on pause.
 
 In synced lyrics the current line sits on a frosted pill that glides to the next
 line. Upcoming lines settle one after another with a short spring; lines further

@@ -1,12 +1,9 @@
 import SwiftUI
 
 struct NowPlayingView: View {
-    @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
     @Environment(VisualSettings.self) private var settings
-    @Environment(CoverAppearance.self) private var appearance
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage("reduceMotion") private var reduceMotion = false
+    @PlaybackMotion.Still private var still
     @AppStorage("nowPlayingLyrics") private var showLyrics = true
     @ViewState private var ringShown = false
 
@@ -27,48 +24,47 @@ struct NowPlayingView: View {
                 let coverSize = min(showLyrics ? 330 : 420, max(100, min(available, coverWidth)))
                 VStack(spacing: 12) {
                     HStack(spacing: 20) {
-                        VStack(spacing: compact ? 8 : 14) {
+                        // Cover, words, then controls: the wider gaps separate the
+                        // groups and the narrower ones hold each group together.
+                        VStack(spacing: 0) {
                             Spacer(minLength: 0)
-                            ZStack {
+                            CoverStage(size: coverSize, ring: ring) {
                                 if circular { VisualizerView(circular: true).opacity(ringShown ? 1 : 0) }
-                                FlowerCoverView(size: coverSize)
-                            }.frame(width: coverSize * ring, height: coverSize * ring)
-                            // A new song's title rolls up into place.
-                            ZStack {
-                                VStack(spacing: 6) {
-                                    Text(track.name).font(.system(size: 28, weight: .bold))
-                                        .lineLimit(2).multilineTextAlignment(.center)
-                                    Text([track.artistLine, track.album].compactMap { $0 }.joined(separator: " · "))
-                                        .font(.system(size: 13)).foregroundStyle(Theme.secondary).lineLimit(2)
-                                }
-                                .id(track.uri)
-                                .transition(.push(from: .bottom))
                             }
-                            .clipped()
-                            ProgressBar(wavy: true).frame(maxWidth: 480)
-                            TransportControls(playSize: 58)
-                            VolumeControl()
+                            // A new song's details rise into place as the old ones lift away.
+                            ZStack {
+                                TrackTitle(track: track, compact: compact)
+                                    .id(track.uri)
+                                    .transition(.trackChange(distance: 14, still: still))
+                            }
+                            .animation(still ? PlaybackMotion.fade : PlaybackMotion.enter, value: track.uri)
+                            .padding(.top, compact ? 14 : 26)
+                            VStack(spacing: compact ? 4 : 8) {
+                                ProgressBar(wavy: true).frame(maxWidth: 480)
+                                TransportControls(playSize: 58)
+                                VolumeControl().padding(.top, compact ? 2 : 4)
+                            }
+                            .padding(.top, compact ? 10 : 18)
                             Spacer(minLength: 0)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(compact ? 12 : 20)
-                        .floeAnimation(value: track.uri, duration: 0.45, bounce: 0.1)
                         if showLyrics {
                             LyricsView().frame(width: lyricsWidth)
                                 .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
-                                .transition(.opacity.combined(with: .offset(x: 60)))
+                                .transition(lyricsTransition)
                         }
                     }
                     .frame(maxHeight: .infinity)
                     if normal { VisualizerView().frame(height: 84).padding(.horizontal, 24) }
                 }
                 .padding(12)
-                .floeAnimation(value: showLyrics, duration: 0.55, bounce: 0.12)
+                .animation(still ? nil : PlaybackMotion.enter, value: showLyrics)
             }
-            .overlay(alignment: .topTrailing) { lyricsToggle }
+            .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(18) }
             .onAppear {
                 // The ring fades in once the cover has flown into place.
-                withAnimation(reduceMotion || systemReduceMotion ? nil : .easeOut(duration: 0.4).delay(0.35)) {
+                withAnimation(still ? nil : .easeOut(duration: 0.4).delay(0.35)) {
                     ringShown = true
                 }
             }
@@ -78,19 +74,152 @@ struct NowPlayingView: View {
         }
     }
 
-    /// Leaves just the cover and visualizer on screen.
-    private var lyricsToggle: some View {
-        Button { showLyrics.toggle() } label: {
-            Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                .font(.system(size: 13, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: 34, height: 34)
-                .glassControl(in: .circle)
+    /// The column slides in 40 pt from the right, softened by a little blur,
+    /// and leaves faster than it came. Reduce Motion keeps the crossfade.
+    private var lyricsTransition: AnyTransition {
+        let moved = AnyTransition.opacity.combined(with: .offset(x: 40))
+            .combined(with: .modifier(active: Soften(radius: 4), identity: Soften(radius: 0)))
+        return still ? AnyTransition.opacity.animation(PlaybackMotion.fade)
+            : .asymmetric(insertion: moved.animation(PlaybackMotion.enter),
+                          removal: moved.animation(.spring(duration: 0.26, bounce: 0)))
+    }
+}
+
+private struct Soften: ViewModifier {
+    let radius: CGFloat
+    func body(content: Content) -> some View { content.blur(radius: radius) }
+}
+
+/// The cover and its ring lift together under the pointer: 2% larger, with
+/// the shadow beneath deepening and dropping. Only the SwiftUI container
+/// scales; the Core Animation layers inside keep running untouched. With
+/// Reduce Motion only the shadow darkens.
+private struct CoverStage<Ring: View>: View {
+    let size: CGFloat
+    let ring: CGFloat
+    @ViewBuilder var ringView: Ring
+    @PlaybackMotion.Still private var still
+    @ViewState private var hovering = false
+
+    var body: some View {
+        let lifted = hovering && !still
+        ZStack {
+            Ellipse()
+                .fill(RadialGradient(colors: [.black.opacity(0.5), .black.opacity(0)], center: .center,
+                                     startRadius: 0, endRadius: size * 0.52))
+                .frame(width: size * 1.05, height: size * 0.92)
+                .offset(y: size * (lifted ? 0.1 : 0.06))
+                .opacity(hovering ? 1 : 0.5)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            ringView
+            FlowerCoverView(size: size)
+                .contentShape(Circle())
+                .onHover { hovering = $0 }
+        }
+        .frame(width: size * ring, height: size * ring)
+        .scaleEffect(lifted ? 1.02 : 1)
+        .hoverMotion(hovering)
+    }
+}
+
+/// Title, artists and album. The artists take a tint from the cover and, like
+/// the album, open their page; the title stays white so it reads first.
+private struct TrackTitle: View {
+    let track: TrackInfo
+    let compact: Bool
+    @Environment(\.coverPalette) private var palette
+    @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var navigator
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(track.name)
+                .font(.system(size: compact ? 24 : 28, weight: .bold))
+                .tracking(compact ? -0.2 : -0.35)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 0) {
+                ForEach(Array(track.artists.enumerated()), id: \.offset) { index, artist in
+                    if index > 0 { Text(", ") }
+                    TitleLink(text: artist.name) {
+                        if let uri = artist.uri { navigator.open(uri: uri) }
+                    }
+                }
+            }
+            .font(.system(size: compact ? 14 : 15, weight: .medium))
+            .foregroundStyle(palette.highlight.mix(with: .white, by: 0.45))
+            .lineLimit(1)
+            .padding(.top, compact ? 4 : 6)
+            if let album = track.album, !album.isEmpty {
+                TitleLink(text: album) { openAlbum() }
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+                    .padding(.top, 3)
+            }
+        }
+        .frame(maxWidth: 520)
+    }
+
+    /// librespot doesn't report the album ID; look it up when asked.
+    private func openAlbum() {
+        guard let id = track.uri.split(separator: ":").last.map(String.init) else { return }
+        Task {
+            if let album = try? await library.api.track(id).album {
+                navigator.push(.album(album.id))
+            }
+        }
+    }
+}
+
+/// Text that brightens and underlines under the pointer and acts as a link,
+/// keeping whatever colour it has at rest.
+private struct TitleLink: View {
+    let text: String
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Text(text)
+            .underline(hovering)
+            .brightness(hovering ? 0.18 : 0)
+            .onHover { hovering = $0 }
+            .onTapGesture(perform: action)
+            .hoverMotion(hovering)
+            .accessibilityAddTraits(.isLink)
+            .accessibilityAction { action() }
+    }
+}
+
+/// A capsule with its label, so it reads as the switch for the column beside
+/// it. On, it takes a tint from the cover; ⇧⌘L toggles it from the keyboard.
+private struct LyricsToggle: View {
+    @Binding var on: Bool
+    @Environment(\.coverPalette) private var palette
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button { on.toggle() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: on ? "quote.bubble.fill" : "quote.bubble")
+                    .contentTransition(.symbolEffect(.replace))
+                Text("Lyrics")
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(on ? palette.highlight.mix(with: .white, by: 0.3) : (hovering ? .white : Theme.secondary))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .glassControl(tint: on ? palette.accent.opacity(0.22) : nil, in: .capsule)
+            .contentShape(Capsule())
         }
         .buttonStyle(.floe)
+        .onHover { hovering = $0 }
+        .hoverMotion(hovering)
+        .animation(PlaybackMotion.fade, value: on)
         .keyboardShortcut("l", modifiers: [.command, .shift])
-        .help(showLyrics ? "Hide lyrics" : "Show lyrics")
-        .padding(18)
+        .help(on ? "Hide lyrics" : "Show lyrics")
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
@@ -102,10 +231,8 @@ private struct FlowerCoverView: View {
     @Environment(CoverAppearance.self) private var appearance
     @Environment(\.coverPalette) private var palette
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage("reduceMotion") private var reduceMotion = false
+    @PlaybackMotion.Still private var still
 
-    private var still: Bool { reduceMotion || systemReduceMotion }
     private var running: Bool { player.isPlaying && !still && scenePhase == .active }
 
     var body: some View {

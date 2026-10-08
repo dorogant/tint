@@ -133,14 +133,17 @@ private struct HeroCover: ViewModifier {
 }
 
 /// Library sits underneath: Now Playing and Lyrics rise over it like a sheet,
-/// and the library recedes and softens while they're up.
+/// and the library recedes and softens while they're up. It comes back by
+/// sharpening in place: scaling its scroll views on the way in left pages and
+/// shelves resting a few points scrolled, off the page's guides.
 struct SurfaceTransition: Transition {
     var raised: Bool
 
     func body(content: Content, phase: TransitionPhase) -> some View {
+        let scale: CGFloat = raised ? 0.97 : (phase == .didDisappear ? 0.95 : 1)
         content
             .opacity(phase.isIdentity ? 1 : 0)
-            .scaleEffect(phase.isIdentity ? 1 : (raised ? 0.97 : 0.95))
+            .scaleEffect(phase.isIdentity ? 1 : scale)
             .offset(y: phase.isIdentity || !raised ? 0 : 40)
             .blur(radius: phase.isIdentity || raised ? 0 : 10)
     }

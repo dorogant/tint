@@ -62,6 +62,8 @@ struct TrackListView: View {
                 }
             }
         }
+        // Row plates reach past the page gutter; the columns stay on it.
+        .padding(.horizontal, -Theme.plate)
     }
 
     private var header: some View {
@@ -76,10 +78,11 @@ struct TrackListView: View {
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(Theme.tertiary)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
+        .padding(.bottom, 8)
+        // The rule stays on the gutter like the text; only row plates reach past it.
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.panelStroke).frame(height: 1) }
-        .padding(.bottom, 6)
+        .padding(.horizontal, Theme.plate)
+        .padding(.bottom, 4)
     }
 }
 
@@ -94,6 +97,8 @@ struct TrackRow: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
+    /// Rows round like the sidebar's plates.
+    static let radius: CGFloat = 10
     /// With Reduce Motion the row still lights up, it just doesn't move or scale.
     @ReducedMotion private var still
     /// Local to the row, so hovering redraws one row rather than the list.
@@ -109,7 +114,7 @@ struct TrackRow: View {
             if showCover {
                 // The cover lifts a touch toward the pointer, as cards do; the
                 // shadow only deepens, so Reduce Motion keeps it.
-                ArtworkView(images: track.album?.images, size: 40, cornerRadius: 5)
+                ArtworkView(images: track.album?.images, size: 40, cornerRadius: 6)
                     .shadow(color: .black.opacity(hovering ? 0.45 : 0), radius: hovering ? 6 : 0, y: 2)
                     .scaleEffect(hovering && !still ? 1.03 : 1)
             }
@@ -162,8 +167,8 @@ struct TrackRow: View {
             }
             .frame(width: 22)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 54)
+        .padding(.horizontal, Theme.plate)
+        .frame(height: 56)
         .opacity(playable ? 1 : 0.4)
         .background { highlight(isCurrent: isCurrent) }
         .contentShape(Rectangle())
@@ -183,7 +188,7 @@ struct TrackRow: View {
     /// tinted lightly toward the cover, that settles in from just under full size.
     /// A top-lit hairline acknowledges the pointer on either.
     private func highlight(isCurrent: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: TrackRow.radius, style: .continuous)
         let tint = palette.accent.mix(with: .white, by: 0.55)
         return ZStack {
             shape.fill(Theme.selection).opacity(isCurrent ? 1 : 0)

@@ -1,76 +1,110 @@
-import AppKit
 import SwiftUI
 
 // MARK: - Home
 
 /// Built from the user's own data (Spotify removed browse/recommendations for new apps).
+/// Each section has its own shape, from most to least immediate: tiles to jump
+/// back into, recent songs as rows, top artists as small circles, then saved
+/// albums. Playlists already fill the sidebar, so they appear here only as
+/// tiles, or as the last shelf when there are no saved albums. Nothing shows
+/// twice: later sections skip what a tile already offers.
 struct HomeView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
-
-    private struct Recent: Identifiable {
-        let id: String
-        let item: PlayHistory
-    }
-
-    private var recent: [Recent] {
-        var seen = Set<String>()
-        return library.recent
-            .filter { seen.insert($0.track.uri).inserted }
-            .prefix(16)
-            .map { Recent(id: $0.track.uri, item: $0) }
-    }
+    /// Tiles and song rows share these columns, so their artwork lines up.
+    @ViewState private var columns = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 30) {
-            Text(greeting)
-                .font(.system(size: 32, weight: .heavy))
-                .tracking(-0.6)
-                .padding(.horizontal, 10)
-                .accessibilityAddTraits(.isHeader)
-                .reveal("greeting")
+        let shortcuts = Array(HomeShortcut.recent(in: library).prefix(columns * 2))
+        let shown = Set(shortcuts.map(\.id))
+        let songs = recentSongs(excluding: shown)
+        VStack(alignment: .leading, spacing: Theme.sectionGap) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(greeting)
+                    .font(.system(size: 32, weight: .heavy))
+                    .tracking(-0.6)
+                    .accessibilityAddTraits(.isHeader)
+                    .reveal("greeting")
+                if !shortcuts.isEmpty {
+                    LazyVGrid(columns: grid, spacing: 12) {
+                        ForEach(shortcuts) { item in
+                            ShortcutTile(item: item) { navigator.push(item.route) } play: {
+                                player.play(PlayRequest(contextURI: item.id))
+                            }
+                        }
+                    }
+                    .reveal("shortcuts", order: 1)
+                }
+            }
             if let error = library.loadError {
                 MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange,
                             actionTitle: "Try Again") { Task { await library.refresh() } }
             }
-            // Recently played cards play straight away; the rest open, with Play on hover.
-            Shelf(title: "Recently played", items: recent) { recent in
-                Card(images: recent.item.track.album?.images, title: recent.item.track.name,
-                     subtitle: recent.item.track.artistLine) {
-                    play(recent.item)
+            if !songs.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.headerGap) {
+                    SectionHeader("Recently played")
+                    LazyVGrid(columns: grid, spacing: 2 * Theme.plate) {
+                        ForEach(songs, id: \.track.uri) { item in
+                            SongTile(track: item.track) { play(item) }
+                        }
+                    }
                 }
+                .reveal("recent", order: 2)
             }
-            .reveal("recent", order: 1)
-            Shelf(title: "Your top artists", items: library.topArtists) { artist in
-                Card(images: artist.images, title: artist.name, subtitle: L10n.string("Artist"),
-                     circle: true) {
+            Shelf(title: "Your top artists", items: library.topArtists.filter { !shown.contains($0.uri) }) { artist in
+                Card(images: artist.images, title: artist.name, circle: true, size: 128) {
                     navigator.push(.artist(artist.id))
                 } play: {
                     player.play(PlayRequest(contextURI: artist.uri))
                 }
             }
-            .reveal("artists", order: 2)
-            Shelf(title: "Your playlists", items: library.playlists) { playlist in
-                Card(images: playlist.images, title: playlist.name,
-                     subtitle: playlist.owner.displayName ?? "") {
-                    navigator.push(.playlist(playlist.id))
-                } play: {
-                    player.play(PlayRequest(contextURI: playlist.uri))
+            .reveal("artists", order: 3)
+            if !library.savedAlbums.isEmpty {
+                Shelf(title: "Saved albums", items: library.savedAlbums.filter { !shown.contains($0.uri) }) { album in
+                    Card(images: album.images, title: album.name,
+                         subtitle: album.artists?.map(\.name).joined(separator: ", ") ?? "") {
+                        navigator.push(.album(album.id))
+                    } play: {
+                        player.play(PlayRequest(contextURI: album.uri))
+                    }
                 }
-            }
-            .reveal("playlists", order: 3)
-            Shelf(title: "Saved albums", items: library.savedAlbums) { album in
-                Card(images: album.images, title: album.name,
-                     subtitle: album.artists?.map(\.name).joined(separator: ", ") ?? "") {
-                    navigator.push(.album(album.id))
-                } play: {
-                    player.play(PlayRequest(contextURI: album.uri))
+                .reveal("albums", order: 4)
+            } else {
+                Shelf(title: "Your playlists", items: library.playlists.filter { !shown.contains($0.uri) }) { playlist in
+                    Card(images: playlist.images, title: playlist.name,
+                         subtitle: playlist.owner.displayName ?? "") {
+                        navigator.push(.playlist(playlist.id))
+                    } play: {
+                        player.play(PlayRequest(contextURI: playlist.uri))
+                    }
                 }
+                .reveal("playlists", order: 4)
             }
-            .reveal("albums", order: 4)
         }
         .revealScope()
+        .onGeometryChange(for: Int.self) { Self.columns(for: $0.size.width) } action: { columns = $0 }
+    }
+
+    private var grid: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .leading), count: columns)
+    }
+
+    /// Four across a wide window, three at the default size, two at the smallest.
+    nonisolated static func columns(for width: CGFloat) -> Int {
+        width >= 1000 ? 4 : (width >= 640 ? 3 : 2)
+    }
+
+    /// Up to three full rows of distinct songs. A song whose album is already
+    /// a tile above would only repeat its cover, so it's left out.
+    private func recentSongs(excluding shown: Set<String>) -> [PlayHistory] {
+        var seen = Set<String>()
+        let songs = library.recent
+            .filter { !shown.contains($0.track.album?.uri ?? "") && seen.insert($0.track.uri).inserted }
+            .prefix(columns * 3)
+        // A ragged last row reads as unfinished; keep a short history whole.
+        let whole = songs.count < columns ? songs.count : songs.count - songs.count % columns
+        return Array(songs.prefix(whole))
     }
 
     private var greeting: String {
@@ -93,6 +127,189 @@ struct HomeView: View {
     }
 }
 
+/// Somewhere to jump back into: a playlist, album, artist or Liked Songs.
+struct HomeShortcut: Identifiable {
+    enum Kind { case playlist, album, artist, liked }
+    /// The context URI, which is also what Play starts.
+    let id: String
+    let kind: Kind
+    let route: Route
+    let title: String
+    let images: [SpotifyImage]?
+
+    /// What was played from most recently, newest first, then pinned and
+    /// other playlists to fill the grid. Songs played without a context stand
+    /// in for their album; contexts Tint can't name (editorial playlists) are skipped.
+    @MainActor
+    static func recent(in library: LibraryModel, limit: Int = 8) -> [HomeShortcut] {
+        var result: [HomeShortcut] = []
+        var seen = Set<String>()
+        func add(_ shortcut: HomeShortcut?) {
+            guard let shortcut, result.count < limit, seen.insert(shortcut.id).inserted else { return }
+            result.append(shortcut)
+        }
+        for item in library.recent where result.count < limit {
+            guard let context = item.context else {
+                add(item.track.album.map(HomeShortcut.init))
+                continue
+            }
+            if context.uri.hasSuffix(":collection") {
+                add(HomeShortcut(id: context.uri, kind: .liked, route: .songs,
+                                 title: L10n.string("Liked Songs"), images: nil))
+            } else {
+                switch context.type {
+                case "playlist": add(library.playlists.first { $0.uri == context.uri }.map(HomeShortcut.init))
+                case "album": add(item.track.album.flatMap { $0.uri == context.uri ? HomeShortcut($0) : nil })
+                case "artist": add(library.topArtists.first { $0.uri == context.uri }.map(HomeShortcut.init))
+                default: break
+                }
+            }
+        }
+        library.pinnedPlaylists.forEach { add(HomeShortcut($0)) }
+        library.playlists.forEach { add(HomeShortcut($0)) }
+        return result
+    }
+
+    init(id: String, kind: Kind, route: Route, title: String, images: [SpotifyImage]?) {
+        self.id = id
+        self.kind = kind
+        self.route = route
+        self.title = title
+        self.images = images
+    }
+
+    init(_ playlist: PlaylistRef) {
+        self.init(id: playlist.uri, kind: .playlist, route: .playlist(playlist.id), title: playlist.name,
+                  images: playlist.images)
+    }
+
+    init(_ album: AlbumRef) {
+        self.init(id: album.uri, kind: .album, route: .album(album.id), title: album.name, images: album.images)
+    }
+
+    init(_ artist: Artist) {
+        self.init(id: artist.uri, kind: .artist, route: .artist(artist.id), title: artist.name, images: artist.images)
+    }
+}
+
+/// A compact tile: the cover flush to its leading edge, the title beside it.
+/// Under the pointer it brightens and a Play button rises in at its end; the
+/// tile itself opens the item. While its context plays, the title takes the
+/// accent and the playing bars show.
+private struct ShortcutTile: View {
+    @Environment(\.coverPalette) private var palette
+    @Environment(PlayerModel.self) private var player
+    @ReducedMotion private var still
+    let item: HomeShortcut
+    let open: () -> Void
+    let play: () -> Void
+    @ViewState private var hovering = false
+    @ViewState private var pressed = false
+
+    static let height: CGFloat = 56
+
+    var body: some View {
+        let playing = player.contextURI == item.id && player.isPlaying
+        let shape = RoundedRectangle(cornerRadius: Card.radius, style: .continuous)
+        Button(action: open) {
+            HStack(spacing: 12) {
+                cover
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(playing ? palette.highlight : .white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            // Room for the Play button, so the title never runs under it.
+            .padding(.trailing, 52)
+            .frame(height: Self.height)
+            .background(.white.opacity(hovering ? 0.12 : 0.07))
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(.white.opacity(hovering ? 0.08 : 0.04)))
+            .contentShape(shape)
+        }
+        .buttonStyle(CardPressStyle(pressed: $pressed))
+        .overlay(alignment: .trailing) {
+            ZStack {
+                if hovering {
+                    HoverPlayButton(diameter: 32, action: play)
+                        .transition(HoverPlayButton.transition(still: still))
+                } else if playing {
+                    PlayingSymbol(pointSize: 11, color: palette.highlight, animating: !still)
+                        .transition(.opacity)
+                }
+            }
+            .frame(width: 32)
+            .padding(.trailing, 12)
+        }
+        .scaleEffect(pressed && !still ? 0.98 : 1)
+        .onHover { hovering = $0 }
+        .floeHover(hovering)
+        .floeState(value: playing, duration: 0.3)
+        .animation(still ? FloeMotion.fade : FloeMotion.press(pressed), value: pressed)
+        .modifier(PlayMenu(play: play))
+    }
+
+    @ViewBuilder private var cover: some View {
+        switch item.kind {
+        case .liked:
+            LikedCover(size: Self.height, cornerRadius: 0)
+        case .artist:
+            // Artists keep their round portrait, inset like an avatar.
+            ArtworkView(images: item.images, size: Self.height - 12, circle: true)
+                .frame(width: Self.height, height: Self.height)
+        case .playlist, .album:
+            ArtworkView(images: item.images, size: Self.height, cornerRadius: 0)
+        }
+    }
+}
+
+/// A recently played song: cover, title and artists. A click plays it where
+/// it was played from; under the pointer a plate grows in around it (reaching
+/// past the column, so the covers stay on the grid) and the cover shows Play.
+private struct SongTile: View {
+    @Environment(\.coverPalette) private var palette
+    @Environment(PlayerModel.self) private var player
+    let track: Track
+    let play: () -> Void
+    @ViewState private var hovering = false
+
+    private static let radius: CGFloat = 6
+
+    var body: some View {
+        let current = player.displayTrack?.uri == track.uri
+        Button(action: play) {
+            HStack(spacing: 12) {
+                ArtworkView(images: track.album?.images, size: 40, cornerRadius: Self.radius)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Self.radius)
+                            .fill(.black.opacity(0.4))
+                            .overlay(Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white))
+                            .opacity(hovering ? 1 : 0)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(current ? palette.highlight : .white)
+                    Text(track.artistLine)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .hoverPlate(hovering, radius: Self.radius)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.floeRow)
+        .onHover { hovering = $0 }
+        .floeHover(hovering)
+        .contextMenu { TrackMenuItems(track: track) }
+        .accessibilityLabel(Text("\(track.name), \(track.artistLine)"))
+    }
+}
+
 // MARK: - Artist
 
 struct ArtistView: View {
@@ -106,7 +323,7 @@ struct ArtistView: View {
     @ViewState private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 30) {
+        VStack(alignment: .leading, spacing: Theme.sectionGap) {
             if let artist {
                 // No "Popular" list: Development Mode removed top tracks. Playing the
                 // artist context still starts with them (Spirc resolves it).
@@ -153,6 +370,7 @@ struct ArtistView: View {
 
 // MARK: - Search
 
+/// Results for the sidebar's search field.
 struct SearchView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -160,13 +378,13 @@ struct SearchView: View {
     @Environment(SearchModel.self) private var search
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 30) {
+        VStack(alignment: .leading, spacing: Theme.sectionGap) {
             if let error = search.error {
                 MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange)
             }
             if let results = search.results {
                 if !search.songs.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: Theme.headerGap) {
                         SectionHeader(title: "Songs") {
                             if search.canLoadMoreSongs {
                                 ShowMoreButton(busy: search.isLoadingMore) {
@@ -183,8 +401,7 @@ struct SearchView: View {
                     .reveal("songs")
                 }
                 Shelf(title: "Artists", items: results.artists?.items ?? []) { artist in
-                    Card(images: artist.images, title: artist.name, subtitle: L10n.string("Artist"),
-                         circle: true) {
+                    Card(images: artist.images, title: artist.name, circle: true, size: 128) {
                         navigator.push(.artist(artist.id))
                     } play: {
                         player.play(PlayRequest(contextURI: artist.uri))
@@ -212,8 +429,8 @@ struct SearchView: View {
             } else if search.isSearching {
                 LoadingView()
             } else {
-                MessageView(systemImage: "magnifyingglass",
-                            message: L10n.string("Search for songs, artists, albums and playlists."))
+                MessageView(systemImage: "magnifyingglass", message: L10n.string("Search for songs, artists, albums and playlists."))
+                    .padding(.top, 96)
             }
         }
         .revealScope()
@@ -233,7 +450,7 @@ private struct ShowMoreButton: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(hovering ? .white : Theme.secondary)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .padding(.vertical, 6)
                 .background(.white.opacity(hovering ? 0.12 : 0.07), in: Capsule())
         }
         .buttonStyle(.floe)
@@ -241,54 +458,5 @@ private struct ShowMoreButton: View {
         .opacity(busy ? 0.5 : 1)
         .onHover { hovering = $0 }
         .floeHover(hovering)
-    }
-}
-
-/// The pill search field from the reference UI. Choosing Search puts the cursor
-/// here; the accent ring follows focus.
-struct SearchField: View {
-    @Environment(\.coverPalette) private var palette
-    @Environment(Navigator.self) private var navigator
-    @Bindable var search: SearchModel
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.secondary)
-            TextField("What do you want to play?", text: $search.text)
-                .textFieldStyle(.plain)
-                .focused($focused)
-            if !search.text.isEmpty {
-                Button { search.text = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.secondary)
-                    .help("Clear")
-            }
-        }
-        .font(.system(size: 13))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 420)
-        .glassControl(in: .capsule)
-        .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.6) : .clear))
-        .floeState(value: focused)
-        .task(id: navigator.searchFocusRequest) { await takeRequestedFocus() }
-    }
-
-    /// Focus set while the field is still being inserted is dropped before its
-    /// text field joins the window, so keep asking for a few frames until it
-    /// sticks. Only explicit requests count: re-renders and Back never steal focus.
-    private func takeRequestedFocus() async {
-        guard navigator.searchFocusRequest != navigator.searchFocusHandled else { return }
-        navigator.searchFocusHandled = navigator.searchFocusRequest
-        if focused {
-            // Asked again while typing (⌘F): select the query, ready to replace.
-            (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
-            return
-        }
-        for _ in 0..<12 where !Task.isCancelled && !focused {
-            focused = true
-            try? await Task.sleep(for: .milliseconds(16))
-        }
     }
 }

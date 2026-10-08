@@ -17,8 +17,12 @@ struct LayoutRender {
         FixtureProtocol.install()
         // Flat glass (the snapshot path); the app's own preferences are untouched
         // because the script points the harness at a temporary home.
-        UserDefaults.standard.setVolatileDomain(["FloeSnapshotDir": output.path, "appLanguage": "en"],
-                                                forName: UserDefaults.argumentDomain)
+        // FLOE_LAYOUT_REAL_GLASS=1 keeps Liquid Glass, which renders in the toolbar but not in the content;
+        // FLOE_LAYOUT_REDUCE_MOTION=1 renders with the app's Reduce Motion on.
+        var defaults: [String: Any] = ["appLanguage": "en",
+                                       "reduceMotion": environment["FLOE_LAYOUT_REDUCE_MOTION"] == "1"]
+        if environment["FLOE_LAYOUT_REAL_GLASS"] != "1" { defaults["FloeSnapshotDir"] = output.path }
+        UserDefaults.standard.setVolatileDomain(defaults, forName: UserDefaults.argumentDomain)
 
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
@@ -74,32 +78,106 @@ struct LayoutRender {
         window.orderFrontRegardless()
         window.setFrameOrigin(CGPoint(x: -30_000, y: -30_000))
 
-        let scenarios: [(String, @MainActor () -> Void)] = [
+        await settle(window)
+        if environment["FLOE_LAYOUT_DUMP_TOOLBAR"] == "1", let frame = window.contentView?.superview {
+            func dump(_ view: NSView, _ depth: Int) {
+                let rect = view.convert(view.bounds, to: nil)
+                print(String(repeating: "  ", count: depth) + "\(type(of: view)) \(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height))")
+                for child in view.subviews where !(child is NSHostingView<AnyView>) { dump(child, depth + 1) }
+            }
+            for child in frame.subviews where "\(type(of: child))".contains("Titlebar") { dump(child, 0) }
+        }
+        var failures = 0
+        func check(_ condition: Bool, _ name: String) {
+            print(condition ? "  ✓ \(name)" : "  ✗ \(name)")
+            if !condition { failures += 1 }
+        }
+        check(!(window.firstResponder is NSText), "the sidebar search field doesn't take focus on its own")
+        if environment["FLOE_LAYOUT_DUMP_SCROLL"] == "1" {
+            print("first Home:")
+            dumpScrollViews(window.contentView!)
+        }
+        navigator.surface = .nowPlaying
+        await settle(window, steps: 10)
+        if only?.contains("now-playing") ?? true { write(capture(window), to: output.appendingPathComponent("now-playing.png")) }
+        navigator.surface = .lyrics
+        await settle(window, steps: 10)
+        if only?.contains("lyrics") ?? true { write(capture(window), to: output.appendingPathComponent("lyrics.png")) }
+        navigator.surface = .library
+        await settle(window, steps: 10)
+        check(!(window.firstResponder is NSText), "returning to Library doesn't focus the field either")
+
+        let playlist = Route.playlist(library.playlists[4].id)
+        let scenarios: [(String, @MainActor () async -> Void)] = [
             ("home", { navigator.select(.home) }),
             ("search", {
+                // ⌘F over a playlist, then type: results open over it.
+                navigator.select(playlist)
+                await settle(window)
                 navigator.select(.search)
+                await settle(window, steps: 5)
+                check(window.firstResponder is NSText, "⌘F focuses the sidebar field")
                 search.text = "tame impala"
+                check(navigator.stack == [playlist, .search], "results open over the page you were on")
             }),
             ("search-empty", {
-                search.text = ""
+                // Escape clears the query and goes back; ⌘F then shows the empty state.
+                window.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil)
+                await settle(window, steps: 5)
+                check(search.text.isEmpty && navigator.stack == [playlist], "Escape clears and returns to the page")
+                check(!(window.firstResponder is NSText), "Escape lets go of the keyboard")
                 navigator.select(.search)
             }),
-            ("playlist", { navigator.select(.playlist(library.playlists[4].id)) }),
+            ("playlist", {
+                navigator.select(playlist)
+                await settle(window, steps: 5)
+                check(!(window.firstResponder is NSText), "leaving Search hands the keyboard back")
+            }),
             ("artist", { navigator.select(.artist("tame-impala")) }),
             ("album", { navigator.select(.album("currents")) }),
             ("songs", { navigator.select(.songs) }),
+            ("home-default-size", {
+                navigator.select(.home)
+                window.setContentSize(CGSize(width: 1220, height: 800))
+            }),
+            ("home-minimum-size", { window.setContentSize(CGSize(width: 940, height: 600)) }),
         ]
         for (name, setUp) in scenarios where only?.contains(name) ?? true {
-            setUp()
+            await setUp()
             await settle(window)
             write(capture(window), to: output.appendingPathComponent("\(name).png"))
+            if environment["FLOE_LAYOUT_DUMP_SCROLL"] == "1" { dumpScrollViews(window.contentView!) }
+            check(scrollViewsAtRest(window.contentView!), "\(name): pages and shelves rest unscrolled, on the guides")
         }
         window.close()
-        print("PASS: layout renders written to \(output.path)")
+        print(failures == 0 ? "PASS: layout renders written to \(output.path)" : "FAIL: \(failures) check(s)")
+        if failures > 0 { exit(1) }
     }
 
-    static func settle(_ window: NSWindow) async {
-        for _ in 0..<20 {
+    /// Nothing has been scrolled in the harness, so every scroll view should sit
+    /// at its origin. Animating a scroll view's frame used to leave it a few
+    /// points off (pages under the toolbar, shelves sideways).
+    static func scrollViewsAtRest(_ view: NSView) -> Bool {
+        if let scroll = view as? NSScrollView {
+            let origin = scroll.documentVisibleRect.origin
+            if abs(origin.x + scroll.contentInsets.left) > 0.25 || abs(origin.y + scroll.contentInsets.top) > 0.25 {
+                return false
+            }
+        }
+        return view.subviews.allSatisfy(scrollViewsAtRest)
+    }
+
+    /// Where each scroll view sits and how far it's scrolled, for chasing offsets.
+    static func dumpScrollViews(_ view: NSView) {
+        if let scroll = view as? NSScrollView {
+            let frame = scroll.convert(scroll.bounds, to: nil)
+            print("  scroll \(frame) visible \(scroll.documentVisibleRect) insets \(scroll.contentInsets)")
+        }
+        view.subviews.forEach(dumpScrollViews)
+    }
+
+    static func settle(_ window: NSWindow, steps: Int = 20) async {
+        for _ in 0..<steps {
             window.contentView?.layoutSubtreeIfNeeded()
             try? await Task.sleep(for: .milliseconds(100))
         }

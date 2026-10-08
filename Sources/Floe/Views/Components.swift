@@ -12,6 +12,22 @@ enum Theme {
     static let corner: CGFloat = 18
     /// Placeholder blocks and quiet fills (skeletons, icon wells).
     static let well = Color.white.opacity(0.06)
+
+    // One spacing scale, in multiples of 4, and the guides every page shares.
+
+    /// Window margin and the gap between panels. Panels round to `corner`, so
+    /// they stay concentric with the window's own corners.
+    static let margin: CGFloat = 8
+    /// From a page panel's edge to its content: titles, section headers,
+    /// covers, card artwork and list columns all start on this line.
+    static let gutter: CGFloat = 28
+    /// How far a hover or selection plate reaches past what it holds. Plates
+    /// round to their content's radius plus this, so the corners nest.
+    static let plate: CGFloat = 8
+    /// Between the sections of a page.
+    static let sectionGap: CGFloat = 32
+    /// From a section header to its content.
+    static let headerGap: CGFloat = 12
 }
 
 /// Cover art is blurred once at thumbnail resolution, then stretched behind glass.
@@ -188,13 +204,14 @@ struct Badge: View {
     }
 }
 
-/// Section title with an optional trailing accessory.
+/// Section title with an optional trailing accessory. Text accessories sit on
+/// the title's baseline; symbol buttons use `centeredOnSectionTitle()`.
 struct SectionHeader<Accessory: View>: View {
     let title: LocalizedStringKey
     @ViewBuilder var accessory: Accessory
 
     var body: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .firstTextBaseline) {
             Text(title)
                 .font(.system(size: 20, weight: .bold))
                 .tracking(-0.3)
@@ -211,16 +228,24 @@ extension SectionHeader where Accessory == EmptyView {
     }
 }
 
+extension View {
+    /// Centres a symbol button on a section title's capitals (half the cap
+    /// height above its baseline) inside `SectionHeader`'s baseline-aligned row.
+    func centeredOnSectionTitle() -> some View {
+        alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 7 }
+    }
+}
+
 /// Cover + two lines; used on Home, search and artist pages. Under the pointer
 /// the artwork rises a few points with a deeper shadow and brightens slightly,
 /// and, given `play`, a Play button rises into its corner. The whole card dips
 /// on press. Play is also in the context menu and the VoiceOver actions.
 struct Card: View {
-    @Environment(\.coverPalette) private var palette
     @ReducedMotion private var reduceMotion
     let images: [SpotifyImage]?
     let title: String
-    let subtitle: String
+    /// Left out where the section already says what the items are (artists).
+    var subtitle = ""
     var circle = false
     var size: CGFloat = 156
     let action: () -> Void
@@ -229,35 +254,40 @@ struct Card: View {
     @ViewState private var hovering = false
     @ViewState private var pressed = false
 
+    /// Artwork corners. The hover plate adds its inset, so the corners nest.
+    static let radius: CGFloat = 8
+
     var body: some View {
         let lift: CGFloat = hovering && !reduceMotion ? -3 : 0
+        let plate = RoundedRectangle(cornerRadius: Self.radius + Theme.plate, style: .continuous)
         Button(action: action) {
-            VStack(alignment: circle ? .center : .leading, spacing: 10) {
-                ArtworkView(images: images, size: size, cornerRadius: 10, circle: circle)
+            VStack(alignment: circle ? .center : .leading, spacing: 8) {
+                ArtworkView(images: images, size: size, cornerRadius: Self.radius, circle: circle)
                     .brightness(hovering ? 0.04 : 0)
                     .shadow(color: .black.opacity(hovering ? 0.5 : 0.3),
                             radius: hovering ? 16 : 9, y: hovering ? 11 : 5)
                     .offset(y: lift)
-                VStack(alignment: circle ? .center : .leading, spacing: 3) {
+                VStack(alignment: circle ? .center : .leading, spacing: 2) {
                     Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    if !subtitle.isEmpty {
+                        Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    }
                 }
                 .frame(width: size, alignment: circle ? .center : .leading)
             }
-            .padding(10)
-            .background(Theme.hover.opacity(hovering ? 1 : 0),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(Theme.plate)
+            .background(Theme.hover.opacity(hovering ? 1 : 0), in: plate)
+            .contentShape(plate)
         }
         .buttonStyle(CardPressStyle(pressed: $pressed))
         .overlay(alignment: .topLeading) {
             if let play, hovering {
-                playButton(play)
+                HoverPlayButton(diameter: min(max(size * 0.26, 34), 44), action: play)
                     .padding(8)
                     .frame(width: size, height: size, alignment: .bottomTrailing)
                     .offset(y: lift)
-                    .padding(10)
-                    .transition(playTransition)
+                    .padding(Theme.plate)
+                    .transition(HoverPlayButton.transition(still: reduceMotion))
             }
         }
         .scaleEffect(pressed && !reduceMotion ? 0.97 : 1)
@@ -266,10 +296,30 @@ struct Card: View {
         .animation(reduceMotion ? FloeMotion.fade : FloeMotion.press(pressed), value: pressed)
         .modifier(PlayMenu(play: play))
     }
+}
 
-    private func playButton(_ play: @escaping () -> Void) -> some View {
-        let diameter = min(max(size * 0.26, 34), 44)
-        return Button(action: play) {
+extension View {
+    /// A hover plate that reaches `Theme.plate` past the content on every side
+    /// without moving it, so the content stays on the page's guides. Its
+    /// corners nest around content rounded to `radius`.
+    func hoverPlate(_ visible: Bool, radius: CGFloat) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: radius + Theme.plate, style: .continuous)
+                .fill(Theme.hover)
+                .padding(-Theme.plate)
+                .opacity(visible ? 1 : 0)
+        }
+    }
+}
+
+/// The accent Play button that rises into a card or tile under the pointer.
+struct HoverPlayButton: View {
+    @Environment(\.coverPalette) private var palette
+    let diameter: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
             Image(systemName: "play.fill")
                 .font(.system(size: diameter * 0.36, weight: .bold))
                 .foregroundStyle(palette.onAccent)
@@ -284,16 +334,16 @@ struct Card: View {
     }
 
     /// Rises in from just below and slightly small; leaves faster than it came.
-    private var playTransition: AnyTransition {
+    static func transition(still: Bool) -> AnyTransition {
         let leave = AnyTransition.opacity.animation(.easeOut(duration: 0.12))
-        guard !reduceMotion else { return .asymmetric(insertion: .opacity, removal: leave) }
+        guard !still else { return .asymmetric(insertion: .opacity, removal: leave) }
         return .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .offset(y: 6)),
                            removal: leave)
     }
 }
 
 /// Play without the pointer: in the context menu and as a VoiceOver action.
-private struct PlayMenu: ViewModifier {
+struct PlayMenu: ViewModifier {
     let play: (() -> Void)?
 
     @ViewBuilder func body(content: Content) -> some View {
@@ -308,7 +358,7 @@ private struct PlayMenu: ViewModifier {
 }
 
 /// Hands the press to the card, so the artwork, text and Play button dip together.
-private struct CardPressStyle: ButtonStyle {
+struct CardPressStyle: ButtonStyle {
     @Binding var pressed: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -317,8 +367,10 @@ private struct CardPressStyle: ButtonStyle {
     }
 }
 
-/// Horizontal shelf of cards. When it overflows, arrows in the header page
-/// through it, so a mouse without horizontal scrolling can still browse.
+/// Horizontal shelf of cards. The strip runs under the panel's edges while the
+/// first card's artwork rests on the page gutter, under the header. When it
+/// overflows, arrows in the header page through it, so a mouse without
+/// horizontal scrolling can still browse.
 struct Shelf<Item: Identifiable, Content: View>: View {
     let title: LocalizedStringKey
     let items: [Item]
@@ -326,63 +378,74 @@ struct Shelf<Item: Identifiable, Content: View>: View {
     @ReducedMotion private var reduceMotion
     @ViewState private var edges = ShelfEdges()
     @ViewState private var metrics = ShelfMetrics()
+    @ViewState private var position = ScrollPosition()
+
+    /// Cards bring their own plate inset, so the strip starts that much before the gutter.
+    private static var margin: CGFloat { Theme.gutter - Theme.plate }
 
     var body: some View {
         if !items.isEmpty {
-            ScrollViewReader { proxy in
-                VStack(alignment: .leading, spacing: 6) {
-                    SectionHeader(title: title) {
-                        if edges.back || edges.forward {
-                            HStack(spacing: 2) {
-                                IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1, proxy) }
-                                    .disabled(!edges.back)
-                                IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1, proxy) }
-                                    .disabled(!edges.forward)
-                            }
-                            .transition(.opacity)
+            VStack(alignment: .leading, spacing: Theme.headerGap - Theme.plate) {
+                SectionHeader(title: title) {
+                    if edges.back || edges.forward {
+                        HStack(spacing: 4) {
+                            IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1) }
+                                .disabled(!edges.back)
+                            IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1) }
+                                .disabled(!edges.forward)
                         }
-                    }
-                    .padding(.horizontal, 10)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 0) {
-                            ForEach(items) { item in
-                                // Cards ease in and out at the shelf's edges as it scrolls.
-                                content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
-                                    card.scaleEffect(phase.isIdentity ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
-                                }
-                            }
-                        }
-                    }
-                    // Only the arrows' enabled state is view state; it changes at the ends.
-                    .onScrollGeometryChange(for: ShelfEdges.self) { geometry in
-                        ShelfEdges(back: geometry.contentOffset.x > 1,
-                                   forward: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
-                    } action: { _, new in
-                        edges = new
-                    }
-                    .onScrollGeometryChange(for: ShelfMetrics.Snapshot.self) { geometry in
-                        ShelfMetrics.Snapshot(offset: geometry.contentOffset.x, width: geometry.containerSize.width,
-                                              contentWidth: geometry.contentSize.width)
-                    } action: { _, new in
-                        metrics.latest = new
+                        .centeredOnSectionTitle()
+                        // The glyphs, not their hover wells, end on the gutter.
+                        .padding(.trailing, -Theme.plate)
+                        .transition(.opacity)
                     }
                 }
-                .floeState(value: edges, duration: 0.2)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(items) { item in
+                            // Cards ease in and out at the shelf's edges as it scrolls.
+                            content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
+                                card.scaleEffect(phase.isIdentity ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Self.margin)
+                }
+                .scrollPosition($position)
+                .padding(.horizontal, -Theme.gutter)
+                // Only the arrows' enabled state is view state; it changes at the ends.
+                .onScrollGeometryChange(for: ShelfEdges.self) { geometry in
+                    ShelfEdges(back: geometry.contentOffset.x > 1,
+                               forward: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
+                } action: { _, new in
+                    edges = new
+                }
+                .onScrollGeometryChange(for: ShelfMetrics.Snapshot.self) { geometry in
+                    ShelfMetrics.Snapshot(offset: geometry.contentOffset.x, width: geometry.containerSize.width,
+                                          contentWidth: geometry.contentSize.width)
+                } action: { _, new in
+                    metrics.latest = new
+                }
             }
+            // The cards' plates overhang the section below; the gap is measured to the text.
+            .padding(.bottom, -Theme.plate)
+            .floeState(value: edges, duration: 0.2)
         }
     }
 
-    /// Pages by a screenful less one card, so the card at the edge stays in view.
-    /// Cards in a shelf share a width, so positions follow from the content width.
-    private func page(_ direction: Int, _ proxy: ScrollViewProxy) {
+    /// Pages by a screenful less one card, so the card at the edge stays in
+    /// view, and lands with a card's artwork on the gutter. Cards in a shelf
+    /// share a width, so positions follow from the content width.
+    private func page(_ direction: Int) {
         let latest = metrics.latest
-        guard latest.contentWidth > 0 else { return }
-        let card = latest.contentWidth / CGFloat(items.count)
+        let card = (latest.contentWidth - 2 * Self.margin) / CGFloat(items.count)
+        guard card > 0 else { return }
         let first = Int((latest.offset / card).rounded())
-        let step = max(Int(latest.width / card) - 1, 1)
+        let step = max(Int((latest.width - 2 * Self.margin) / card) - 1, 1)
         let target = min(max(first + direction * step, 0), items.count - 1)
+        let x = min(CGFloat(target) * card, max(latest.contentWidth - latest.width, 0))
         withAnimation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0)) {
-            proxy.scrollTo(items[target].id, anchor: .leading)
+            position.scrollTo(x: x)
         }
     }
 }

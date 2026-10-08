@@ -227,7 +227,14 @@ enum Fixture {
             (cyberpunk, "Night City Blues", nil),
             (panchiko, "Laputa", nil),
         ]
-        return plays.enumerated().map { index, play in
+        // The API returns up to 50; fill with more plays from the user's playlists.
+        let names = ["Сонце сходить", "Слава героям", "Нічне місто", "Trap Queen", "Blue Light", "Kosmos",
+                     "Holding On", "Late Bloomer", "Wisteria", "Parade", "Zhovtyi", "Overture"]
+        let filler: [([String: Any], String, [String: Any]?)] = (0..<32).map { index in
+            (albums[(index * 5 + 3) % albums.count], names[index % names.count] + (index >= names.count ? " \(index / names.count + 1)" : ""),
+             ["type": "playlist", "uri": playlists[[0, 1, 2, 3, 5, 6][index % 6]]["uri"]!])
+        }
+        return (plays + filler).enumerated().map { index, play in
             var item: [String: Any] = ["track": track(play.1, play.0, number: index + 1),
                                        "played_at": "2026-10-08T21:\(String(format: "%02d", 59 - index)):00.000Z"]
             if let context = play.2 { item["context"] = context }

@@ -18,16 +18,26 @@ final class Navigator {
     var root: Route { stack[0] }
     var canGoBack: Bool { stack.count > 1 }
 
-    /// Bumped each time Search is chosen (sidebar or ⌘F), so the field takes
+    /// What the sidebar highlights. Search opens over the page you were on, so
+    /// while its results (or a page opened from them) show, Search is the section.
+    var section: Route { stack.contains(.search) ? .search : root }
+
+    /// Bumped each time Search is asked for (⌘F), so the sidebar field takes
     /// focus even when Search is already showing. Going Back to Search doesn't.
     private(set) var searchFocusRequest = 0
     /// The last request the field acted on.
     @ObservationIgnored var searchFocusHandled = 0
 
+    /// Sidebar picks start a new stack. Search is the exception: it's a field,
+    /// not a row, so asking for it focuses the field and shows the results.
     func select(_ route: Route) {
         surface = .library
-        stack = [route]
-        if route == .search { searchFocusRequest += 1 }
+        if route == .search {
+            showSearch()
+            searchFocusRequest += 1
+        } else {
+            stack = [route]
+        }
     }
 
     func push(_ route: Route) {
@@ -37,6 +47,24 @@ final class Navigator {
 
     func back() {
         if canGoBack { stack.removeLast() }
+    }
+
+    /// Shows the results over the current page, so Back (or Escape in the
+    /// field) returns there. Search already in the stack is reused, not stacked.
+    func showSearch() {
+        surface = .library
+        guard current != .search else { return }
+        if let index = stack.lastIndex(of: .search) {
+            stack.removeSubrange((index + 1)...)
+        } else {
+            stack.append(.search)
+        }
+    }
+
+    /// Leaves the results for the page underneath, if Search opened over one.
+    func closeSearch() {
+        guard current == .search, canGoBack else { return }
+        stack.removeLast()
     }
 
     /// Opens an artist/album/playlist from a `spotify:` URI.

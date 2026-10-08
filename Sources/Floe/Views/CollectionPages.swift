@@ -23,8 +23,7 @@ struct ListTools: View {
             }
             .font(.system(size: 12))
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(width: 220)
+            .frame(width: 220, height: 28)
             .background(.white.opacity(focused ? 0.1 : (hovering ? 0.09 : 0.07)), in: Capsule())
             .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.5) : .clear))
             .onHover { hovering = $0 }
@@ -78,7 +77,7 @@ struct PlaylistView: View {
     @ViewState private var sort = TrackSort.custom
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 24) {
             if let playlist {
                 header(playlist).reveal("header")
                 if !library.canListItems(of: playlist) {
@@ -255,7 +254,7 @@ struct AlbumView: View {
     @ViewState private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 24) {
             if let album {
                 PageHeader(badge: album.albumType == "single" ? "Single" : "Album", title: album.name,
                            detail: detail(album)) {
@@ -348,7 +347,7 @@ struct SongsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 24) {
             PageHeader(badge: "Playlist", title: L10n.string("Liked Songs"),
                        detail: total.map { L10n.string("\($0) songs") } ?? " ") {
                 LikedCover(size: 200).coverGlow(color: LikedCover.violet)
@@ -427,10 +426,12 @@ struct SongsView: View {
 struct LikedCover: View {
     @Environment(\.coverPalette) private var palette
     let size: CGFloat
+    /// Defaults to the radius artwork of this size uses.
+    var cornerRadius: CGFloat?
     static let violet = Color(red: 0.27, green: 0.2, blue: 0.75)
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size > 60 ? 12 : 5)
+        RoundedRectangle(cornerRadius: cornerRadius ?? (size > 60 ? 12 : 5))
             .fill(LinearGradient(colors: [Self.violet, palette.accent.opacity(0.85)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
             .overlay(Image(systemName: "star.fill").font(.system(size: size * 0.32)).foregroundStyle(.white))

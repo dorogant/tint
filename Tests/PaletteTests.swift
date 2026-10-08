@@ -60,8 +60,10 @@ struct PaletteTests {
         expectTrue(colors[0].distance(to: accent) < 0.25 && (accent.chroma < 0.03 || hueGap(colors[0], accent) < 12),
                    "\(name): the accent must lead the palette")
         expectTrue(colors.allSatisfy { $0.l >= 0.44 }, "\(name): every slot must be able to glow")
-        let highlight = OKLab(CoverColorExtractor.highlight(of: cover.accent))
-        expectTrue(highlight.l >= 0.715, "\(name): the highlight must read on dark glass (L \(highlight.l))")
+        let highlightRGB = CoverColorExtractor.highlight(of: cover.accent), highlight = OKLab(highlightRGB)
+        // AA text contrast against the window's base colour.
+        let onBase = (highlightRGB.luminance + 0.05) / (RGB(r: 0.045, g: 0.05, b: 0.06).luminance + 0.05)
+        expectTrue(onBase >= 4.5, "\(name): the highlight must read on dark glass (contrast \(onBase))")
         expectTrue(accent.chroma < 0.03 || hueGap(highlight, accent) < 4, "\(name): the highlight must keep the accent's hue")
         let contrast = cover.accent.usesDarkText ? (cover.accent.luminance + 0.05) / 0.05 : 1.05 / (cover.accent.luminance + 0.05)
         expectTrue(contrast >= 4.5, "\(name): text on the accent must have contrast (\(contrast))")
@@ -307,7 +309,7 @@ enum Sheet {
         #endif
     }
 
-    static let rowHeight = 132.0, groupWidth = 640.0
+    static let rowHeight = 172.0, groupWidth = 660.0
 
     static func render(_ covers: [(String, CGImage)]) -> CGImage {
         let width = 150 + groupWidth * Double(looks.count), height = 28 + rowHeight * Double(covers.count)
@@ -366,24 +368,22 @@ enum Sheet {
             return max(0.06, 0.92 - 0.75 * x + 0.18 * sin(x * 19) + 0.08 * cos(x * 41))
         }
         model.frame = SpectrumFrame(bands: levels, levels: levels, rms: 0.3)
-        let barsSize = CGSize(width: 220, height: 64)
-        let bars = Visualizer.render(.bars, look.tints, model: model, size: barsSize,
-                                     backdrop: Backdrop.image(cover, accent: look.accent, size: barsSize))
-        draw(ctx, bars, in: CGRect(x: x + 100, y: y + 54, width: barsSize.width, height: barsSize.height))
-        let haloSize = CGSize(width: 116, height: 116)
-        let halo = Visualizer.render(.halo, look.tints, model: model, size: haloSize,
-                                     backdrop: Backdrop.image(cover, accent: look.accent, size: haloSize))
-        let haloFrame = CGRect(x: x + 330, y: frame.minY + 2, width: haloSize.width, height: haloSize.height)
-        draw(ctx, halo, in: haloFrame)
-        draw(ctx, cover, in: haloFrame.insetBy(dx: haloSize.width * (1 - 1 / VisualizerView.ringScale) / 2,
-                                               dy: haloSize.height * (1 - 1 / VisualizerView.ringScale) / 2))
-        let ringSize = CGSize(width: 116, height: 116)
-        let ring = Visualizer.render(.radialBars, look.tints, model: model, size: ringSize,
-                                     backdrop: Backdrop.image(cover, accent: look.accent, size: ringSize))
-        let ringFrame = CGRect(x: x + 470, y: frame.minY + 2, width: ringSize.width, height: ringSize.height)
-        draw(ctx, ring, in: ringFrame)
-        draw(ctx, cover, in: ringFrame.insetBy(dx: ringSize.width * (1 - 1 / VisualizerView.ringScale) / 2,
-                                               dy: ringSize.height * (1 - 1 / VisualizerView.ringScale) / 2))
+        model.flow = 2.3
+        for (style, top) in [(VisualizerLayerView.Style.bars, 54.0), (.beads, 112.0)] {
+            let size = CGSize(width: 220, height: 52)
+            let strip = Visualizer.render(style, look.tints, model: model, size: size,
+                                          backdrop: Backdrop.image(cover, accent: look.accent, size: size))
+            draw(ctx, strip, in: CGRect(x: x + 100, y: y + top, width: size.width, height: size.height))
+        }
+        for (style, left) in [(VisualizerLayerView.Style.halo, 330.0), (.radialBars, 482.0)] {
+            let size = CGSize(width: 148, height: 148)
+            let ring = Visualizer.render(style, look.tints, model: model, size: size,
+                                         backdrop: Backdrop.image(cover, accent: look.accent, size: size))
+            let ringFrame = CGRect(x: x + left, y: frame.minY + 6, width: size.width, height: size.height)
+            draw(ctx, ring, in: ringFrame)
+            draw(ctx, cover, in: ringFrame.insetBy(dx: size.width * (1 - 1 / VisualizerView.ringScale) / 2,
+                                                   dy: size.height * (1 - 1 / VisualizerView.ringScale) / 2))
+        }
     }
 
     /// Draws upright in the flipped context.

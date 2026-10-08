@@ -152,11 +152,14 @@ enum CoverColorExtractor {
         fill([], from: glow(OKLab(base))).map(\.rgb)
     }
 
-    /// Text and icons on the dark glass: lightened to stay readable, hue kept.
+    /// Text, icons and the visualizer on the dark glass: lifted to where the
+    /// system's dark-mode colours sit (reds and blues stay vivid lower down,
+    /// about L 0.62; others need 0.72), saturation and hue kept.
     static func highlight(of accent: RGB) -> RGB {
         let c = OKLab(accent)
-        guard c.l < 0.72 else { return accent }
-        return c.with(l: 0.72, chroma: c.chroma * min(1.25, 0.72 / max(c.l, 0.01))).rgb
+        let lowest = c.chroma < 0.03 ? 0.72 : max(0.62, min(cuspLightness(c.hue), 0.72))
+        guard c.l < lowest else { return accent }
+        return lifted(c, to: lowest...1).rgb
     }
 
     // MARK: - Reading the cover

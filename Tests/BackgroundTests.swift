@@ -30,6 +30,7 @@ struct BackgroundTests {
         beamChecks(device: device)
         mappingChecks(device: device)
         crispnessChecks(device: device)
+        smokeChecks(device: device)
         performanceReport(device: device)
         print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
@@ -761,6 +762,77 @@ struct BackgroundTests {
             let crop = frame.crop(x: max(0, Int(sourceX / aspect * Float(size.width)) - cropW / 2), y: 0, width: cropW, height: cropH)
             Previews.zoom(crop, "crisp-\(name)-100pct", scale: 1, smooth: false)
             Previews.zoom(crop, "crisp-\(name)-as-on-retina", scale: 2 * points.width / size.width, smooth: true)
+        }
+    }
+
+    // MARK: - Smoke
+
+    /// The fog has to read as smoke, not smudges on the glass: down the length
+    /// of a beam its light may only swell and thin over large distances, with
+    /// nothing blotchy at small scales, and frames a second apart must differ
+    /// (it drifts; dirt doesn't). At the user's own settings: glow 186%,
+    /// reactivity 159%, vividness 150%, punch 200%.
+    static func smokeChecks(device: MTLDevice) {
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1500, height: 950), scale: 2)
+        guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { fail("renderer") }
+        let aspect = Float(size.width / size.height)
+        let groove = SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.12, snare: 0.3, vocal: 0.12)
+        let frames = SyntheticTrack.frames([(groove, 8)])
+        for (name, colors, neutralCover) in [("sunset", Covers.palette(Covers.sunset), false), ("neutral", neutral, true)] {
+            func settings(_ beams: Int) -> BackgroundConfiguration {
+                BackgroundConfiguration(kind: .beams, colors: colors, neutral: neutralCover, reactivity: 1.59, speed: 0.91,
+                                        glow: 1.86, punch: 2, vividness: 1.5, beamCount: beams)
+            }
+            // The user's own look, with hats, for the eye.
+            var look = BackgroundAnimator()
+            look.configure(settings(6), animated: false)
+            var shots: [RenderedFrame] = []
+            play(&look, frames) { animator, i, display in
+                if display % 2 == 0, i == 30 * 6 || i == 30 * 7 { shots.append(renderer.render(animator)) }
+            }
+            Previews.write(shots[0], "smoke-\(name)-full")
+            let cropW = Int(size.width) / 4, cropH = Int(size.height) * 3 / 5
+            let crop = shots[0].crop(x: Int(size.width) * 3 / 8, y: Int(size.height) / 8, width: cropW, height: cropH)
+            Previews.zoom(crop, "smoke-\(name)-retina-100pct", scale: 2 * 1500 / size.width, smooth: true)
+            let drift = shots[1].difference(from: shots[0])
+
+            // A lone head in the middle hangs straight down; the light beside its core, row by row.
+            var lone = BackgroundAnimator()
+            lone.configure(settings(1), animated: false)
+            var frame: RenderedFrame?
+            var u = lone.beamUniforms(width: Float(size.width), height: Float(size.height))
+            play(&lone, frames) { animator, i, display in
+                guard display % 2 == 0, i == 30 * 6 else { return }
+                u = animator.beamUniforms(width: Float(size.width), height: Float(size.height))
+                frame = renderer.render(animator)
+            }
+            guard let frame else { fail("smoke frame") }
+            let sine = u.tints.0.w, cosine = (1 - sine * sine).squareRoot()
+            var along: [Float] = []
+            for row in Int(size.height / 6)..<Int(size.height * 5 / 6) {
+                let y = 1 - (Float(row) + 0.5) / Float(size.height)
+                // In the beam's glow, out past its core (and the motes in it), where the fog shows.
+                let distance = (0.985 - y) / cosine
+                let x = (0.5 * aspect + sine * distance + 1.5 * (0.006 + distance * u.heads.0.z)) / aspect * Float(size.width)
+                var sum: Float = 0
+                for dx in -2...2 { sum += frame.luma(Int(x) + dx, row) }
+                along.append(sum / 5)
+            }
+            // Small-scale mottle: what's left after a running mean over a tenth of the height.
+            let window = Int(size.height / 10)
+            var residual: Float = 0, mean: Float = 0, n = 0
+            for i in window..<(along.count - window) {
+                let local = along[(i - window)...(i + window)].reduce(0, +) / Float(2 * window + 1)
+                residual += (along[i] - local) * (along[i] - local)
+                mean += along[i]
+                n += 1
+            }
+            let mottle = (residual / Float(max(1, n))).squareRoot() / max(0.001, mean / Float(max(1, n)))
+            print(String(format: "Smoke (%@, the user's settings): light down a beam mottles %.2f%% at small scales; frames a second apart differ %.4f",
+                         name, mottle * 100, drift))
+            // The specks and fine wisps the user saw as a dirty screen measured 6.2% here.
+            check(along.count > 100 && mottle < 0.045, "\(name): the fog must not look blotchy along a beam (\(mottle))")
+            check(drift > 0.004, "\(name): the fog must drift, not sit on the screen (\(drift))")
         }
     }
 

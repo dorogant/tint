@@ -123,7 +123,7 @@ enum ReactiveShader {
     /// lens flare at its source, added together like real light. Everything
     /// else stays dark, so only the beams and flares are bright.
     private static let beams = #"""
-    // motion: haze clock, glitter (highs), strobe flash, glow. size: width, height, heads, floor level.
+    // motion: haze clock, spare, strobe flash, glow. size: width, height, heads, floor level.
     // floor: floor angle, floor spread, haze fill (mids), sin(floor angle). haze: haze colour, neutral cover.
     // heads: angle, intensity, spread, glint. tints: head colour, sin(angle). Beams point downward
     // (|angle| < pi/2), so the cosine is the positive root and nothing takes a sine per pixel.
@@ -135,7 +135,7 @@ enum ReactiveShader {
     /// Light scattered by the haze along one cone, brightest at its core. Every
     /// profile is pre-filtered for the pixel size, so thin beams stay smooth.
     static float3 beam(float2 p, float2 source, float2 dir, float spread, float intensity, float3 color,
-                       float density, float glow, float glint, float pixel) {
+                       float density, float glow, float glint, float pixel, float drift, float seed) {
         float2 v = p - source;
         float along = dot(v, dir);
         if (along <= 0 || intensity <= 0.001) return 0;
@@ -144,7 +144,15 @@ enum ReactiveShader {
         if (abs(across) > width * 6 + 3 * pixel) return 0; // under a thousandth this far out
         float cone = line(across, width * 0.58, pixel) * (0.12 + 0.88 * density) * 0.75;
         float spill = exp(-0.08 * across * across / (width * width)) * 0.05 * glow * density;
-        float core = line(across, width * 0.17, pixel) * exp(-along * 1.6) * (1 + 1.2 * glint);
+        // Hats: motes inside the beam catch the light as they drift down it. They
+        // live in the beam's own coordinates, so they move with it and never sit
+        // on the screen, and only the core shows them.
+        float motes = 0;
+        if (glint > 0.01) {
+            float n = noise(float2(along * 70 - drift * 4, across / width * 2.5 + seed));
+            motes = smoothstep(0.7, 1.0, n) * glint;
+        }
+        float core = line(across, width * 0.17, pixel) * exp(-along * 1.6) * (1 + 0.6 * glint + 1.5 * motes);
         float falloff = 1 / (1 + along * along * 0.6);
         float start = smoothstep(0.0, 0.015, along); // fades in under the lens, no hard edge
         return (color * (cone + spill) + mix(color, float3(1), 0.6) * core * 0.6) * intensity * falloff * start;
@@ -159,32 +167,52 @@ enum ReactiveShader {
         float halo = exp(-r2 * 45) * 0.16;
         return (mix(color, float3(1), 0.75) * (disk * 1.6 + streak) + color * halo) * intensity * (0.6 + 0.4 * glow);
     }
-    /// Smoke drifting across the stage, and finer wisps in it. It's all soft, so
-    /// it's drawn at a quarter of the resolution and filtered up by the beams pass.
+    /// Stage fog: large, soft volumes that drift sideways and slowly curl, with
+    /// gentler billows inside them, and nothing smaller than a tenth of the
+    /// screen, so it reads as smoke rather than smudges on the glass. It's all
+    /// soft, so it's drawn at a quarter of the resolution and filtered up by the
+    /// beams pass. Returns the fog's density and a billow term, both about 0…1.
     fragment float2 floeHazeFragment(Vertex in [[stage_in]], constant BeamUniforms& u [[buffer(0)]]) {
         float aspect = u.size.x / max(u.size.y, 1.0f);
         float2 p = float2(in.uv.x * aspect, in.uv.y);
-        float haze = u.motion.x;
-        return float2(fbm(p * float2(1.6, 2.4) + float2(haze * 0.08, -haze * 0.03)),
-                      fbm(p * float2(4.5, 6.5) + float2(-haze * 0.2, haze * 0.07)));
+        float t = u.motion.x;
+        // A slow warp makes the volumes roll and curl instead of sliding as one.
+        float2 warp = float2(fbm(p * 0.6 + float2(t * 0.03, 3.1)), fbm(p * 0.6 + float2(7.4, -t * 0.025)));
+        float2 q = p + (warp - 0.5) * 0.9;
+        float fog = fbm(q * float2(0.9, 1.3) + float2(t * 0.05, -t * 0.012));
+        float billow = fbm(q * 1.6 + float2(-t * 0.08, t * 0.03) + warp * 1.5);
+        return float2(fog, billow);
+    }
+    /// A B-spline filtered sample from four bilinear taps: upscaling the
+    /// quarter-resolution fog by four leaves no diamonds or creases.
+    static float2 smoothSample(texture2d<float> map, float2 uv) {
+        constexpr sampler filtered(filter::linear, address::clamp_to_edge);
+        float2 size = float2(map.get_width(), map.get_height());
+        float2 st = uv * size - 0.5;
+        float2 i = floor(st), f = st - i;
+        float2 f2 = f * f, f3 = f2 * f;
+        float2 w0 = (1 - 3 * f + 3 * f2 - f3) / 6, w1 = (4 - 6 * f2 + 3 * f3) / 6;
+        float2 w2 = (1 + 3 * f + 3 * f2 - 3 * f3) / 6, w3 = f3 / 6;
+        float2 g0 = w0 + w1, g1 = w2 + w3;
+        float2 h0 = (i - 0.5 + w1 / g0) / size, h1 = (i + 1.5 + w3 / g1) / size;
+        return g0.y * (g0.x * map.sample(filtered, float2(h0.x, h0.y)).rg + g1.x * map.sample(filtered, float2(h1.x, h0.y)).rg)
+             + g1.y * (g0.x * map.sample(filtered, float2(h0.x, h1.y)).rg + g1.x * map.sample(filtered, float2(h1.x, h1.y)).rg);
     }
     fragment float4 floeBeamsFragment(Vertex in [[stage_in]], constant BeamUniforms& u [[buffer(0)]],
                                       texture2d<float> hazeMap [[texture(0)]]) {
-        constexpr sampler filtered(filter::linear, address::clamp_to_edge);
         float aspect = u.size.x / max(u.size.y, 1.0f);
         float pixel = 1 / max(u.size.y, 1.0f);
         float2 p = float2(in.uv.x * aspect, in.uv.y);
         float haze = u.motion.x;
         float glow = u.motion.w;
 
-        float2 smokeAndWisps = hazeMap.sample(filtered, float2(in.uv.x, 1 - in.uv.y)).rg; // textures run top-down
-        float smoke = smokeAndWisps.x, wisps = smokeAndWisps.y;
+        float2 fogAndBillow = smoothSample(hazeMap, float2(in.uv.x, 1 - in.uv.y)); // textures run top-down
+        float smoke = fogAndBillow.x, billow = fogAndBillow.y;
         float fill = u.floor.z;
-        // Vocals and leads thicken the smoke, so every beam glows fuller through it.
-        float density = (0.08 + 1.9 * smoke * smoke + 0.45 * wisps * smoke) * (1 + 0.5 * fill);
-        // Specks of haze that catch the light: the highs make them glitter
-        // wherever an inner beam passes.
-        float specks = smoothstep(0.78, 0.97, noise(p * 40 + float2(haze * 0.6, -haze * 1.2))) * u.motion.y;
+        // Low contrast, like a room filled with fog: every beam shows along its
+        // whole length and the volumes only thicken and thin it. Vocals and leads
+        // thicken it further, so every beam glows fuller through it.
+        float density = max(0.12f, 0.2 + 1.1 * smoke + 0.22 * (billow - 0.5)) * (1 + 0.5 * fill);
 
         float3 light = 0;
         int count = int(u.size.z);
@@ -193,16 +221,15 @@ enum ReactiveShader {
             float4 h = u.heads[i];
             float3 color = u.tints[i].rgb;
             float2 source = float2((float(i) + 0.5) / float(count) * aspect, 0.985);
-            float lit = density * (1 + 1.4 * specks * h.w);
-            light += beam(p, source, downward(u.tints[i].w), h.z, h.y, color, lit, glow, h.w, pixel);
+            light += beam(p, source, downward(u.tints[i].w), h.z, h.y, color, density, glow, h.w, pixel, haze, float(i) * 3.7);
             light += flare(p, source, h.y, color, glow);
         }
         float floorLevel = u.size.w;
         if (floorLevel > 0.005) {
             float2 rise = -downward(-u.floor.w); // up and in from the left corner
             float3 left = u.floorColors[0].rgb, right = u.floorColors[1].rgb;
-            light += beam(p, float2(0, 0.015), rise, u.floor.y, floorLevel, left, density, glow, 0, pixel);
-            light += beam(p, float2(aspect, 0.015), float2(-rise.x, rise.y), u.floor.y, floorLevel, right, density, glow, 0, pixel);
+            light += beam(p, float2(0, 0.015), rise, u.floor.y, floorLevel, left, density, glow, 0, pixel, 0, 0);
+            light += beam(p, float2(aspect, 0.015), float2(-rise.x, rise.y), u.floor.y, floorLevel, right, density, glow, 0, pixel, 0, 0);
             light += flare(p, float2(0.01, 0.015), floorLevel, left, glow);
             light += flare(p, float2(aspect - 0.01, 0.015), floorLevel, right, glow);
         }
@@ -211,9 +238,10 @@ enum ReactiveShader {
         // A neutral cover gets crisper light on darker smoke: white beams read as stage light, not fog.
         float neutral = u.haze.w;
         light *= 1 + 0.12 * neutral;
-        float3 color = float3(0.01, 0.011, 0.016) + average * smoke * 0.035 * (1 - 0.5 * neutral) + light;
-        // Vocals and leads tint the smoke with the cover's colour.
-        color += u.haze.rgb * (smoke * smoke + 0.15 * wisps) * fill * 0.5;
+        // Away from the beams the fog is barely there: a faint, broad glow.
+        float3 color = float3(0.01, 0.011, 0.016) + average * smoke * 0.03 * (1 - 0.5 * neutral) + light;
+        // Vocals and leads tint the fog with the cover's colour, in broad volumes only.
+        color += u.haze.rgb * smoke * smoke * fill * 0.4;
         // The opt-in strobe lights the whole haze, never more than three times a second.
         color += mix(average, float3(1), 0.7) * u.motion.z * (0.25 + 0.2 * density);
         color = 1 - exp(-color * 1.15); // highlights roll off toward white instead of clipping

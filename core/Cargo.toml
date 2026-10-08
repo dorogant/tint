@@ -25,6 +25,12 @@ rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
 default-features = false # no rodio/cpal: audio goes to Swift through our own Sink
 features = ["native-tls"]
 
+[dependencies.librespot-audio]
+git = "https://github.com/librespot-org/librespot"
+rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
+default-features = false
+features = ["native-tls"]
+
 [dependencies.librespot-metadata]
 git = "https://github.com/librespot-org/librespot"
 rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"

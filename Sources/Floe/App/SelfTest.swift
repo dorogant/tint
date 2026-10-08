@@ -185,7 +185,7 @@ enum SelfTest {
             ok = check(ok, audible, "selected song produces audio")
             say(String(format: "Switch %d: audio flowing after %.0f ms", index + 1, Date().timeIntervalSince(start) * 1000))
             guard audible else { break }
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: .seconds(2))
         }
         if ok {
             player.play(PlayRequest(tracks: songs.map(\.uri), startURI: songs[1].uri), selectedTrack: songs[1])
@@ -193,6 +193,16 @@ enum SelfTest {
             ok = check(ok, player.displayTrack?.uri == songs[2].uri && player.isLoading, "latest rapid selection wins immediately")
             ok = check(ok, await wait(timeout: 20) { player.isPlaying && !player.isLoading && player.track?.name == songs[2].name },
                        "latest rapid selection eventually plays")
+        }
+        if ok {
+            try? await Task.sleep(for: .seconds(3))
+            let before = player.core.takeStats()
+            try? await Task.sleep(for: .seconds(30))
+            let after = player.core.takeStats()
+            ok = check(ok, after.frames_rendered - before.frames_rendered > 1_200_000,
+                       "audio continues throughout the 30-second buffer stability check")
+            ok = check(ok, after.underruns == before.underruns,
+                       "no new audio underruns during steady playback")
         }
         say(String(format: "Switching footprint: %.1f MiB", MemoryFootprint.currentMB))
         return ok

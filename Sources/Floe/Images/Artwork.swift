@@ -14,16 +14,21 @@ actor ArtworkCache {
     // NSCache is thread-safe, so synchronous lookups don't need the actor.
     private nonisolated(unsafe) let memory = NSCache<NSString, Box>()
     private var inFlight: [String: Task<CGImage?, Never>] = [:]
+    private var downloads: [URL: Task<Data?, Never>] = [:]
     private let session: URLSession
 
-    init() {
+    init(session: URLSession? = nil) {
         memory.totalCostLimit = 24 * 1024 * 1024 // decoded bitmaps; the disk cache refills it
+        if let session {
+            self.session = session
+            return
+        }
         let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("com.antonchurchyn.floe/Artwork")
         let config = URLSessionConfiguration.default
         config.urlCache = URLCache(memoryCapacity: 0, diskCapacity: 300 * 1024 * 1024, directory: directory)
         config.requestCachePolicy = .returnCacheDataElseLoad // cover URLs are immutable
-        session = URLSession(configuration: config)
+        self.session = URLSession(configuration: config)
     }
 
     nonisolated func cached(_ url: URL, pixels: Int) -> CGImage? {
@@ -34,8 +39,8 @@ actor ArtworkCache {
         let key = Self.key(url, pixels)
         if let hit = memory.object(forKey: key) { return hit.image }
         if let running = inFlight[key as String] { return await running.value }
-        let task = Task<CGImage?, Never> { [session] in
-            guard let (data, _) = try? await session.data(from: url) else { return nil }
+        let task = Task<CGImage?, Never> {
+            guard let data = await self.data(for: url) else { return nil }
             return Self.downsample(data, maxPixels: pixels)
         }
         inFlight[key as String] = task
@@ -45,6 +50,22 @@ actor ArtworkCache {
             memory.setObject(Box(image), forKey: key, cost: image.bytesPerRow * image.height)
         }
         return image
+    }
+
+    /// All sizes share the same HTTP request. Retain bytes only while downloading;
+    /// decoded variants keep their existing bounded memory and disk caches.
+    private func data(for url: URL) async -> Data? {
+        if let running = downloads[url] { return await running.value }
+        let task = Task<Data?, Never> { [session] in
+            guard let (data, response) = try? await session.data(from: url),
+                  let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode) else { return nil }
+            return data
+        }
+        downloads[url] = task
+        let data = await task.value
+        downloads[url] = nil
+        return data
     }
 
     private nonisolated static func key(_ url: URL, _ pixels: Int) -> NSString {

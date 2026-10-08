@@ -61,14 +61,17 @@ final class NowPlayingController {
     }
 
     private func loadArtwork(_ url: URL?) {
+        if url == artworkURL, artworkTask != nil { return }
         artworkTask?.cancel()
+        artworkTask = nil
         artworkURL = url
         artwork = nil
         guard let url else { return }
         artworkTask = Task {
-            guard let image = await ArtworkCache.shared.image(for: url, pixels: 512),
-                  !Task.isCancelled, artworkURL == url
-            else { return }
+            let image = await ArtworkCache.shared.image(for: url, pixels: 512)
+            guard !Task.isCancelled, artworkURL == url else { return }
+            artworkTask = nil
+            guard let image else { return }
             artwork = Self.makeArtwork(image)
             update()
         }

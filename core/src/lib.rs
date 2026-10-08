@@ -11,6 +11,7 @@
 
 mod analysis;
 mod events;
+mod fetch;
 mod pcm;
 
 use std::{
@@ -386,6 +387,7 @@ pub unsafe extern "C" fn floe_init(callback: EventCallback, context: *mut c_void
     CORE.get_or_init(|| {
         created = true;
         init_logging();
+        fetch::configure();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("floe-core")

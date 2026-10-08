@@ -177,6 +177,7 @@ and [transfer](https://developer.spotify.com/documentation/web-api/reference/tra
 
 ```sh
 scripts/test-phase5.sh
+scripts/test-artwork.sh
 build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestPhase5 YES
 ```
 
@@ -200,13 +201,32 @@ and preserves buffered audio for automatic gapless transitions.
 build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestSwitching YES
 ```
 
-This opt-in live check plays four liked songs and checks rapid selections, leaving
-playback paused. On 2026-10-08, selection state updated in 0.3–41 ms and audio flowed
-after 621–880 ms (100 ms polling resolution; four samples, not a latency guarantee).
-Physical footprint after switching was ~166 MiB. The stress run also logged temporary
-Spotify Connect state-update 429 responses, while selected audio playback passed.
-Nine Rust tests cover configuration, analysis and switch/gapless buffering; offline
-checks verify selected metadata and all 12 synthetic lyric regressions pass.
+This opt-in live check plays four liked songs, checks rapid selections and monitors
+30 seconds of audio flow and underruns, leaving playback paused. On 2026-10-08,
+the pre-tuning baseline started the first song in 1,106 ms and subsequent songs in
+740/739/839 ms. After tuning, these measured 1,391 ms and 628/622/520 ms respectively
+(100 ms polling resolution, four samples per run). Later switches averaged 24% less
+time; the first song was slower, so these network-dependent samples are not a
+latency guarantee. Selection state updated in 0.1–10 ms in the tuned run. Rapid
+selection and the 30-second audio checks passed with no new underruns, including
+additional manual song changes during the monitoring period. Steady playback RSS
+was ~115 MiB before those extra interactions; footprint after browsing/switching
+was ~221 MiB. Earlier rapid stress tests logged temporary Connect state-update 429s.
+
+The pinned librespot player waits for its **during-playback** read-ahead window
+before starting audio. Floe reduces this window from five seconds to one, which
+fits inside the initial 64 KiB compressed-data request at 320 kbps. Adaptive
+prefetch, decoder block size and network timeouts retain upstream defaults. This
+also reduces the explicit read-ahead during playback; congested networks have not
+been benchmarked. For a diagnostic comparison with upstream buffering, launch with
+`FLOE_AUDIO_READ_AHEAD_MS=5000` (valid range 1000–5000; normal launches use 1000).
+
+Artwork sizes now share one in-flight HTTP download per URL; decoded variants
+remain in the existing bounded cache, and raw bytes are not kept after processing.
+Control Center retains a pending artwork task across metadata updates. Synthetic
+tests verify concurrent sizes, memory hits, failed-request recovery and cancelled
+callers. Ten Rust tests cover configuration, analysis and switch/gapless buffering;
+offline API checks and all 12 synthetic lyric regressions pass.
 
 ## Layout
 

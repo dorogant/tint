@@ -189,6 +189,25 @@ verifies resume/position/pause and real audio flow. It leaves playback paused.
 On this Mac, its paused sample was ~133 MiB physical footprint; CPU settled to 0%.
 The queue/device live checks run only after permission is granted.
 
+Song selection updates the title, row highlight and loading indicator from the
+clicked row immediately. Cover/lyrics loading starts at selection time; the full
+cover can appear before its blurred backdrop is ready. The playback clock stays
+stopped until the engine confirms playback. The core prepares a known selected
+track while Spirc resolves its context, silences old audio on manual switches,
+and preserves buffered audio for automatic gapless transitions.
+
+```sh
+build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestSwitching YES
+```
+
+This opt-in live check plays four liked songs and checks rapid selections, leaving
+playback paused. On 2026-10-08, selection state updated in 0.3–41 ms and audio flowed
+after 621–880 ms (100 ms polling resolution; four samples, not a latency guarantee).
+Physical footprint after switching was ~166 MiB. The stress run also logged temporary
+Spotify Connect state-update 429 responses, while selected audio playback passed.
+Nine Rust tests cover configuration, analysis and switch/gapless buffering; offline
+checks verify selected metadata and all 12 synthetic lyric regressions pass.
+
 ## Layout
 
 ```

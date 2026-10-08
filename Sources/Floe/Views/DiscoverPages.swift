@@ -69,9 +69,9 @@ struct HomeView: View {
     private func play(_ item: PlayHistory) {
         let context = item.context?.uri ?? item.track.album?.uri
         if let context {
-            player.play(PlayRequest(contextURI: context, startURI: item.track.uri))
+            player.play(PlayRequest(contextURI: context, startURI: item.track.uri), selectedTrack: item.track)
         } else {
-            player.play(PlayRequest(tracks: [item.track.uri]))
+            player.play(PlayRequest(tracks: [item.track.uri]), selectedTrack: item.track)
         }
     }
 }
@@ -155,7 +155,7 @@ struct SearchView: View {
                         let entries = search.songs.enumerated().map { TrackEntry(id: $0, track: $1) }
                         TrackListView(entries: entries) { entry in
                             // Play the results as a list so next/previous move through them.
-                            player.play(PlayRequest(tracks: search.songs.map(\.uri), startURI: entry.track.uri))
+                            player.play(PlayRequest(tracks: search.songs.map(\.uri), startURI: entry.track.uri), selectedTrack: entry.track)
                         }
                     }
                 }

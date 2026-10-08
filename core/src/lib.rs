@@ -275,6 +275,12 @@ async fn forward_events(core: &'static Core, mut events: PlayerEventChannel, gen
         match event {
             PlayerEvent::Playing { .. } => core.pcm.set_gate(true),
             PlayerEvent::Paused { .. } => core.pcm.set_gate(false),
+            PlayerEvent::Loading { .. } => core.pcm.begin_switch(),
+            PlayerEvent::TrackChanged { .. } => core.pcm.track_changed(),
+            PlayerEvent::Stopped { .. } => {
+                core.pcm.set_gate(false);
+                core.pcm.flush();
+            }
             _ => {}
         }
         if let Some(json) = events::player_event(&event) {
@@ -308,6 +314,22 @@ struct LoadSpec {
 fn default_start_playing() -> bool { true }
 
 impl LoadSpec {
+    /// Prepare the known selection while Spirc resolves a new album/playlist.
+    /// Nonzero seeks cannot reuse librespot's in-flight preload at position zero.
+    fn preload_target(&self) -> Option<SpotifyUri> {
+        if self.position_ms != 0 { return None; }
+        let uri = self.start_uri.as_ref().or_else(|| {
+            if self.context_uri.is_some() || (self.shuffle && self.start_index.is_none()) {
+                return None;
+            }
+            self.tracks.get(self.start_index.unwrap_or_default() as usize)
+        })?;
+        match SpotifyUri::from_uri(uri).ok()? {
+            track @ SpotifyUri::Track { .. } => Some(track),
+            _ => None,
+        }
+    }
+
     fn into_request(self) -> Option<LoadRequest> {
         let options = LoadRequestOptions {
             start_playing: self.start_playing,
@@ -438,15 +460,22 @@ pub extern "C" fn floe_logout() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn floe_load(request_json: *const c_char) -> bool {
     let Some(core) = CORE.get() else { return false };
-    let Some(request) = (unsafe { str_arg(request_json) })
+    let Some(spec) = (unsafe { str_arg(request_json) })
         .and_then(|json| serde_json::from_str::<LoadSpec>(json).ok())
-        .and_then(LoadSpec::into_request)
     else {
         return false;
     };
-    let Some(spirc) = core.spirc() else { return false };
-    core.pcm.flush();
-    core.pcm.set_gate(true);
+    let preload = spec.preload_target();
+    let Some(request) = spec.into_request() else { return false };
+    let (spirc, player) = {
+        let state = core.state();
+        let Some(spirc) = state.spirc.clone() else { return false };
+        (spirc, state.player.clone())
+    };
+    core.pcm.begin_switch();
+    if let (Some(player), Some(track)) = (player, preload) {
+        player.preload(track);
+    }
     // Commands are ignored unless this device is active; activating an
     // already-active device is a no-op.
     let result = spirc.activate().and_then(|()| spirc.load(request));
@@ -475,7 +504,7 @@ pub extern "C" fn floe_pause() {
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_next() {
     if let Some(core) = CORE.get() {
-        core.pcm.flush();
+        core.pcm.begin_switch();
         core.command(Spirc::next);
     }
 }
@@ -483,7 +512,7 @@ pub extern "C" fn floe_next() {
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_previous() {
     if let Some(core) = CORE.get() {
-        core.pcm.flush();
+        core.pcm.begin_switch();
         core.command(Spirc::prev);
     }
 }
@@ -647,6 +676,28 @@ pub extern "C" fn floe_configure_playback(bitrate: u16, normalization: bool, gap
 #[cfg(test)]
 mod configuration_tests {
     use super::*;
+    #[test]
+    fn preload_only_the_known_selection_at_position_zero() {
+        let uri = "spotify:track:0000000000000000000000";
+        for body in [
+            format!(r#"{{"context_uri":"spotify:album:test","start_uri":"{uri}"}}"#),
+            format!(r#"{{"tracks":["spotify:track:1111111111111111111111","{uri}"],"start_index":1}}"#),
+            format!(r#"{{"tracks":["{uri}"]}}"#),
+        ] {
+            let spec: LoadSpec = serde_json::from_str(&body).unwrap();
+            assert_eq!(spec.preload_target().unwrap().to_uri(), uri);
+        }
+        for body in [
+            format!(r#"{{"tracks":["{uri}"],"shuffle":true}}"#),
+            format!(r#"{{"start_uri":"{uri}","position_ms":12000}}"#),
+            r#"{"context_uri":"spotify:album:test"}"#.to_owned(),
+            r#"{"start_uri":"spotify:album:test"}"#.to_owned(),
+        ] {
+            let spec: LoadSpec = serde_json::from_str(&body).unwrap();
+            assert!(spec.preload_target().is_none());
+        }
+    }
+
     #[test]
     fn paused_reload_preserves_position_and_default_requests_still_play() {
         let paused: LoadSpec = serde_json::from_str(r#"{"tracks":["spotify:track:0000000000000000000000"],"position_ms":12000,"start_playing":false}"#).unwrap();

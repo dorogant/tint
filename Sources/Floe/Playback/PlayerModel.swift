@@ -19,6 +19,9 @@ final class PlayerModel {
     /// True once a session came up; reconnects after that keep the main UI.
     private(set) var hasConnected = false
     private(set) var track: TrackInfo?
+    /// Selected locally, before the engine confirms the loaded track.
+    private(set) var pendingTrack: TrackInfo?
+    var displayTrack: TrackInfo? { pendingTrack ?? track }
     private(set) var isPlaying = false
     private(set) var isLoading = false
     private(set) var shuffle = false
@@ -112,7 +115,7 @@ final class PlayerModel {
 
     /// Plays a context (playlist, album, artist, Liked Songs) or a track list,
     /// keeping the current shuffle and repeat settings.
-    func play(_ request: PlayRequest) {
+    func play(_ request: PlayRequest, selectedTrack: Track? = nil) {
         var request = request
         request.shuffle = shuffle
         request.repeatMode = repeatMode.rawValue
@@ -123,9 +126,9 @@ final class PlayerModel {
         }
         lastRequest = request
         contextURI = request.contextURI
+        pendingTrack = selectedTrack.map(TrackInfo.init)
         isActiveDevice = true
-        isLoading = true
-        audio.start()
+        beginLoading(at: Double(request.positionMs ?? 0))
     }
 
     /// Starts a context with a deliberate shuffle state (page Play / Shuffle actions).
@@ -135,10 +138,11 @@ final class PlayerModel {
     }
 
     func togglePlayPause() {
-        isPlaying ? pause() : resume()
+        isPlaying || isLoading ? pause() : resume()
     }
 
     func pause() {
+        if isLoading { lastRequest?.startPlaying = false }
         core.pause()
         setAnchor(positionMs(at: Date()), playing: false)
     }
@@ -153,14 +157,22 @@ final class PlayerModel {
         }
     }
 
-    func next() { core.next() }
+    func next() {
+        guard isConnected else { return }
+        pendingTrack = nil
+        core.next()
+        beginLoading(at: 0)
+    }
 
     /// Like other players: restart the track if past 3 s, else go back.
     func previous() {
         if positionMs(at: Date()) > 3000 {
             seek(toMs: 0)
         } else {
+            guard isConnected else { return }
+            pendingTrack = nil
             core.previous()
+            beginLoading(at: 0)
         }
     }
 
@@ -214,11 +226,11 @@ final class PlayerModel {
     }
 
     private func rememberPlayback() {
-        guard let track, pendingPlayback == nil else { return }
+        guard let track = displayTrack, pendingPlayback == nil else { return }
         var request = lastRequest ?? PlayRequest(tracks: [track.uri])
         request.startURI = track.uri
         request.positionMs = UInt32(clamping: Int(positionMs(at: Date())))
-        request.startPlaying = isPlaying
+        request.startPlaying = isLoading ? request.startPlaying : isPlaying
         pendingPlayback = request
     }
 
@@ -232,6 +244,13 @@ final class PlayerModel {
     }
 
     // MARK: - Events
+
+    private func beginLoading(at ms: Double) {
+        isLoading = true
+        setAnchor(ms, playing: false)
+        idleTask?.cancel()
+        audio.start()
+    }
 
     private func setAnchor(_ ms: Double, playing: Bool) {
         anchorMs = ms
@@ -288,21 +307,25 @@ final class PlayerModel {
             session = .loggedOut
             hasConnected = false
             track = nil
+            pendingTrack = nil
             contextURI = nil
             setAnchor(0, playing: false)
         case let .track(info):
             track = info
+            if pendingTrack?.uri == info.uri { pendingTrack = nil }
             nowPlaying.update()
         case let .loading(ms):
             isLoading = true
             setAnchor(ms, playing: false)
         case let .playing(ms):
             isLoading = false
+            pendingTrack = nil
             isActiveDevice = true
             lastError = nil
             setAnchor(ms, playing: true)
         case let .paused(ms):
             isLoading = false
+            pendingTrack = nil
             setAnchor(ms, playing: false)
         case let .position(ms):
             setAnchor(ms, playing: isPlaying)
@@ -310,11 +333,13 @@ final class PlayerModel {
             // Spirc stops the player when another device takes over.
             isLoading = false
             isActiveDevice = false
+            pendingTrack = nil
             setAnchor(positionMs(at: Date()), playing: false)
         case .endOfTrack:
             break // Spirc moves on to the next track itself
         case .unavailable:
             isLoading = false
+            pendingTrack = nil
             lastError = L10n.string("This track is unavailable. Try another song.")
         case let .shuffle(on):
             shuffle = on

@@ -46,10 +46,10 @@ struct FloeApp: App {
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
                 .onChange(of: needsAnalysis, initial: true) { visualization.setRunning(needsAnalysis) }
                 .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }
-                .task(id: "\(player.track?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
-                    await appearance.load(player.track?.coverURL, blur: visuals.backgroundBlur)
+                .task(id: "\(player.displayTrack?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
+                    await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
-                .task(id: player.track) { await lyrics.load(player.track) }
+                .task(id: player.displayTrack) { await lyrics.load(player.displayTrack) }
                 .task {
                     SpaceToPlay.install(player)
                     Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }

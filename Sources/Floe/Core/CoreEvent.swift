@@ -18,6 +18,17 @@ struct TrackInfo: Equatable, Sendable {
     var artistLine: String { artists.map(\.name).joined(separator: ", ") }
 }
 
+extension TrackInfo {
+    /// A row already has enough metadata to show the selection while audio loads.
+    init(_ track: Track) {
+        self.init(uri: track.uri, name: track.name,
+                  artists: track.artists.map { Artist(name: $0.name, uri: $0.uri) },
+                  album: track.album?.name, durationMs: Double(track.durationMs),
+                  explicit: track.explicit ?? false,
+                  coverURL: track.album?.images?.best(forPixels: 720))
+    }
+}
+
 enum RepeatMode: Int, Sendable {
     case off = 0, context = 1, track = 2
 

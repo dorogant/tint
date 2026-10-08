@@ -9,7 +9,7 @@ struct NowPlayingView: View {
     @AppStorage("reduceMotion") private var reduceMotion = false
 
     var body: some View {
-        if let track = player.track {
+        if let track = player.displayTrack {
             GeometryReader { geometry in
                 let circular = settings.showVisualizer && settings.style == .circular
                 let normal = settings.showVisualizer && settings.style == .normal

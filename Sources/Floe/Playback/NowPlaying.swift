@@ -38,7 +38,7 @@ final class NowPlayingController {
 
     func update() {
         let center = MPNowPlayingInfoCenter.default()
-        guard let model, let track = model.track else {
+        guard let model, let track = model.displayTrack else {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped
             return

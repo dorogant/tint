@@ -7,7 +7,7 @@ cargo test --release --manifest-path "$ROOT/core/Cargo.toml"
 TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 swiftc -swift-version 6 -O \
-    "$ROOT/Sources/Floe/API/PlaybackAPI.swift" "$ROOT/Sources/Floe/API/Models.swift" "$ROOT/Sources/Floe/API/WebAPI.swift" \
+    "$ROOT/Sources/Floe/Core/CoreEvent.swift" "$ROOT/Sources/Floe/API/PlaybackAPI.swift" "$ROOT/Sources/Floe/API/Models.swift" "$ROOT/Sources/Floe/API/WebAPI.swift" \
     "$ROOT/Sources/Floe/Auth/TokenProviders.swift" "$ROOT/Sources/Floe/Auth/SpotifyOAuth.swift" \
     "$ROOT/Sources/Floe/Auth/Keychain.swift" "$ROOT/Sources/Floe/Auth/LoopbackRedirectServer.swift" \
     "$ROOT/Sources/Floe/Support/Localization.swift" "$ROOT/Sources/Floe/Playback/ConnectModel.swift" \

@@ -43,6 +43,7 @@ pub struct Pcm {
     consumer: Mutex<rtrb::Consumer<f32>>,
     buffered: AtomicUsize,
     gate_open: AtomicBool,
+    switching: AtomicBool,
     epoch: AtomicU64,
     frames_rendered: AtomicU64,
     /// Times playback ran dry after having audio (render thread only).
@@ -72,6 +73,7 @@ impl Pcm {
             consumer: Mutex::new(consumer),
             buffered: AtomicUsize::new(0),
             gate_open: AtomicBool::new(false),
+            switching: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
             frames_rendered: AtomicU64::new(0),
             underruns: AtomicU64::new(0),
@@ -81,9 +83,25 @@ impl Pcm {
     }
 
     pub fn set_gate(&self, open: bool) {
+        let open = open && !self.switching.load(Ordering::Acquire);
         self.gate_open.store(open, Ordering::Release);
         if !open {
             self.analysis.reset();
+        }
+    }
+
+    /// A deliberate selection should silence the old track immediately.
+    pub fn begin_switch(&self) {
+        self.switching.store(true, Ordering::Release);
+        self.set_gate(false);
+        self.flush();
+    }
+
+    /// Drop any old packets decoded while the new context was resolving.
+    /// Automatic, preloaded gapless transitions keep their buffered tail.
+    pub fn track_changed(&self) {
+        if self.switching.swap(false, Ordering::AcqRel) {
+            self.flush();
         }
     }
 
@@ -210,9 +228,21 @@ impl Sink for FloeSink {
             return Ok(());
         };
         self.drop_stale();
+        if self.pcm.switching.load(Ordering::Acquire) {
+            self.pending.clear();
+            // Keep the old decoder paced while context resolution is in flight,
+            // but return often enough for the player to receive the new load.
+            let ms = (samples.len() / CHANNELS * 1000 / SAMPLE_RATE).clamp(1, 20);
+            thread::sleep(Duration::from_millis(ms as u64));
+            return Ok(());
+        }
         self.pending.extend(converter.f64_to_f32(&samples));
         loop {
             self.drop_stale();
+            if self.pcm.switching.load(Ordering::Acquire) {
+                self.pending.clear();
+                return Ok(());
+            }
             let taken = self.pcm.push(&self.pending);
             self.pending.drain(..taken);
             if self.pending.is_empty() {
@@ -230,5 +260,59 @@ impl Sink for FloeSink {
             let ms = (frames * 1000 / SAMPLE_RATE).clamp(5, 50) as u64;
             thread::sleep(Duration::from_millis(ms));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switching_does_not_block_the_player_on_old_packets() {
+        let pcm = Pcm::new();
+        pcm.begin_switch();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut sink = FloeSink::new(pcm.clone());
+            let mut converter = Converter::new(None);
+            let old_audio = vec![0.25; RING_SAMPLES + MAX_PARKED_SAMPLES + 2];
+            sink.write(AudioPacket::Samples(old_audio), &mut converter).unwrap();
+            tx.send((sink.pending.is_empty(), pcm.take_stats().buffered_ms)).unwrap();
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), (true, 0));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn manual_switch_silences_and_discards_old_audio() {
+        let pcm = Pcm::new();
+        let mut left = [0.0; 4];
+        let mut right = [0.0; 4];
+        pcm.set_gate(true);
+        pcm.push(&[0.25; 8]);
+        pcm.begin_switch();
+        // Old decoding may continue while the new context is being resolved.
+        pcm.push(&[0.25; 8]);
+        pcm.set_gate(true); // an old position correction must not reopen output
+        assert_eq!(pcm.render(&mut left, &mut right), 0);
+        assert_eq!(left, [0.0; 4]);
+        pcm.track_changed();
+        pcm.push(&[0.75; 8]);
+        pcm.set_gate(true);
+        assert_eq!(pcm.render(&mut left, &mut right), 4);
+        assert_eq!(left, [0.75; 4]);
+        assert_eq!(right, [0.75; 4]);
+    }
+
+    #[test]
+    fn automatic_gapless_switch_keeps_the_buffered_tail() {
+        let pcm = Pcm::new();
+        pcm.set_gate(true);
+        pcm.push(&[0.25; 8]);
+        pcm.track_changed();
+        let mut left = [0.0; 4];
+        let mut right = [0.0; 4];
+        assert_eq!(pcm.render(&mut left, &mut right), 4);
+        assert_eq!(left, [0.25; 4]);
     }
 }

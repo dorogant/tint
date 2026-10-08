@@ -56,15 +56,21 @@ final class CoverAppearance {
             guard !Task.isCancelled else { return }
         }
         guard let url else { return }
+        if !sameCover {
+            image = ArtworkCache.shared.cached(url, pixels: 720)
+                ?? ArtworkCache.shared.cached(url, pixels: 96)
+        }
         async let cover = ArtworkCache.shared.image(for: url, pixels: 720)
         async let thumbnail = ArtworkCache.shared.image(for: url, pixels: 96)
-        let (loaded, small) = await (cover, thumbnail)
+        let loaded = await cover
+        guard !Task.isCancelled else { return }
+        image = loaded
+        let small = await thumbnail
         guard !Task.isCancelled else { return }
         let processed = await Task.detached(priority: .utility) {
             (small.flatMap { Self.blur($0, radius: blur) }, small.flatMap(CoverColorExtractor.extract))
         }.value
         guard !Task.isCancelled else { return }
-        image = loaded
         background = processed.0
         palette = CoverPalette(rgb: processed.1 ?? .fallback)
     }

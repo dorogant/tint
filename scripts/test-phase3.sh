@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 swiftc -swift-version 6 -O "$ROOT/Sources/Floe/Support/Localization.swift" \
-    "$ROOT/Sources/Floe/Core/CoreEvent.swift" \
+    "$ROOT/Sources/Floe/Core/CoreEvent.swift" "$ROOT/Sources/Floe/API/Models.swift" \
     "$ROOT/Sources/Floe/Lyrics/LRC.swift" \
     "$ROOT/Sources/Floe/Lyrics/LyricsService.swift" \
     "$ROOT/Sources/Floe/Images/CoverPalette.swift" \

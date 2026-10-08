@@ -98,7 +98,7 @@ struct TrackRow: View {
 
     var body: some View {
         let track = entry.track
-        let isCurrent = player.track?.uri == track.uri
+        let isCurrent = player.displayTrack?.uri == track.uri
         let playable = track.isPlayable != false && track.isCatalogTrack
 
         HStack(spacing: 12) {
@@ -167,7 +167,9 @@ struct TrackRow: View {
 
     @ViewBuilder
     private func leading(isCurrent: Bool, playable: Bool) -> some View {
-        if hovering && playable {
+        if isCurrent && player.isLoading {
+            ProgressView().controlSize(.mini)
+        } else if hovering && playable {
             Button(action: isCurrent ? player.togglePlayPause : play) {
                 Image(systemName: isCurrent && player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 12))

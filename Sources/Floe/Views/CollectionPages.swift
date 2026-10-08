@@ -182,7 +182,7 @@ struct PlaylistView: View {
 
     private func play(_ entry: TrackEntry) {
         guard let playlist else { return }
-        player.play(PlayRequest(contextURI: playlist.uri, startURI: entry.track.uri))
+        player.play(PlayRequest(contextURI: playlist.uri, startURI: entry.track.uri), selectedTrack: entry.track)
     }
 
     private func playFromStart(shuffled: Bool) {
@@ -247,7 +247,7 @@ struct AlbumView: View {
                 }
                 .font(.system(size: 13))
                 TrackListView(entries: entries, showCover: false, showAlbum: false, numbering: .trackNumber) { entry in
-                    player.play(PlayRequest(contextURI: album.uri, startURI: entry.track.uri))
+                    player.play(PlayRequest(contextURI: album.uri, startURI: entry.track.uri), selectedTrack: entry.track)
                 }
             } else if let error {
                 MessageView(systemImage: "exclamationmark.triangle", message: error)
@@ -381,7 +381,7 @@ struct SongsView: View {
 
     private func play(_ entry: TrackEntry) {
         guard let contextURI else { return }
-        player.play(PlayRequest(contextURI: contextURI, startURI: entry.track.uri))
+        player.play(PlayRequest(contextURI: contextURI, startURI: entry.track.uri), selectedTrack: entry.track)
     }
 
     private func playFromStart(shuffled: Bool) {

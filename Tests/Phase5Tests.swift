@@ -125,6 +125,19 @@ struct Phase5Tests {
         precondition(queue.currentlyPlaying == nil && queue.queue.count == 2, "skip unsupported entries, retain duplicates")
 
         print("PASS: mixed queue decoding")
+        let selected = try decoder.decode(Track.self, from: Data("""
+        {"id":"selected","uri":"spotify:track:selected","name":"Synthetic selection",
+         "duration_ms":120000,"explicit":true,"artists":[{"name":"Synthetic artist","uri":"spotify:artist:test"}],
+         "album":{"id":"album","uri":"spotify:album:test","name":"Synthetic album",
+                  "images":[{"url":"https://example.test/small","width":64},
+                            {"url":"https://example.test/cover","width":640}]}}
+        """.utf8))
+        let immediate = TrackInfo(selected)
+        precondition(immediate.uri == selected.uri && immediate.name == selected.name
+                     && immediate.artistLine == "Synthetic artist" && immediate.album == "Synthetic album"
+                     && immediate.durationMs == 120000 && immediate.explicit
+                     && immediate.coverURL?.absoluteString == "https://example.test/cover")
+        print("PASS: selected-track metadata")
         let deniedAPI = MockPlayback(); await deniedAPI.setPermission(false)
         let denied = ConnectModel(api: deniedAPI)
         await denied.refresh(.queue)

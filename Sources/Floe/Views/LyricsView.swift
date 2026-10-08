@@ -21,7 +21,7 @@ struct LyricsView: View {
             case let .failed(message):
                 VStack {
                     MessageView(systemImage: "wifi.exclamationmark", message: message)
-                    Button("Try Again") { Task { await lyrics.load(player.track) } }
+                    Button("Try Again") { Task { await lyrics.load(player.displayTrack) } }
                 }
             case .loaded(.instrumental):
                 MessageView(systemImage: "pianokeys", message: L10n.string("Instrumental"))
@@ -45,7 +45,7 @@ struct LyricsView: View {
             }
         }
         .padding(24)
-        .onChange(of: player.track?.uri) { follow = true }
+        .onChange(of: player.displayTrack?.uri) { follow = true }
     }
 }
 

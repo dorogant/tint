@@ -19,7 +19,7 @@ struct MiniPlayerView: View {
 
     @ViewBuilder
     private var nowPlaying: some View {
-        if let track = player.track {
+        if let track = player.displayTrack {
             HStack(spacing: 12) {
                 ArtworkView(url: track.coverURL, size: 48, cornerRadius: 7)
                     .onTapGesture { openAlbum(track) }
@@ -75,7 +75,7 @@ struct ProgressBar: View {
     @ViewState private var dragFraction: Double?
 
     var body: some View {
-        let duration = max(player.track?.durationMs ?? 0, 1)
+        let duration = max(player.displayTrack?.durationMs ?? 0, 1)
         // The mini player updates once a second; Now Playing animates the wave at 12 Hz.
         TimelineView(.animation(minimumInterval: wavy && !reduceMotion && !systemReduceMotion ? 1 / 12 : 1,
                                 paused: !player.isPlaying || dragFraction != nil)) { context in
@@ -113,14 +113,14 @@ struct ProgressBar: View {
             .font(.system(size: 10.5).monospacedDigit())
             .foregroundStyle(Theme.tertiary)
         }
-        .onChange(of: player.track?.uri) { dragFraction = nil }
+        .onChange(of: player.displayTrack?.uri) { dragFraction = nil }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position")
         .accessibilityValue(Format.duration(ms: player.positionMs(at: Date())))
         .accessibilityAdjustableAction { direction in
             player.seek(toMs: player.positionMs(at: Date()) + (direction == .increment ? 5000 : -5000))
         }
-        .disabled(player.track == nil)
+        .disabled(player.displayTrack == nil || player.isLoading)
     }
 }
 

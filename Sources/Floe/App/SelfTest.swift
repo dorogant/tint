@@ -26,6 +26,11 @@ enum SelfTest {
         guard await wait(timeout: 600, {
             player.isConnected && library.connection == .connected && library.profile != nil
         }) else { return finish(false, "not connected") }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestSwitching") {
+            let passed = await switching(player: player, library: library, navigator: navigator)
+            player.pause()
+            return finish(passed, "song switching checks")
+        }
         say("library: \(library.playlists.count) playlists, \(library.recent.count) recently played, "
             + "\(library.topArtists.count) top artists, \(library.savedAlbums.count) saved albums")
         let ram0 = MemoryFootprint.currentMB
@@ -158,6 +163,39 @@ enum SelfTest {
             navigator.surface = .nowPlaying
         }
         finish(ok, ok ? "all checks passed" : "a check failed")
+    }
+
+    private static func switching(player: PlayerModel, library: LibraryModel, navigator: Navigator) async -> Bool {
+        guard let page = try? await library.api.savedTracks(offset: 0) else { return false }
+        let songs = page.items.map(\.track).filter { $0.isCatalogTrack && $0.isPlayable != false }
+        guard songs.count >= 4, let profile = library.profile else { return false }
+        navigator.surface = .library
+        var ok = true
+        for (index, song) in songs.prefix(4).enumerated() {
+            let start = Date()
+            let frames = player.core.takeStats().frames_rendered
+            player.play(PlayRequest(contextURI: "spotify:user:\(profile.id):collection", startURI: song.uri), selectedTrack: song)
+            ok = check(ok, player.displayTrack?.uri == song.uri && player.isLoading && !player.isPlaying,
+                       "selection appears immediately without claiming audio has started")
+            say(String(format: "Switch %d: selection updated in %.1f ms", index + 1, Date().timeIntervalSince(start) * 1000))
+            let audible = await wait(timeout: 20) {
+                player.isPlaying && !player.isLoading && player.track?.name == song.name
+                    && player.core.takeStats().frames_rendered > frames + 1024
+            }
+            ok = check(ok, audible, "selected song produces audio")
+            say(String(format: "Switch %d: audio flowing after %.0f ms", index + 1, Date().timeIntervalSince(start) * 1000))
+            guard audible else { break }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        if ok {
+            player.play(PlayRequest(tracks: songs.map(\.uri), startURI: songs[1].uri), selectedTrack: songs[1])
+            player.play(PlayRequest(tracks: songs.map(\.uri), startURI: songs[2].uri), selectedTrack: songs[2])
+            ok = check(ok, player.displayTrack?.uri == songs[2].uri && player.isLoading, "latest rapid selection wins immediately")
+            ok = check(ok, await wait(timeout: 20) { player.isPlaying && !player.isLoading && player.track?.name == songs[2].name },
+                       "latest rapid selection eventually plays")
+        }
+        say(String(format: "Switching footprint: %.1f MiB", MemoryFootprint.currentMB))
+        return ok
     }
 
     private static func phase5(player: PlayerModel, navigator: Navigator, settings: AppSettings, connect: ConnectModel) async -> Bool {

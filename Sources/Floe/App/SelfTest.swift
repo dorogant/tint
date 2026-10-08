@@ -37,6 +37,12 @@ enum SelfTest {
             player.pause()
             return finish(passed, "song switching checks")
         }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestSearchSwitch") {
+            let passed = await searchSwitch(player: player, navigator: navigator, search: search,
+                                            visualization: visualization)
+            player.pause()
+            return finish(passed, "search and switch songs")
+        }
         if UserDefaults.standard.bool(forKey: "FloeSelfTestPerf") {
             let passed = await performance(player: player, library: library, navigator: navigator, lyrics: lyrics,
                                            visualization: visualization, visuals: visuals)
@@ -572,6 +578,64 @@ enum SelfTest {
         say(String(format: "perf paused, effects on: %.1f%% CPU, %.0f analysis/s, %.0f background/s, %.0f MiB footprint",
                    paused.cpu, paused.analysis, paused.background, MemoryFootprint.currentMB))
         return check(ok, paused.analysis == 0 && paused.background == 0, "effects stop while paused")
+    }
+
+    /// Searches and plays a result over and over, the way a listening session
+    /// goes, and logs what the window holds after each round so anything that
+    /// piles up (layers, views, timers, memory, main-thread time) shows.
+    private static func searchSwitch(player: PlayerModel, navigator: Navigator, search: SearchModel,
+                                     visualization: VisualizationModel) async -> Bool {
+        let queries = ["september", "daft punk", "radiohead", "bonobo", "massive attack", "tame impala",
+                       "aphex twin", "kendrick lamar", "fleetwood mac", "burial", "four tet", "portishead"]
+        NSApp.activate()
+        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        func layers(_ layer: CALayer?) -> Int {
+            guard let layer else { return 0 }
+            return 1 + (layer.sublayers ?? []).reduce(0) { $0 + layers($1) }
+        }
+        func views(_ view: NSView?, _ counts: inout [String: Int]) {
+            guard let view else { return }
+            counts["all", default: 0] += 1
+            let name = "\(type(of: view))"
+            if ["VisualizerLayerView", "BackgroundMetalView", "CrawlingCoverView", "WavyProgressView",
+                "ScrubReadoutView"].contains(name) { counts[name, default: 0] += 1 }
+            for child in view.subviews { views(child, &counts) }
+        }
+        for (round, query) in queries.enumerated() {
+            navigator.select(.search)
+            search.text = query
+            guard await wait(timeout: 15, { !search.songs.isEmpty }) else {
+                return check(false, false, "results for \(query)")
+            }
+            let song = search.songs[round % min(3, search.songs.count)]
+            player.play(PlayRequest(tracks: search.songs.map(\.uri), startURI: song.uri), selectedTrack: song)
+            _ = await wait(timeout: 20) { player.isPlaying && !player.isLoading && player.displayTrack?.uri == song.uri }
+            try? await Task.sleep(for: .seconds(3))
+            let root = NSApp.windows.first { $0.canBecomeMain }?.contentView?.superview
+            var counts: [String: Int] = [:]
+            views(root, &counts)
+            let sample = await usage(over: 3, visualization: visualization)
+            let lag = await mainThreadDelay(over: 2)
+            let custom = counts.filter { $0.key != "all" }.sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+            say(String(format: "round %2d %@: %.1f%% CPU, main delay avg %.1f ms worst %.0f ms, %d layers, %d views, %.0f MiB | %@",
+                       round + 1, query, sample.cpu, lag.average, lag.worst, layers(root?.layer),
+                       counts["all"] ?? 0, MemoryFootprint.currentMB, custom))
+        }
+        return true
+    }
+
+    /// How long the main queue takes to pick up a block, sampled every frame.
+    private static func mainThreadDelay(over seconds: Double) async -> (average: Double, worst: Double) {
+        var delays: [Double] = []
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            let asked = Date()
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+            delays.append(Date().timeIntervalSince(asked) * 1000)
+            try? await Task.sleep(for: .milliseconds(16))
+        }
+        return (delays.reduce(0, +) / Double(max(delays.count, 1)), delays.max() ?? 0)
     }
 
     /// Core Animation runs these, so snapshots can't show motion; compare the

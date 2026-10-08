@@ -236,10 +236,7 @@ struct TrackRow: View {
         if loading {
             ProgressView().controlSize(.mini)
         } else if isCurrent && player.isPlaying {
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(palette.highlight)
-                .symbolEffect(.variableColor.iterative, isActive: !still)
+            PlayingSymbol(pointSize: 11, color: palette.highlight, animating: !still)
         } else {
             Text("\(number)")
                 .font(.system(size: 12).monospacedDigit())

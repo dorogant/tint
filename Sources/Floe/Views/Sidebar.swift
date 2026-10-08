@@ -146,10 +146,8 @@ private struct PlaylistRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if playing {
-                    Image(systemName: "speaker.wave.3.fill").font(.system(size: 10)).foregroundStyle(palette.highlight)
-                        .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
+                    PlayingSymbol(pointSize: 10, color: palette.highlight, animating: !reduceMotion)
                         .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
-                        .accessibilityLabel("Playing")
                 }
             }
             .padding(.horizontal, 8)

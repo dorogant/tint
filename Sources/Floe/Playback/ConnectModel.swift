@@ -1,48 +1,9 @@
 import Foundation
 import Observation
 
-struct ConnectDevice: Decodable, Identifiable, Sendable {
-    let id: String?
-    let name: String
-    let type: String
-    let isActive: Bool
-    let isRestricted: Bool
-    let volumePercent: Int?
-    let supportsVolume: Bool?
-}
-
-struct PlaybackQueue: Decodable, Sendable {
-    let currentlyPlaying: Track?
-    let queue: [Track]
-    enum CodingKeys: String, CodingKey { case currentlyPlaying, queue }
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        currentlyPlaying = (try? c.decodeIfPresent(Track.self, forKey: .currentlyPlaying)) ?? nil
-        queue = (try c.decodeIfPresent([Lossy<Track>].self, forKey: .queue) ?? []).compactMap(\.value)
-    }
-}
-
-protocol PlaybackAPI: Sendable {
-    var hasPlaybackPermission: Bool { get async }
-    func authorizePlaybackControls() async throws
-    func playbackQueue() async throws -> PlaybackQueue
-    func playbackDevices() async throws -> [ConnectDevice]
-    func transfer(to id: String) async throws
-}
-
-extension WebAPI: PlaybackAPI {
-    var hasPlaybackPermission: Bool { get async { await user.hasPlaybackControls } }
-    func authorizePlaybackControls() async throws { try await user.authorize(playbackControls: true) }
-    func playbackQueue() async throws -> PlaybackQueue { try await get("me/player/queue") }
-    func playbackDevices() async throws -> [ConnectDevice] {
-        struct Response: Decodable { let devices: [ConnectDevice] }
-        let response: Response = try await get("me/player/devices")
-        return response.devices
-    }
-    func transfer(to id: String) async throws {
-        struct Transfer: Encodable { let device_ids: [String]; let play = false }
-        try await send("PUT", "me/player", body: JSONEncoder().encode(Transfer(device_ids: [id])))
-    }
+enum ConnectSection: String, CaseIterable, Identifiable {
+    case queue, devices
+    var id: Self { self }
 }
 
 /// Requests run only while their panel is open. Remote queue ordering stays Spotify's.
@@ -61,42 +22,43 @@ final class ConnectModel {
 
     init(api: any PlaybackAPI) { self.api = api }
 
-    func refresh(queue: Bool) async {
-        generation += 1
-        let epoch = generation
-        isLoading = true
-        error = nil
+    func refresh(_ section: ConnectSection) async {
+        let epoch = beginRequest()
         defer { if epoch == generation { isLoading = false } }
         let permitted = await api.hasPlaybackPermission
-        guard epoch == generation, !Task.isCancelled else { return }
+        guard isCurrentRequest(epoch) else { return }
         needsPermission = !permitted
         guard permitted else { return }
         do {
-            if queue {
+            switch section {
+            case .queue:
                 let result = try await api.playbackQueue()
-                guard !Task.isCancelled, epoch == generation else { return }
+                guard isCurrentRequest(epoch) else { return }
                 self.queue = Array(result.queue.prefix(100))
                 current = result.currentlyPlaying
-            } else {
+            case .devices:
                 let result = try await api.playbackDevices()
-                guard !Task.isCancelled, epoch == generation else { return }
+                guard isCurrentRequest(epoch) else { return }
                 devices = result.filter { $0.id != nil }
             }
         } catch is CancellationError {} catch {
-            guard epoch == generation else { return }
+            guard isCurrentRequest(epoch) else { return }
             self.error = Self.message(error)
         }
     }
 
-    func connect(queue: Bool) async {
+    func connect(_ section: ConnectSection) async {
         guard !isLoading else { return }
-        isLoading = true
+        let epoch = beginRequest()
+        defer { if epoch == generation { isLoading = false } }
         do {
             try await api.authorizePlaybackControls()
-            isLoading = false
-            await refresh(queue: queue)
-        } catch is CancellationError { isLoading = false }
-        catch { isLoading = false; self.error = Self.message(error) }
+            guard isCurrentRequest(epoch) else { return }
+            await refresh(section)
+        } catch is CancellationError {} catch {
+            guard isCurrentRequest(epoch) else { return }
+            self.error = Self.message(error)
+        }
     }
 
     func transfer(_ device: ConnectDevice) async {
@@ -107,9 +69,23 @@ final class ConnectModel {
         defer { transferring = false }
         do {
             try await api.transfer(to: id)
-            if epoch == generation { await refresh(queue: false) }
+            guard isCurrentRequest(epoch) else { return }
+            await refresh(.devices)
+        } catch is CancellationError {} catch {
+            guard isCurrentRequest(epoch) else { return }
+            self.error = Self.message(error)
         }
-        catch { self.error = Self.message(error) }
+    }
+
+    private func beginRequest() -> Int {
+        generation += 1
+        isLoading = true
+        error = nil
+        return generation
+    }
+
+    private func isCurrentRequest(_ epoch: Int) -> Bool {
+        epoch == generation && !Task.isCancelled
     }
 
     private static func message(_ error: Error) -> String {

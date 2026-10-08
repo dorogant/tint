@@ -50,7 +50,6 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var contents: some View {
-        @Bindable var settings = settings
         @Bindable var visuals = visuals
         switch section {
         case .visualizer:
@@ -61,47 +60,64 @@ struct SettingsView: View {
             HStack { Text("Blur"); Slider(value: $visuals.backgroundBlur, in: 0...18) }
             note("Blur is applied once to each cover. Live backgrounds use extra energy and stop on pause or with Reduce Motion.")
         case .playback:
-            Picker("Streaming quality", selection: $settings.bitrate) {
-                Text("96 kbps").tag(96); Text("160 kbps").tag(160); Text("320 kbps").tag(320)
-            }
-            Toggle("Normalize volume", isOn: $settings.normalization)
-            Toggle("Gapless playback", isOn: $settings.gapless)
-            if player.activeConfiguration != settings.playbackConfiguration {
-                Text("Playback changes apply after reconnecting or restarting Floe.").font(.callout).foregroundStyle(.orange)
-                Button("Apply and reconnect") { player.reconnectPlayback() }.disabled(!player.isConnected)
-                note("Reconnecting keeps the current song and position. Manually queued songs may be reset.")
-            }
-            HStack { Text("Crossfade"); Spacer(); Text("Unavailable").foregroundStyle(Theme.secondary) }
-            note("This playback engine supports gapless playback but does not support crossfade.")
+            playbackOptions
         case .downloads:
             Label("Streaming only", systemImage: "wifi").font(.headline)
             note("Offline downloads are unavailable. Floe does not save audio to disk.")
         case .appearance:
-            Toggle("Accent from cover", isOn: $accentFromCover)
-            Picker("Fixed accent", selection: $settings.fixedAccent) {
-                Text("Green").tag("green"); Text("Blue").tag("blue")
-                Text("Violet").tag("violet"); Text("Amber").tag("amber")
-            }.disabled(accentFromCover)
-            HStack { Text("Glass intensity"); Slider(value: $settings.glassOpacity, in: 0.2...0.9) }
-            Toggle("Reduce motion", isOn: $reduceMotion)
-            note("The Mac's Reduce Motion setting is always respected.")
-            Picker("Language", selection: $settings.language) {
-                Text("System").tag("system"); Text("English").tag("en"); Text("Українська").tag("uk")
-            }
-            note("Song titles, artist names and lyrics stay in their original language.")
+            appearanceOptions
         case .about:
-            HStack(spacing: 16) {
-                Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 72, height: 72)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Floe").font(.system(size: 24, weight: .bold))
-                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
-                        .font(.callout).foregroundStyle(Theme.secondary)
-                }
-            }
-            note("A native Spotify client for macOS. Spotify Premium is required. Not affiliated with Spotify.")
-            Link("Playback engine: librespot", destination: URL(string: "https://github.com/librespot-org/librespot")!)
-            Link("Lyrics: LRCLIB", destination: URL(string: "https://lrclib.net")!)
+            aboutContent
         }
+    }
+
+    @ViewBuilder private var playbackOptions: some View {
+        @Bindable var settings = settings
+        Picker("Streaming quality", selection: $settings.bitrate) {
+            ForEach(PlaybackConfiguration.supportedBitrates, id: \.self) { bitrate in
+                let title = "\(bitrate) kbps"
+                Text(LocalizedStringKey(title)).tag(bitrate)
+            }
+        }
+        Toggle("Normalize volume", isOn: $settings.normalization)
+        Toggle("Gapless playback", isOn: $settings.gapless)
+        if player.activeConfiguration != settings.playbackConfiguration {
+            Text("Playback changes apply after reconnecting or restarting Floe.").font(.callout).foregroundStyle(.orange)
+            Button("Apply and reconnect") { player.reconnectPlayback() }.disabled(!player.isConnected)
+            note("Reconnecting keeps the current song and position. Manually queued songs may be reset.")
+        }
+        HStack { Text("Crossfade"); Spacer(); Text("Unavailable").foregroundStyle(Theme.secondary) }
+        note("This playback engine supports gapless playback but does not support crossfade.")
+    }
+
+    @ViewBuilder private var appearanceOptions: some View {
+        @Bindable var settings = settings
+        Toggle("Accent from cover", isOn: $accentFromCover)
+        Picker("Fixed accent", selection: $settings.fixedAccent) {
+            Text("Green").tag("green"); Text("Blue").tag("blue")
+            Text("Violet").tag("violet"); Text("Amber").tag("amber")
+        }.disabled(accentFromCover)
+        HStack { Text("Glass intensity"); Slider(value: $settings.glassOpacity, in: AppSettings.glassOpacityRange) }
+        Toggle("Reduce motion", isOn: $reduceMotion)
+        note("The Mac's Reduce Motion setting is always respected.")
+        Picker("Language", selection: $settings.language) {
+            Text("System").tag("system"); Text("English").tag("en"); Text("Українська").tag("uk")
+        }
+        note("Song titles, artist names and lyrics stay in their original language.")
+    }
+
+    @ViewBuilder private var aboutContent: some View {
+        HStack(spacing: 16) {
+            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 72, height: 72)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Floe").font(.system(size: 24, weight: .bold))
+                Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
+                    .font(.callout).foregroundStyle(Theme.secondary)
+            }
+        }
+        note("A native Spotify client for macOS. Spotify Premium is required. Not affiliated with Spotify.")
+        Link("Playback engine: librespot", destination: URL(string: "https://github.com/librespot-org/librespot")!)
+        Link("Lyrics: LRCLIB", destination: URL(string: "https://lrclib.net")!)
     }
 
     private func note(_ text: LocalizedStringKey) -> some View {

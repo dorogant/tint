@@ -49,6 +49,9 @@ private actor MockPlayback: PlaybackAPI {
     var failure = false
     private(set) var reads = 0
     private(set) var transferred: String?
+    private var holdTransfer = false
+    private var pendingTransfer: CheckedContinuation<Void, Error>?
+    private var transferStarted: CheckedContinuation<Void, Never>?
     var hasPlaybackPermission: Bool { permission }
     func authorizePlaybackControls() { permission = true }
     func setPermission(_ value: Bool) { permission = value }
@@ -66,7 +69,25 @@ private actor MockPlayback: PlaybackAPI {
          ConnectDevice(id: "blocked", name: "Restricted", type: "speaker", isActive: false, isRestricted: true, volumePercent: nil, supportsVolume: false),
          ConnectDevice(id: nil, name: "Unknown", type: "speaker", isActive: false, isRestricted: false, volumePercent: nil, supportsVolume: false)]
     }
-    func transfer(to id: String) { transferred = id }
+    func holdTransfers() { holdTransfer = true }
+    func waitForTransfer() async {
+        if pendingTransfer != nil { return }
+        await withCheckedContinuation { transferStarted = $0 }
+    }
+    func failTransfer() {
+        pendingTransfer?.resume(throwing: TokenError.notAuthorized)
+        pendingTransfer = nil
+    }
+    func transfer(to id: String) async throws {
+        transferred = id
+        if holdTransfer {
+            try await withCheckedThrowingContinuation {
+                pendingTransfer = $0
+                transferStarted?.resume()
+                transferStarted = nil
+            }
+        }
+    }
 }
 
 @main
@@ -106,36 +127,58 @@ struct Phase5Tests {
         print("PASS: mixed queue decoding")
         let deniedAPI = MockPlayback(); await deniedAPI.setPermission(false)
         let denied = ConnectModel(api: deniedAPI)
-        await denied.refresh(queue: true)
+        await denied.refresh(.queue)
         let deniedReads = await deniedAPI.reads
         precondition(denied.needsPermission && deniedReads == 0)
-        await denied.connect(queue: true)
+        await denied.connect(.queue)
         precondition(!denied.needsPermission && !denied.isLoading)
 
         let mock = MockPlayback(), model = ConnectModel(api: MockPlayback())
-        await model.refresh(queue: false)
+        await model.refresh(.devices)
         precondition(model.devices.count == 2)
         let transferModel = ConnectModel(api: mock)
-        await transferModel.refresh(queue: false)
+        await transferModel.refresh(.devices)
         await transferModel.transfer(transferModel.devices[1])
         var transferred = await mock.transferred
         precondition(transferred == nil, "restricted devices must not receive commands")
         await transferModel.transfer(transferModel.devices[0])
         transferred = await mock.transferred
         precondition(transferred == "floe" && !transferModel.transferring)
-        await mock.setFailure(); await transferModel.refresh(queue: true)
+        await mock.setFailure(); await transferModel.refresh(.queue)
         precondition(transferModel.error?.contains("expired") == true && !transferModel.isLoading)
 
         let slow = MockPlayback(); await slow.setDelay()
         let raced = ConnectModel(api: slow)
-        let old = Task { await raced.refresh(queue: true) }
+        let old = Task { await raced.refresh(.queue) }
         try await Task.sleep(for: .milliseconds(10))
-        await raced.refresh(queue: false)
+        await raced.refresh(.devices)
         await old.value
         precondition(raced.devices.count == 2 && raced.queue.isEmpty && !raced.isLoading && raced.error == nil)
-        let cancelled = Task { await raced.refresh(queue: true) }
+        let cancelled = Task { await raced.refresh(.queue) }
         try await Task.sleep(for: .milliseconds(10)); cancelled.cancel(); await cancelled.value
         precondition(raced.error == nil && !raced.isLoading)
+
+        // A transfer can finish after the user has opened a different panel.
+        let slowTransfer = MockPlayback()
+        await slowTransfer.holdTransfers()
+        let switching = ConnectModel(api: slowTransfer)
+        await switching.refresh(.devices)
+        let device = switching.devices[0]
+        let oldTransfer = Task { await switching.transfer(device) }
+        await slowTransfer.waitForTransfer()
+        await switching.refresh(.queue)
+        await slowTransfer.failTransfer()
+        await oldTransfer.value
+        precondition(switching.error == nil && switching.queue.count == 1 && !switching.transferring,
+                     "old transfer errors must not replace the current panel")
+        let cancelledTransfer = Task { await switching.transfer(device) }
+        await slowTransfer.waitForTransfer()
+        cancelledTransfer.cancel()
+        await slowTransfer.failTransfer()
+        await cancelledTransfer.value
+        precondition(switching.error == nil && !switching.transferring,
+                     "cancelled transfers must not publish errors")
+        print("PASS: stale and cancelled device transfers")
         let root = CommandLine.arguments[1]
         let ukrainian = Bundle(path: root + "/Support/Localizations/uk.lproj")!
         for (count, expected) in [(1, "1 пісня"), (2, "2 пісні"), (5, "5 пісень"), (21, "21 пісня")] {

@@ -35,7 +35,7 @@ struct MainView: View {
     @Environment(SearchModel.self) private var search
 
     @Environment(\.openSettings) private var openSettings
-    @ViewState private var showingConnect: Bool?
+    @ViewState private var showingConnect: ConnectSection?
     @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -53,12 +53,9 @@ struct MainView: View {
                 }
                 .buttonStyle(.plain).help("Visuals")
                 .popover(isPresented: $showingVisuals) { VisualControls() }
-                Button { showingConnect = true } label: { Image(systemName: "list.bullet").frame(width: 30, height: 30) }
-                    .buttonStyle(.plain).help("Queue")
-                    .popover(isPresented: Binding(get: { showingConnect == true }, set: { if !$0 { showingConnect = nil } })) { ConnectPanel(queue: true) }
-                Button { showingConnect = false } label: { Image(systemName: "hifispeaker").frame(width: 30, height: 30) }
-                    .buttonStyle(.plain).help("Devices")
-                    .popover(isPresented: Binding(get: { showingConnect == false }, set: { if !$0 { showingConnect = nil } })) { ConnectPanel(queue: false) }
+                ForEach(ConnectSection.allCases) { section in
+                    connectButton(section)
+                }
                 Button { openSettings() } label: { Image(systemName: "gearshape").frame(width: 30, height: 30) }
                     .buttonStyle(.plain).help("Settings")
                 Menu {
@@ -97,6 +94,17 @@ struct MainView: View {
         }
         .padding(10)
         .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func connectButton(_ section: ConnectSection) -> some View {
+        Button { showingConnect = section } label: {
+            Image(systemName: section.symbol).frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain).help(LocalizedStringKey(section.title))
+        .popover(isPresented: Binding(
+            get: { showingConnect == section },
+            set: { if !$0, showingConnect == section { showingConnect = nil } }
+        )) { ConnectPanel(section: section) }
     }
 
     private func surfaceButton(_ title: LocalizedStringKey, icon: String, surface: Navigator.Surface) -> some View {

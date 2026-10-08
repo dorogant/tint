@@ -29,7 +29,7 @@ final class PlayerModel {
     private(set) var contextURI: String?
     private(set) var lastError: String?
     private(set) var activeConfiguration: PlaybackConfiguration?
-    @ObservationIgnored private var requestedConfiguration = PlaybackConfiguration(bitrate: 320, normalization: false, gapless: true)
+    @ObservationIgnored private var requestedConfiguration = PlaybackConfiguration.default
     @ObservationIgnored private var connectingConfiguration: PlaybackConfiguration?
     @ObservationIgnored private var pendingPlayback: PlayRequest?
     @ObservationIgnored private var lastRequest: PlayRequest?
@@ -79,8 +79,7 @@ final class PlayerModel {
         let stored = await Task.detached { Keychain.read(Keychain.Account.playbackSession) }.value
         guard let stored, session == .loggedOut else { return }
         storedCredentials = stored
-        connectingConfiguration = requestedConfiguration
-        core.logIn(storedCredentials: stored, volume: spotifyVolume)
+        startSession(using: stored)
     }
 
     func logIn() {
@@ -206,6 +205,10 @@ final class PlayerModel {
         setAnchor(positionMs(at: Date()), playing: false)
         isLoading = false
         session = .connecting
+        startSession(using: credentials)
+    }
+
+    private func startSession(using credentials: Data) {
         connectingConfiguration = requestedConfiguration
         core.logIn(storedCredentials: credentials, volume: spotifyVolume)
     }
@@ -335,8 +338,7 @@ final class PlayerModel {
         reconnectTask = Task {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, session == .connecting else { return }
-            connectingConfiguration = requestedConfiguration
-            core.logIn(storedCredentials: credentials, volume: spotifyVolume)
+            startSession(using: credentials)
         }
     }
 }

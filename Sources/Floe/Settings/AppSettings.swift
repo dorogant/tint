@@ -4,6 +4,8 @@ import Observation
 @MainActor
 @Observable
 final class AppSettings {
+    static let glassOpacityRange = 0.2...0.9
+
     var bitrate: Int { didSet { defaults.set(bitrate, forKey: "bitrate") } }
     var normalization: Bool { didSet { defaults.set(normalization, forKey: "normalization") } }
     var gapless: Bool { didSet { defaults.set(gapless, forKey: "gapless") } }
@@ -14,13 +16,15 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        let quality = defaults.object(forKey: "bitrate") as? Int ?? 320
-        bitrate = [96, 160, 320].contains(quality) ? quality : 320
-        normalization = defaults.bool(forKey: "normalization")
-        gapless = defaults.object(forKey: "gapless") as? Bool ?? true
+        let playback = PlaybackConfiguration.default
+        let quality = defaults.object(forKey: "bitrate") as? Int ?? playback.bitrate
+        bitrate = PlaybackConfiguration.supportedBitrates.contains(quality) ? quality : playback.bitrate
+        normalization = defaults.object(forKey: "normalization") as? Bool ?? playback.normalization
+        gapless = defaults.object(forKey: "gapless") as? Bool ?? playback.gapless
         let language = defaults.string(forKey: "appLanguage") ?? "system"
         self.language = ["system", "en", "uk"].contains(language) ? language : "system"
-        glassOpacity = min(0.9, max(0.2, defaults.object(forKey: "glassOpacity") as? Double ?? 0.62))
+        glassOpacity = min(Self.glassOpacityRange.upperBound,
+                           max(Self.glassOpacityRange.lowerBound, defaults.object(forKey: "glassOpacity") as? Double ?? 0.62))
         let accent = defaults.string(forKey: "fixedAccent") ?? "green"
         fixedAccent = ["green", "blue", "violet", "amber"].contains(accent) ? accent : "green"
     }
@@ -28,9 +32,16 @@ final class AppSettings {
     var playbackConfiguration: PlaybackConfiguration {
         PlaybackConfiguration(bitrate: bitrate, normalization: normalization, gapless: gapless)
     }
+
+    var locale: Locale {
+        Locale(identifier: language == "system" ? L10n.language : language)
+    }
 }
 
 struct PlaybackConfiguration: Equatable, Sendable {
+    static let `default` = Self(bitrate: 320, normalization: false, gapless: true)
+    static let supportedBitrates = [96, 160, 320]
+
     var bitrate: Int
     var normalization: Bool
     var gapless: Bool

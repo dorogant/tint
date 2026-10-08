@@ -194,12 +194,12 @@ enum SelfTest {
             player.isConnected && !player.isPlaying && !player.isLoading && player.activeConfiguration == original
         }
         ok = check(ok, paused, "reconnect preserves pause and restores preferences")
-        await connect.refresh(queue: true)
+        await connect.refresh(.queue)
         if connect.needsPermission {
             say("Queue/Devices: consent is required; existing library permission is preserved")
         } else {
             ok = check(ok, connect.error == nil, "live queue fetch")
-            await connect.refresh(queue: false)
+            await connect.refresh(.devices)
             ok = check(ok, connect.error == nil && !connect.devices.isEmpty, "live device fetch")
             say("Queue/Devices: \(connect.queue.count) upcoming entries, \(connect.devices.count) devices")
         }

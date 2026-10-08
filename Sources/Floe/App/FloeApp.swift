@@ -42,7 +42,7 @@ struct FloeApp: App {
                 .environment(visuals)
                 .environment(settings)
                 .environment(connect)
-                .environment(\.locale, Locale(identifier: settings.language == "system" ? L10n.language : settings.language))
+                .environment(\.locale, settings.locale)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
                 .onChange(of: needsAnalysis, initial: true) { visualization.setRunning(needsAnalysis) }
                 .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }
@@ -94,7 +94,7 @@ struct FloeApp: App {
                 .environment(visuals)
                 .environment(player)
                 .environment(visualization)
-                .environment(\.locale, Locale(identifier: settings.language == "system" ? L10n.language : settings.language))
+                .environment(\.locale, settings.locale)
         }
 
     }

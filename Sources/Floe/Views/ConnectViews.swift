@@ -1,38 +1,46 @@
 import SwiftUI
 
+extension ConnectSection {
+    var title: String { self == .queue ? "Queue" : "Devices" }
+    var symbol: String { self == .queue ? "list.bullet" : "hifispeaker" }
+}
+
 struct ConnectPanel: View {
     @Environment(ConnectModel.self) private var connect
     @Environment(PlayerModel.self) private var player
     @Environment(AppSettings.self) private var settings
-    var queue = true
+    let section: ConnectSection
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(LocalizedStringKey(queue ? "Queue" : "Devices")).font(.system(size: 18, weight: .bold))
+                Text(LocalizedStringKey(section.title)).font(.system(size: 18, weight: .bold))
                 Spacer()
-                Button { Task { await connect.refresh(queue: queue) } } label: { Image(systemName: "arrow.clockwise") }
+                Button { Task { await connect.refresh(section) } } label: { Image(systemName: "arrow.clockwise") }
                     .help("Refresh").disabled(connect.isLoading)
             }
             if connect.needsPermission {
                 Text("Connect Queue and Devices to read your upcoming songs and switch Spotify Connect devices.")
                     .font(.callout).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-                Button("Connect Queue and Devices") { Task { await connect.connect(queue: queue) } }
+                Button("Connect Queue and Devices") { Task { await connect.connect(section) } }
                     .disabled(connect.isLoading)
             }
             if connect.isLoading { ProgressView().controlSize(.small) }
             if let error = connect.error {
                 Text(error).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                Button("Reconnect Queue and Devices") { Task { await connect.connect(queue: queue) } }
+                Button("Reconnect Queue and Devices") { Task { await connect.connect(section) } }
                     .disabled(connect.isLoading)
             }
             if !connect.needsPermission {
-                if queue { queueContents } else { deviceContents }
+                switch section {
+                case .queue: queueContents
+                case .devices: deviceContents
+                }
             }
         }
         .padding(20).frame(width: 390)
-        .environment(\.locale, Locale(identifier: settings.language == "system" ? L10n.language : settings.language))
-        .task(id: queue ? player.track?.uri : "devices") { await connect.refresh(queue: queue) }
+        .environment(\.locale, settings.locale)
+        .task(id: section == .queue ? player.track?.uri : "devices") { await connect.refresh(section) }
     }
 
     private var queueContents: some View {

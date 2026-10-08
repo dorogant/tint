@@ -136,7 +136,12 @@ struct LayoutRender {
             ("artist", { navigator.select(.artist("tame-impala")) }),
             ("album", { navigator.select(.album("currents")) }),
             ("songs", { navigator.select(.songs) }),
+            ("status-banner", {
+                navigator.select(.home)
+                FloeCore.shared.deliver(.unavailable(uri: nowPlaying.uri))
+            }),
             ("home-default-size", {
+                player.dismissError()
                 navigator.select(.home)
                 window.setContentSize(CGSize(width: 1220, height: 800))
             }),
@@ -211,8 +216,17 @@ struct LayoutRender {
         return rep
     }
 
+    /// The area under the toolbar comes out transparent; lay it on the window's base colour.
     static func write(_ rep: NSBitmapImageRep, to url: URL) {
-        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        let opaque = bitmap(for: NSView(frame: NSRect(origin: .zero, size: rep.size)))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: opaque)
+        NSColor(red: 0.045, green: 0.05, blue: 0.06, alpha: 1).setFill()
+        NSRect(origin: .zero, size: rep.size).fill()
+        rep.draw(in: NSRect(origin: .zero, size: rep.size), from: .zero, operation: .sourceOver, fraction: 1,
+                 respectFlipped: false, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        try? opaque.representation(using: .png, properties: [:])?.write(to: url)
         print("[layout] \(url.path)")
     }
 }

@@ -10,8 +10,9 @@ struct MiniPlayerView: View {
     @ViewState private var hovering = false
 
     /// Transport and volume get the same width, so the song sits on the
-    /// window's centre line, under the toolbar's switcher.
-    private static let sideWidth: CGFloat = 240
+    /// window's centre line, under the toolbar's switcher. Just wider than
+    /// the transport, so a narrow window leaves the song as much room as it can.
+    private static let sideWidth: CGFloat = 200
 
     var body: some View {
         HStack(spacing: 16) {
@@ -69,6 +70,8 @@ struct MiniPlayerView: View {
             TitleLink(text: track.name) { openAlbum(track) }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .layoutPriority(1)
             Text("·").foregroundStyle(Theme.tertiary)
             HStack(spacing: 0) {
                 ForEach(Array(track.artists.enumerated()), id: \.offset) { index, artist in

@@ -197,7 +197,7 @@ Tint follows macOS conventions where they fit. The window has a standard unified
 toolbar beside the window controls: Back, a Library / Now Playing / Lyrics switcher,
 and one group of Visuals, Queue, Devices, Appearance and Settings buttons, all in
 the system's Liquid Glass. Settings is a standard tabbed window with grouped forms.
-The Play buttons use interactive glass, search lives at the top of the sidebar
+The Play buttons use interactive glass, search lives in the toolbar
 (⌘F), and SF Symbols morph
 or bounce for play/pause, like, repeat, transport presses and the volume level.
 Shuffle has a half-second crossover twist, elastic squeeze and fading accent

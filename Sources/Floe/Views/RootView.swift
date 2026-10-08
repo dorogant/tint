@@ -52,9 +52,15 @@ struct MainView: View {
                             // Every page starts on the same guides: content on the
                             // gutter, plates and full-bleed shelves reaching past it.
                             ScrollView {
-                                page.padding(.horizontal, Theme.gutter).padding(.top, 28).padding(.bottom, 32)
+                                page.padding(.horizontal, Theme.gutter).padding(.top, Theme.gutter - 1).padding(.bottom, 32)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            // A scroll view touching the toolbar's edge reaches up under
+                            // it and insets its content to match. When a banner or a
+                            // transition moved the panel, that inset changed mid-flight
+                            // and left the page resting a few points scrolled. One point
+                            // of room (taken back from the top padding) keeps it out.
+                            .padding(.top, 1)
                             .id(navigator.current)
                             // A fade only: the page's sections rise in on their own
                             // (`reveal`), and moving the scroll view itself left it

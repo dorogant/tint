@@ -161,11 +161,13 @@ struct LayoutRender {
 
     /// Nothing has been scrolled in the harness, so every scroll view should sit
     /// at its origin. Animating a scroll view's frame used to leave it a few
-    /// points off (pages under the toolbar, shelves sideways).
+    /// points off (pages under the toolbar, shelves sideways). A spring resizing
+    /// the page (a banner's room) still rounds by a quarter point; allow a pixel.
     static func scrollViewsAtRest(_ view: NSView) -> Bool {
         if let scroll = view as? NSScrollView {
             let origin = scroll.documentVisibleRect.origin
-            if abs(origin.x + scroll.contentInsets.left) > 0.25 || abs(origin.y + scroll.contentInsets.top) > 0.25 {
+            if abs(origin.x + scroll.contentInsets.left) > 0.5 || abs(origin.y + scroll.contentInsets.top) > 0.5 {
+                print("    \(scroll.convert(scroll.bounds, to: nil)) rests at \(origin)")
                 return false
             }
         }

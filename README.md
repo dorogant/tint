@@ -223,9 +223,12 @@ raw and adaptive equalizer shapes on two of your liked songs.
 `-FloeSelfTestPerfOnly <name>` holds matching scenarios instead, for 30 s when only
 one matches (useful with `sample`). It restores every preference afterwards.
 
-Window snapshots can't show Core Animation masks or motion, so the cover, wave and
-visualizer layers were also checked with an offscreen `CARenderer` render of the real
-views inside flipped and unflipped AppKit parents.
+Window snapshots can't show Core Animation masks or motion, so `scripts/test-layers.sh`
+renders the real cover, visualizer and progress-wave layers offscreen with
+`CARenderer`, inside a top-down parent as SwiftUI hosts them. It checks pixels: the
+cover is upright and shows a new image even while paused, bass sits at the top of the
+ring, bottom bars stand on the floor, the halo is pale on top, and the wave fills only
+the elapsed part.
 
 ### Settings and recovery
 

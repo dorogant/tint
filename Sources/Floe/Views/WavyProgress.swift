@@ -134,19 +134,9 @@ final class WavyProgressView: NSView {
         knob.frame = CGRect(x: split - 2.5, y: mid - 9, width: 5, height: 18)
     }
 
-    /// Pauses the wave's own clock, so it resumes where it stopped.
     private func setMoving(_ moving: Bool) {
         guard moving != self.moving else { return }
         self.moving = moving
-        if moving {
-            let pausedAt = wave.timeOffset
-            wave.speed = 1
-            wave.timeOffset = 0
-            wave.beginTime = 0
-            wave.beginTime = wave.convertTime(CACurrentMediaTime(), from: nil) - pausedAt
-        } else {
-            wave.timeOffset = wave.convertTime(CACurrentMediaTime(), from: nil)
-            wave.speed = 0
-        }
+        moving ? wave.resumeClock() : wave.pauseClock()
     }
 }

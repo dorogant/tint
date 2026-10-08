@@ -90,7 +90,7 @@ struct ProgressBar: View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
         // Both bars tick once a second; Core Animation scrolls the Now Playing wave
         // and glides its playhead in between.
-        TimelineView(SteadySchedule(interval: 1, paused: !player.isPlaying || dragFraction != nil)) { context in
+        TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil)) { context in
             let fraction = dragFraction ?? min(player.positionMs(at: context.date) / duration, 1)
             // Aim the glide at where playback will be on the next tick.
             let ahead = dragFraction ?? min(player.positionMs(at: context.date.addingTimeInterval(1)) / duration, 1)

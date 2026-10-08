@@ -77,21 +77,3 @@ struct FloeButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == FloeButtonStyle {
     static var floe: FloeButtonStyle { FloeButtonStyle() }
 }
-
-/// A fixed-rate clock that pauses cleanly: paused, it emits a single entry.
-/// Each tick is a SwiftUI update of the whole window, so keep it slow; for
-/// continuous motion, use Core Animation (see `CrawlingCover`, `WavyProgress`).
-struct SteadySchedule: TimelineSchedule {
-    var interval: TimeInterval
-    var paused = false
-
-    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
-        if paused { return AnyIterator([startDate].makeIterator()) }
-        var next = startDate
-        let interval = interval
-        return AnyIterator {
-            defer { next += interval }
-            return next
-        }
-    }
-}

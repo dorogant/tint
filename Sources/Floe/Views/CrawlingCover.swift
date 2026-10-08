@@ -135,19 +135,9 @@ final class CrawlingCoverView: NSView {
         }
     }
 
-    /// Pauses and resumes the content layer's clock, so motion picks up where it stopped.
     private func setRunning(_ running: Bool) {
         guard running != self.running else { return }
         self.running = running
-        if running {
-            let pausedAt = content.timeOffset
-            content.speed = 1
-            content.timeOffset = 0
-            content.beginTime = 0
-            content.beginTime = content.convertTime(CACurrentMediaTime(), from: nil) - pausedAt
-        } else {
-            content.timeOffset = content.convertTime(CACurrentMediaTime(), from: nil)
-            content.speed = 0
-        }
+        running ? content.resumeClock() : content.pauseClock()
     }
 }

@@ -226,7 +226,8 @@ In synced lyrics the current line sits on a frosted pill that glides to the next
 line and glows softly, tinted toward the cover. Upcoming lines settle one after
 another with a short easing curve; lines further away dim, shrink and soften. The line
 clock wakes only when the next line is due, about 150 ms early so the motion lands
-with the vocal. Neighbouring lines glide, while opening the view or a long seek
+with the vocal. The first line after an intro fades and glides into focus, just
+like neighbouring lines, while opening the view or a long seek
 jumps straight there. Hover highlights a line, and clicking it seeks. After a manual
 scroll, a glass **Follow lyrics** button resumes following.
 

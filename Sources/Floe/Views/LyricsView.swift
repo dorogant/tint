@@ -143,14 +143,18 @@ private struct SyncedLyricsView: View {
     }
 
     private func followPlayback() async {
+        var observedPlayback = false
         while !Task.isCancelled {
             let now = player.positionMs(at: Date()) / 1000 + Self.lead
             let index = LRC.activeIndex(in: lines, at: now)
             if index != active {
-                // Neighbouring lines glide; opening the view or a long seek jumps.
-                let near = if let index, let active { abs(index - active) <= 8 } else { false }
+                // Neighbouring lines glide, including the natural arrival after
+                // an intro. Initial positioning and long seeks still jump.
+                let near = if let index, let active { abs(index - active) <= 8 }
+                    else { observedPlayback && index != nil }
                 advance(to: index, animated: near)
             }
+            observedPlayback = true
             guard player.isPlaying else { return }
             let next = (index ?? -1) + 1
             guard next < lines.count else { return }

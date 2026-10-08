@@ -103,8 +103,12 @@ struct SettingsView: View {
                 note("Visual only. Audio is sampled about 30 times per second while Floe is active. Playback volume is unchanged.")
             }
         case .background:
-            SwiftUI.Section("Motion") {
+            SwiftUI.Section {
                 BackgroundOptions()
+            } header: {
+                Text("Motion")
+            } footer: {
+                note("Fluid swirls the cover's colors like ink, shakes on the beat and glows with the music. Beams sweep stage lights across the screen.")
             }
             SwiftUI.Section {
                 SettingsSlider("Blur", value: $visuals.backgroundBlur, range: 0...18,

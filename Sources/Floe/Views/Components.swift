@@ -29,7 +29,11 @@ struct Backdrop: View {
                         .id(appearance.backgroundURL)
                         .transition(.opacity)
                 }
-                if visuals.liveBackground { ReactiveBackground().allowsHitTesting(false) }
+                if visuals.liveBackground {
+                    // The album's own colours, even when the interface uses a fixed accent.
+                    ReactiveBackground(colors: appearance.coverURL == nil ? palette.colors : appearance.palette.colors)
+                        .allowsHitTesting(false)
+                }
                 RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
                                center: .topLeading, startRadius: 0, endRadius: 700)
                 Color.black.opacity(0.28)

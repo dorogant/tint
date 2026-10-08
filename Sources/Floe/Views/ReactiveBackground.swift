@@ -2,11 +2,12 @@ import MetalKit
 import SwiftUI
 
 /// A low-resolution Metal layer stretched behind the glass, drawing at 30 Hz.
-/// Its own clock freezes on pause and never recompiles the shader per frame.
+/// Its own clock freezes on pause and never recompiles the shaders per frame.
 struct ReactiveBackground: NSViewRepresentable {
+    /// The cover's colours, accent first.
+    var colors: [RGB]
     @Environment(VisualizationModel.self) private var visualization
     @Environment(VisualSettings.self) private var settings
-    @Environment(\.coverPalette) private var palette
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -33,8 +34,15 @@ struct ReactiveBackground: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         // The renderer reads each analysis frame itself; observing it here would
         // put the whole window through a SwiftUI update 30 times a second.
-        context.coordinator.renderer?.update(running: visualization.isRunning, color: palette.rgb,
-                                            reactivity: Float(settings.reactivity))
+        context.coordinator.renderer?.update(running: visualization.isRunning, configuration: configuration)
+    }
+
+    private var configuration: BackgroundConfiguration {
+        BackgroundConfiguration(kind: settings.backgroundKind, colors: colors,
+                                reactivity: Float(settings.reactivity), speed: Float(settings.motionSpeed),
+                                glow: Float(settings.glow), shake: Float(settings.shake),
+                                vividness: Float(settings.vividness), beamCount: settings.beamCount,
+                                strobe: settings.strobe)
     }
 
     static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
@@ -63,24 +71,18 @@ private final class BackgroundMetalView: MTKView {
 @MainActor
 final class BackgroundRenderer: NSObject, MTKViewDelegate {
     enum Failure: Error { case unavailable }
-    private struct Uniforms {
-        var color = SIMD4<Float>(0, 0, 0, 1)
-        var motion = SIMD4<Float>(0, 0, 1, 0)
-        var size = SIMD4<Float>(512, 320, 0, 0)
-        var beams = (SIMD4<Float>(), SIMD4<Float>(), SIMD4<Float>())
+    /// One pipeline per kind, both compiled once when the view is made.
+    struct Pipelines {
+        let fluid: MTLRenderPipelineState
+        let beams: MTLRenderPipelineState
     }
-    private static let beamCount = 12
     private weak var view: MTKView?
     private weak var status: VisualizationModel?
     private let commandQueue: MTLCommandQueue
-    private let pipeline: MTLRenderPipelineState
+    private let pipelines: Pipelines
     private var timer: DispatchSourceTimer?
-    private var uniforms = Uniforms()
-    /// Beam targets from the newest analysis frame; each tick eases toward them.
-    private var targets = [Float](repeating: 0, count: beamCount)
-    private var levels = [Float](repeating: 0, count: beamCount)
-    private var bass: Float = 0
-    private var time: Float = 0
+    private var animator = BackgroundAnimator()
+    private var configured = false
     private var previous: Date?
     private var busy = false
     private var needsStaticDraw = true
@@ -88,25 +90,49 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     init(view: MTKView, status: VisualizationModel) throws {
         guard let device = view.device, let queue = device.makeCommandQueue() else { throw Failure.unavailable }
         commandQueue = queue
-        let library = try device.makeLibrary(source: ReactiveShader.source, options: nil)
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
-        descriptor.fragmentFunction = library.makeFunction(name: "floeBackgroundFragment")
-        descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
-        pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        pipelines = try Self.makePipelines(device: device, pixelFormat: view.colorPixelFormat)
         self.view = view
         self.status = status
         super.init()
         DispatchQueue.main.async { status.backgroundFailure = nil }
     }
 
-    func update(running: Bool, color: RGB, reactivity: Float) {
-        let newColor = SIMD4<Float>(Float(color.r), Float(color.g), Float(color.b), 1)
-        let changed = uniforms.color != newColor || uniforms.motion.z != reactivity
-        uniforms.color = newColor
-        uniforms.motion.z = reactivity
+    static func makePipelines(device: MTLDevice, pixelFormat: MTLPixelFormat) throws -> Pipelines {
+        let library = try device.makeLibrary(source: ReactiveShader.source, options: nil)
+        func pipeline(_ fragment: String) throws -> MTLRenderPipelineState {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
+            descriptor.fragmentFunction = library.makeFunction(name: fragment)
+            descriptor.colorAttachments[0].pixelFormat = pixelFormat
+            return try device.makeRenderPipelineState(descriptor: descriptor)
+        }
+        return Pipelines(fluid: try pipeline("floeFluidFragment"), beams: try pipeline("floeBeamsFragment"))
+    }
+
+    /// Draws one frame of the animator's current state into an open encoder.
+    static func encode(_ encoder: MTLRenderCommandEncoder, pipelines: Pipelines,
+                       animator: BackgroundAnimator, width: Float, height: Float) {
+        switch animator.configuration.kind {
+        case .fluid:
+            var uniforms = animator.fluidUniforms(width: width, height: height)
+            encoder.setRenderPipelineState(pipelines.fluid)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<FluidUniforms>.stride, index: 0)
+        case .beams:
+            var uniforms = animator.beamUniforms(width: width, height: height)
+            encoder.setRenderPipelineState(pipelines.beams)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
+        }
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+    }
+
+    func update(running: Bool, configuration: BackgroundConfiguration) {
+        var changed = !configured || animator.configuration != configuration
+        // A running palette change crossfades; paused (and Reduce Motion) ones apply at once.
+        if changed { animator.configure(configuration, animated: running && configured) }
+        configured = true
         guard running else {
             stop()
+            if animator.settle() { changed = true }
             if changed || needsStaticDraw { redrawIfPaused() }
             return
         }
@@ -117,42 +143,13 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let now = Date()
-            if let previous = self.previous { self.time += Float(now.timeIntervalSince(previous)) }
+            let elapsed = self.previous.map { Float(now.timeIntervalSince($0)) } ?? 0
             self.previous = now
-            self.uniforms.motion.x = self.time
-            if let frame = self.status?.frame { self.aim(at: frame) }
-            self.ease()
+            self.animator.advance(by: elapsed, frame: self.status?.frame ?? .quiet)
             self.view?.draw()
         }
         self.timer = timer
         timer.resume()
-    }
-
-    private func aim(at frame: SpectrumFrame) {
-        uniforms.motion.y = min(1, max(0, frame.rms * 6))
-        // Six band groups per side, mirrored so bass lights the middle beams. The
-        // levels adapt to each song, so every group's hits make its beams flare.
-        let half = Self.beamCount / 2
-        let group = max(1, frame.levels.count / half)
-        for g in 0..<half {
-            let slice = frame.levels.dropFirst(g * group).prefix(group)
-            let level = slice.reduce(0, +) / Float(max(1, slice.count))
-            targets[half - 1 - g] = level
-            targets[half + g] = level
-        }
-    }
-
-    /// Quick attack, slower release: beams flare on hits and fall back smoothly.
-    private func ease() {
-        for i in levels.indices {
-            levels[i] += (targets[i] - levels[i]) * (targets[i] > levels[i] ? 0.55 : 0.14)
-        }
-        let low = (targets[Self.beamCount / 2 - 1] + targets[Self.beamCount / 2]) / 2
-        bass += (low - bass) * (low > bass ? 0.6 : 0.12)
-        uniforms.motion.w = bass
-        uniforms.beams = (SIMD4(levels[0], levels[1], levels[2], levels[3]),
-                          SIMD4(levels[4], levels[5], levels[6], levels[7]),
-                          SIMD4(levels[8], levels[9], levels[10], levels[11]))
     }
 
     func stop() {
@@ -174,15 +171,13 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         let aspect = view.bounds.height / view.bounds.width
         let size = CGSize(width: 512, height: max(160, min(640, 512 * aspect)))
         if view.drawableSize != size { view.drawableSize = size }
-        uniforms.size = SIMD4(Float(size.width), Float(size.height), 0, 0)
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let command = commandQueue.makeCommandBuffer(), let encoder = command.makeRenderCommandEncoder(descriptor: pass)
         else { return }
         busy = true
         needsStaticDraw = false
-        encoder.setRenderPipelineState(pipeline)
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        Self.encode(encoder, pipelines: pipelines, animator: animator,
+                    width: Float(size.width), height: Float(size.height))
         encoder.endEncoding()
         command.present(drawable)
         command.addCompletedHandler { [weak self] command in

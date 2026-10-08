@@ -60,8 +60,8 @@ struct Phase4Tests {
         precondition(drained.rms < 0.001 && drained.bands.max()! < 0.001 && drained.levels.max()! < 0.001)
         if let device = MTLCreateSystemDefaultDevice() {
             let library = try! device.makeLibrary(source: ReactiveShader.source, options: nil)
-            precondition(library.functionNames.contains("floeBackgroundVertex") && library.functionNames.contains("floeBackgroundFragment"))
-            print("PASS: Metal background shader compiles")
+            precondition(["floeBackgroundVertex", "floeFluidFragment", "floeBeamsFragment"].allSatisfy(library.functionNames.contains))
+            print("PASS: Metal background shaders compile")
         } else { print("SKIP: Metal device unavailable") }
         print("PASS: 10 synthetic FFT checks (silence, frequency bands, stereo, rolling input, reset, adaptive levels, decay)")
     }

@@ -6,22 +6,15 @@ struct LyricsView: View {
     @ViewState private var follow = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Lyrics", systemImage: "quote.bubble")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(Theme.secondary)
-                .padding(.horizontal, 24)
+        ZStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // New content gets a fresh line clock; it never reuses the old lines.
                 .id(phaseKey)
                 .transition(.blurReplace)
-            if case .loaded = lyrics.state {
-                Link("Lyrics from LRCLIB", destination: URL(string: "https://lrclib.net")!)
-                    .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                    .padding(.horizontal, 24)
-            }
         }
+        // Synced lines rest at 40% of the height under a faded edge, so only
+        // messages and untimed lyrics need this inset from the panel's top.
         .padding(.vertical, 24)
         .overlay(alignment: .bottom) {
             if !follow, case .loaded(.synced) = lyrics.state {
@@ -177,6 +170,8 @@ private struct SyncedLyricsView: View {
 }
 
 /// The current line sits on the frosted pill; the rest dim, shrink and soften with distance.
+/// Under the pointer a line previews itself: it sharpens, brightens, grows a
+/// little toward the current line's size and shows the time it seeks to.
 private struct LyricRow: View {
     let line: LyricLine
     /// 0 is the current line, negative already sung, positive upcoming.
@@ -206,7 +201,7 @@ private struct LyricRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 11)
-                .scaleEffect(current || still ? 1 : 0.94, anchor: .leading)
+                .scaleEffect(current || still ? 1 : (hovering ? 0.955 : 0.94), anchor: .leading)
                 .blur(radius: blur)
                 .background {
                     if current {
@@ -214,16 +209,41 @@ private struct LyricRow: View {
                             .overlay(shape.strokeBorder(.white.opacity(0.1)))
                             .matchedGeometryEffect(id: "pill", in: pill)
                     } else if hovering {
-                        shape.fill(.white.opacity(0.035))
+                        shape.fill(.white.opacity(0.045))
+                            .overlay(shape.strokeBorder(.white.opacity(0.05)))
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if hovering {
+                        seekTime
+                            .padding(.top, 11 + max(0, fontSize * 1.2 - 22) / 2)
+                            .padding(.trailing, 12)
+                            .transition(.opacity.combined(with: .offset(x: still ? 0 : -4)))
                     }
                 }
                 .contentShape(shape)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LyricPressStyle(still: still))
         .onHover { hovering = $0 }
         .animation(rowAnimation, value: distance)
-        .floeAnimation(value: hovering, duration: 0.18)
+        .animation(still ? .easeOut(duration: 0.15) : .spring(duration: hovering ? 0.16 : 0.24, bounce: 0),
+                   value: hovering)
         .help("Seek to this line")
+    }
+
+    /// Where a click lands, so the row reads as a way to seek.
+    private var seekTime: some View {
+        let seconds = Int(line.time)
+        return Label(String(format: "%d:%02d", seconds / 60, seconds % 60), systemImage: "play.fill")
+            .labelStyle(SeekTimeLabelStyle())
+            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.75))
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(.black.opacity(0.28), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.08)))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder private var label: some View {
@@ -239,7 +259,7 @@ private struct LyricRow: View {
     private var opacity: Double {
         switch distance {
         case 0: 1
-        case _ where hovering: 0.7
+        case _ where hovering: 0.78
         case ..<0: 0.3
         default: max(0.32, 0.58 - Double(distance - 1) * 0.06)
         }
@@ -254,5 +274,28 @@ private struct LyricRow: View {
     /// when the next line arrives, extending full-list redraws into the next beat.
     private var rowAnimation: Animation? {
         still ? nil : .easeOut(duration: 0.3).delay(distance > 0 ? Double(min(distance, 3)) * 0.02 : 0)
+    }
+}
+
+/// A slight press toward the leading edge, released on a short spring.
+private struct LyricPressStyle: ButtonStyle {
+    let still: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !still ? 0.98 : 1, anchor: .leading)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(still ? .easeOut(duration: 0.15)
+                       : .spring(duration: configuration.isPressed ? 0.14 : 0.3, bounce: configuration.isPressed ? 0 : 0.15),
+                       value: configuration.isPressed)
+    }
+}
+
+private struct SeekTimeLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon.font(.system(size: 7, weight: .bold))
+            configuration.title
+        }
     }
 }

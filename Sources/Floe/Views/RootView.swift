@@ -32,12 +32,14 @@ struct RootView: View {
 struct MainView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
+    @Environment(PlayerModel.self) private var player
 
     @Namespace private var hero
     @ViewState private var showingConnect: ConnectSection?
     @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
+    @PlaybackMotion.Still private var still
 
     var body: some View {
         VStack(spacing: 10) {
@@ -77,7 +79,9 @@ struct MainView: View {
         }
         .padding([.horizontal, .bottom], 10)
         .environment(\.heroNamespace, hero)
-        .floeAnimation(value: navigator.surface, duration: 0.55, bounce: 0.12)
+        .floeAnimation(value: navigator.surface, duration: 0.45, bounce: 0.12)
+        // A status banner's room opens on the same spring it drops in on.
+        .animation(still ? nil : PlaybackMotion.enter, value: PlaybackStatusView.key(player))
         .toolbar { toolbarContent }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
@@ -92,18 +96,14 @@ struct MainView: View {
                 .help("Back")
         }
         ToolbarItem(placement: .principal) {
-            Picker("View", selection: $navigator.surface) {
-                Text("Library").tag(Navigator.Surface.library)
-                Text("Now Playing").tag(Navigator.Surface.nowPlaying)
-                Text("Lyrics").tag(Navigator.Surface.lyrics)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            SurfaceSwitcher(selection: $navigator.surface)
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { showingVisuals.toggle() } label: { Label("Visuals", systemImage: "waveform") }
-                .help("Visuals")
-                .popover(isPresented: $showingVisuals) { VisualControls() }
+            Button { showingVisuals.toggle() } label: {
+                Label { Text("Visuals") } icon: { ToolbarSymbol(systemImage: "waveform", open: showingVisuals) }
+            }
+            .help("Visuals")
+            .popover(isPresented: $showingVisuals) { VisualControls() }
             ForEach(ConnectSection.allCases) { section in
                 connectButton(section)
             }
@@ -120,7 +120,9 @@ struct MainView: View {
 
     private func connectButton(_ section: ConnectSection) -> some View {
         Button { showingConnect = section } label: {
-            Label(LocalizedStringKey(section.title), systemImage: section.symbol)
+            Label { Text(LocalizedStringKey(section.title)) } icon: {
+                ToolbarSymbol(systemImage: section.symbol, open: showingConnect == section)
+            }
         }
         .help(LocalizedStringKey(section.title))
         .popover(isPresented: Binding(
@@ -139,6 +141,101 @@ struct MainView: View {
         case let .album(id): AlbumView(id: id)
         case let .artist(id): ArtistView(id: id)
         }
+    }
+}
+
+/// Library, Now Playing and Lyrics as one control: a pill glides to the chosen
+/// view and the others brighten under the pointer. The toolbar supplies the
+/// glass behind it, and VoiceOver gets the segmented picker it replaces.
+private struct SurfaceSwitcher: View {
+    @Binding var selection: Navigator.Surface
+    @Namespace private var pill
+    @PlaybackMotion.Still private var still
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Navigator.Surface.allCases, id: \.self) { surface in
+                // With Reduce Motion each pill is its own, so they crossfade instead.
+                SurfaceSegment(title: surface.title, selected: selection == surface, pill: pill,
+                               pillID: still ? surface.rawValue : "pill") {
+                    selection = surface
+                }
+            }
+        }
+        .padding(3)
+        .animation(still ? PlaybackMotion.fade : PlaybackMotion.glide, value: selection)
+        .accessibilityRepresentation {
+            Picker("View", selection: $selection) {
+                ForEach(Navigator.Surface.allCases, id: \.self) { surface in
+                    Text(surface.title).tag(surface)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+}
+
+private struct SurfaceSegment: View {
+    let title: LocalizedStringKey
+    let selected: Bool
+    let pill: Namespace.ID
+    let pillID: String
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            // The toolbar flattens translucent text colours, so dim with opacity.
+            Text(title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white)
+                .opacity(selected ? 1 : (hovering ? 0.88 : 0.6))
+                .padding(.horizontal, 14)
+                .frame(height: 26)
+                .background {
+                    if selected {
+                        Capsule().fill(.white.opacity(0.15))
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
+                            .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
+                            .matchedGeometryEffect(id: pillID, in: pill)
+                    } else {
+                        Capsule().fill(Theme.hover).opacity(hovering ? 1 : 0)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(TactileButtonStyle(pressedScale: 0.97))
+        .onHover { hovering = $0 }
+        .hoverMotion(hovering)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private extension Navigator.Surface {
+    var title: LocalizedStringKey {
+        switch self {
+        case .library: "Library"
+        case .nowPlaying: "Now Playing"
+        case .lyrics: "Lyrics"
+        }
+    }
+}
+
+/// A toolbar icon that answers its panel: it bounces as the panel opens and
+/// takes the accent while it's up. The toolbar draws the hover highlight.
+private struct ToolbarSymbol: View {
+    let systemImage: String
+    let open: Bool
+    @Environment(\.coverPalette) private var palette
+    @PlaybackMotion.Still private var still
+    @ViewState private var opens = 0
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .symbolEffect(.bounce, options: .speed(1.3), value: opens)
+            .foregroundStyle(open ? AnyShapeStyle(palette.highlight) : AnyShapeStyle(.primary))
+            .onChange(of: open) { if open && !still { opens += 1 } }
+            .animation(PlaybackMotion.fade, value: open)
     }
 }
 

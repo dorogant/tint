@@ -180,7 +180,6 @@
 "This device does not accept remote control." = "Цей пристрій не дозволяє дистанційне керування.";
 "Switch playback to this device" = "Перемкнути відтворення на цей пристрій";
 "View" = "Розділ";
-"Lyrics from LRCLIB" = "Текст пісні з LRCLIB";
 "Hide lyrics" = "Сховати текст";
 "Show lyrics" = "Показати текст";
 "Display" = "Відображення";
@@ -208,3 +207,7 @@
 "Playing" = "Відтворюється";
 "Account" = "Обліковий запис";
 "Active device" = "Активний пристрій";
+"Repeat off" = "Повтор вимкнено";
+"Repeat all" = "Повторювати все";
+"Repeat one" = "Повторювати одну пісню";
+"More" = "Більше";

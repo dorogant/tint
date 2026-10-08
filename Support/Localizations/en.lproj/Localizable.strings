@@ -180,7 +180,6 @@
 "This device does not accept remote control." = "This device does not accept remote control.";
 "Switch playback to this device" = "Switch playback to this device";
 "View" = "View";
-"Lyrics from LRCLIB" = "Lyrics from LRCLIB";
 "Hide lyrics" = "Hide lyrics";
 "Show lyrics" = "Show lyrics";
 "Display" = "Display";
@@ -208,3 +207,7 @@
 "Playing" = "Playing";
 "Account" = "Account";
 "Active device" = "Active device";
+"Repeat off" = "Repeat off";
+"Repeat all" = "Repeat all";
+"Repeat one" = "Repeat one";
+"More" = "More";

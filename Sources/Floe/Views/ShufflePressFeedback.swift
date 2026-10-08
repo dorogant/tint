@@ -7,6 +7,8 @@ struct ShufflePressFeedback: ViewModifier {
     let enabled: Bool
     let diameter: CGFloat
     let tint: Color
+    /// The ripple marks shuffle turning on; turning it off only kicks.
+    var ripple = true
 
     private struct Frame {
         var rotation = 0.0
@@ -27,7 +29,7 @@ struct ShufflePressFeedback: ViewModifier {
                             .strokeBorder(tint, lineWidth: 1)
                             .frame(width: diameter, height: diameter)
                             .scaleEffect(frame.haloScale)
-                            .opacity(frame.haloOpacity)
+                            .opacity(ripple ? frame.haloOpacity : 0)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                     }

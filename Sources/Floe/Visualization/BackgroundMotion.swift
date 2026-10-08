@@ -6,47 +6,56 @@ import simd
 struct BackgroundConfiguration: Equatable {
     var kind = VisualSettings.BackgroundKind.fluid
     var colors = CoverColorExtractor.shades(of: .fallback)
+    /// A black-and-white or grey cover: its palette is silver with at most a faint
+    /// cast, so Beams play it as clean white stage light on darker, untinted haze.
+    var neutral = false
     var reactivity: Float = 1
     var speed: Float = 1
     var glow: Float = 1
-    var shake: Float = 1
+    /// How hard kicks move things: Beams' outer beams and Fluid's breath.
+    var punch: Float = 1
     var vividness: Float = 1
     var beamCount = 6
     var strobe = false
 }
 
 typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+typealias Heads = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
+                   SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 
 /// Matches `FluidUniforms` in `ReactiveShader`.
 struct FluidUniforms {
     var colors: Palette
-    /// Flow clock, energy and glow pulse, then a spare.
+    /// Flow clock, energy, glow, fine detail (the highs).
     var motion: SIMD4<Float>
-    /// Drawable width and height, then the jolt's punch-in and a spare.
+    /// Drawable width and height, the bass breath, the ink's body (the mids).
     var size: SIMD4<Float>
-    /// The whole field's jolt, then the ripple's strength and age.
-    var shake: SIMD4<Float>
-    /// Where the last ripple started.
-    var ripple: SIMD4<Float>
 }
 
 /// Matches `BeamUniforms` in `ReactiveShader`.
 struct BeamUniforms {
     var colors: Palette
-    /// Haze clock, shimmer, strobe flash, glow.
+    /// Haze clock, glitter (the highs), strobe flash, glow.
     var motion: SIMD4<Float>
     /// Drawable width and height, head count, floor beams' intensity.
     var size: SIMD4<Float>
-    /// The floor beams' angle, spread and two palette slots.
+    /// The floor beams' angle and spread, the haze fill (the mids), the angle's sine.
     var floor: SIMD4<Float>
-    /// Per head: angle from straight down, intensity, spread, palette slot.
-    var heads: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
-                SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+    /// The haze's colour, then 1 for a neutral cover.
+    var haze: SIMD4<Float>
+    /// The left and right floor beams' colours.
+    var floorColors: (SIMD4<Float>, SIMD4<Float>)
+    /// Per head: angle from straight down, intensity, spread, glint.
+    var heads: Heads
+    /// Per head: colour, then the sine of its angle.
+    var tints: Heads
 }
 
 /// The live background's state between frames, apart from Metal so tests can
 /// step it frame by frame: the beat detector, the palette crossfade and each
-/// kind's motion. Its clock only moves while it's advanced, so it freezes on pause.
+/// kind's motion. Analysis frames arrive at 30 Hz through `receive`; `step`
+/// moves the motion on at whatever rate the display draws. Its clock only
+/// moves while it's stepped, so it freezes on pause.
 struct BackgroundAnimator {
     private(set) var configuration = BackgroundConfiguration()
     private(set) var pulse = BeatDetector.Pulse()
@@ -57,6 +66,8 @@ struct BackgroundAnimator {
     private(set) var fluid = FluidMotion()
     private(set) var beams = BeamRig()
     static let crossfade: Float = 1.6
+    /// The analysis rate, which is the detector's time step whatever the display does.
+    static let analysisInterval: Float = 1 / 30
 
     /// Running changes crossfade the palette; paused ones (and Reduce Motion) apply at once.
     mutating func configure(_ configuration: BackgroundConfiguration, animated: Bool) {
@@ -75,14 +86,29 @@ struct BackgroundAnimator {
         return true
     }
 
-    mutating func advance(by dt: Float, frame: SpectrumFrame) {
+    /// One new analysis frame. Hits are read here, exactly once each.
+    mutating func receive(_ frame: SpectrumFrame) {
+        pulse = detector.update(frame, dt: Self.analysisInterval)
+        switch configuration.kind {
+        case .fluid: fluid.receive(pulse, configuration: configuration)
+        case .beams: beams.receive(pulse, configuration: configuration)
+        }
+    }
+
+    /// Moves everything on by `dt` seconds of display time.
+    mutating func step(by dt: Float) {
         let dt = min(max(dt, 0), 0.1)
-        pulse = detector.update(frame, dt: dt)
         fade = min(1, fade + dt / Self.crossfade)
         switch configuration.kind {
-        case .fluid: fluid.advance(by: dt, pulse: pulse, configuration: configuration)
-        case .beams: beams.advance(by: dt, pulse: pulse, configuration: configuration)
+        case .fluid: fluid.step(by: dt, pulse: pulse, configuration: configuration)
+        case .beams: beams.step(by: dt, configuration: configuration)
         }
+    }
+
+    /// One analysis frame and `dt` of motion, as tests and a 30 Hz display see it.
+    mutating func advance(by dt: Float, frame: SpectrumFrame) {
+        receive(frame)
+        step(by: dt)
     }
 
     /// The palette as drawn now, eased between the old cover's colours and the new.
@@ -98,22 +124,30 @@ struct BackgroundAnimator {
 
     func fluidUniforms(width: Float, height: Float) -> FluidUniforms {
         FluidUniforms(colors: Self.palette(colors),
-                      motion: SIMD4(fluid.flow, min(1, pulse.energy * configuration.reactivity), fluid.glow, 0),
-                      size: SIMD4(width, height, fluid.punch, 0),
-                      shake: SIMD4(fluid.jolt.x, fluid.jolt.y, fluid.rippleStrength, fluid.rippleAge),
-                      ripple: SIMD4(fluid.rippleCentre.x, fluid.rippleCentre.y, 0, 0))
+                      motion: SIMD4(fluid.flow, min(1, pulse.energy * configuration.reactivity), fluid.glow, fluid.detail),
+                      size: SIMD4(width, height, fluid.breath.position, fluid.body))
     }
 
     func beamUniforms(width: Float, height: Float) -> BeamUniforms {
         let count = min(BeamRig.maximumHeads, max(1, configuration.beamCount))
+        let palette = colors
         // Paired from the palette being faded to, so a crossfade can't swap a pair midway.
         let pair = beams.colorPair(to)
-        let h = beams.heads(count: count, colors: pair)
-        return BeamUniforms(colors: Self.palette(colors),
-                            motion: SIMD4(beams.haze, beams.shimmer, beams.flash, configuration.glow),
-                            size: SIMD4(width, height, Float(count), beams.floorLevel),
-                            floor: SIMD4(beams.floorAngle, beams.spread, Float(pair.0), Float(pair.1)),
-                            heads: (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]))
+        let h = beams.heads(count: count, palette: palette, pair: pair)
+        let average = palette.reduce(SIMD3<Float>.zero, +) / Float(palette.count)
+        // The vocal colour: the cover's accent, softened toward the whole palette;
+        // nearly grey for a neutral cover, so silver light isn't muddied.
+        var haze = palette[0] * 0.6 + average * 0.4
+        if configuration.neutral { haze = haze * 0.3 + SIMD3(repeating: (haze * SIMD3(0.2126, 0.7152, 0.0722)).sum()) * 0.7 }
+        let fill = min(1.2, beams.hazeFill * configuration.reactivity) * (configuration.neutral ? 0.7 : 1)
+        return BeamUniforms(colors: Self.palette(palette),
+                            motion: SIMD4(beams.haze, min(1.5, beams.high * configuration.reactivity), beams.flash, configuration.glow),
+                            size: SIMD4(width, height, Float(count), beams.floorLevel * (0.75 + 0.5 * beams.kickGlow)),
+                            floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, sin(beams.floorAngle)),
+                            haze: SIMD4(haze, configuration.neutral ? 1 : 0),
+                            floorColors: (SIMD4(palette[pair.bass], 0), SIMD4(palette[pair.treble], 0)),
+                            heads: (h[0].0, h[1].0, h[2].0, h[3].0, h[4].0, h[5].0, h[6].0, h[7].0),
+                            tints: (h[0].1, h[1].1, h[2].1, h[3].1, h[4].1, h[5].1, h[6].1, h[7].1))
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.
@@ -132,54 +166,38 @@ struct BackgroundAnimator {
     }
 }
 
-/// Fluid's motion: a flow clock that quickens with the music, a jolt and a
-/// ripple on each beat that die out within a fraction of a second, and a glow
-/// that swells with energy and flares on beats.
+/// Fluid: ink in water that moves only as the music does. The current's pace
+/// follows the song's loudness over a couple of seconds, so it never lurches;
+/// the bass breathes the whole field in from the centre and out again (kicks
+/// make it swell, never jolt); kicks and energy brighten the glow on the
+/// brightest ink; vocals fill the ink out and the highs bring up fine strands.
 struct FluidMotion {
     private(set) var flow: Float = 0
     private(set) var glow: Float = 0
-    private(set) var rippleCentre = SIMD2<Float>(0.8, 0.5)
-    private(set) var rippleAge: Float = 10
-    private(set) var rippleStrength: Float = 0
-    private var joltAge: Float = 10
-    private var joltStrength: Float = 0
-    private var joltDirection = SIMD2<Float>(1, 0)
-    private var random = SeededRandom(seed: 0x5EED)
+    /// The bass breath: 0 at rest, about 1 on a full kick.
+    private(set) var breath = Spring()
+    /// The mids, filling the ink.
+    private(set) var body: Float = 0
+    /// The highs, sharpening the strands.
+    private(set) var detail: Float = 0
+    private var pace: Float = 0
+    private var swell: Float = 0
 
-    mutating func advance(by dt: Float, pulse: BeatDetector.Pulse, configuration: BackgroundConfiguration) {
+    mutating func receive(_ pulse: BeatDetector.Pulse, configuration: BackgroundConfiguration) {
+        if pulse.kick > 0 { swell = max(swell, min(1.2, pulse.kick * configuration.reactivity)) }
+    }
+
+    mutating func step(by dt: Float, pulse: BeatDetector.Pulse, configuration: BackgroundConfiguration) {
         let react = configuration.reactivity
-        flow += dt * configuration.speed * (0.4 + 0.6 * min(1, pulse.energy * react) + 0.8 * pulse.kick * react)
-        joltAge += dt
-        rippleAge += dt
-        let hit = min(2.5, pulse.beat * react * configuration.shake)
-        if hit > 0.02 {
-            let angle = random.next() * 2 * .pi
-            joltDirection = SIMD2(cos(angle), sin(angle))
-            joltStrength = hit
-            joltAge = 0
-            rippleCentre = SIMD2(0.25 + 0.5 * random.next(), 0.25 + 0.5 * random.next())
-            rippleStrength = hit
-            rippleAge = 0
-        }
-        let target = configuration.glow * min(1.4, react * (0.3 * pulse.energy + 0.7 * pulse.kick))
-        glow += (target - glow) * (target > glow ? 0.75 : BeatDetector.rate(dt, 0.3))
-    }
-
-    /// A short, damped back-and-forth: strongest on the beat's own frame.
-    var jolt: SIMD2<Float> {
-        joltDirection * joltStrength * 0.028 * cos(joltAge * 2 * .pi * 6) * expf(-joltAge * 11)
-    }
-
-    /// The field punches in slightly on a hit.
-    var punch: Float { joltStrength * 0.025 * expf(-joltAge * 9) }
-}
-
-/// Deterministic, so test renders repeat exactly.
-struct SeededRandom {
-    private var state: UInt64
-    init(seed: UInt64) { state = seed }
-    mutating func next() -> Float {
-        state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-        return Float(state >> 40) / Float(1 << 24)
+        pace += (pulse.energy - pace) * BeatDetector.rate(dt, 1.5)
+        flow += dt * configuration.speed * (0.35 + 0.65 * min(1, pace * react))
+        swell *= expf(-dt / 0.3)
+        // Critically damped: the field swells and settles without wobbling.
+        let depth = configuration.punch * react * (0.45 * pulse.bass + 0.7 * swell)
+        breath.step(toward: min(1.5, depth), frequency: 1.3, damping: 1, dt: dt)
+        let target = configuration.glow * min(1.4, react * (0.3 * pulse.energy + 0.45 * swell + 0.15 * pulse.bass))
+        glow += (target - glow) * BeatDetector.rate(dt, target > glow ? 0.08 : 0.4)
+        body += (min(1, pulse.mid * react) - body) * BeatDetector.rate(dt, 0.4)
+        detail += (min(1, pulse.high * react) - detail) * BeatDetector.rate(dt, 0.3)
     }
 }

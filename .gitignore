@@ -5,7 +5,8 @@
 /.swiftpm/
 Package.resolved
 
-# Secrets never belong in the repo (PKCE needs no client secret; tokens live in the Keychain)
+# Secrets never belong in the repo (PKCE needs no client secret; tokens live in
+# ~/Library/Application Support/Floe/Credentials)
 *.p12
 *.pem
 .env

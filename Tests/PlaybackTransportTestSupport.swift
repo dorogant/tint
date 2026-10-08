@@ -1,7 +1,7 @@
 import Foundation
 
 // Only the I/O boundary is synthetic: PlayerModel and its event/metadata types
-// are compiled from production. No login, Keychain, audio engine or network.
+// are compiled from production. No login, saved credentials, audio engine or network.
 struct PlayRequest: Sendable {
     var contextURI: String?
     var tracks: [String]?
@@ -54,11 +54,12 @@ struct PlayRequest: Sendable {
     func update() {}
 }
 
-enum Keychain {
-    enum Account { static let playbackSession = "synthetic-session" }
-    static func read(_ account: String) -> Data? { preconditionFailure("Unexpected Keychain read") }
-    static func write(_ data: Data, account: String) { preconditionFailure("Unexpected Keychain write") }
-    static func delete(_ account: String) { preconditionFailure("Unexpected Keychain delete") }
+final class CredentialStore: Sendable {
+    enum Account { case playbackSession }
+    static let shared = CredentialStore()
+    func read(_ account: Account) -> Data? { preconditionFailure("Unexpected credential read") }
+    func write(_ data: Data, account: Account) { preconditionFailure("Unexpected credential write") }
+    func delete(_ account: Account) { preconditionFailure("Unexpected credential delete") }
 }
 
 enum SpotifyOAuth {

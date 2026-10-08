@@ -72,8 +72,8 @@ cp -R "$ROOT/Support/Localizations/"*.lproj "$APP/Contents/Resources/"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 
-# A stable certificate keeps the Keychain's access rule valid across rebuilds;
-# ad-hoc signatures change every build and trigger a Keychain prompt.
+# A stable certificate keeps Floe's code identity across rebuilds (ad-hoc signatures
+# change every build), so it can delete older builds' Keychain items without a prompt.
 if security find-identity -p codesigning 2>/dev/null | grep -qF -e "\"$SIGN_IDENTITY\"" -e " $SIGN_IDENTITY "; then
     step "Sign ($SIGN_IDENTITY)"
     codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$APP"

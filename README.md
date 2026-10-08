@@ -162,14 +162,20 @@ Tools; XCTest is unavailable in the CLT-only installation.
 Open **Visuals** using the waveform icon in the top toolbar. The default is a
 circular bar visualizer around the cover; **Normal** places it across the bottom.
 Both styles support **Bars** and **Wave**. Sensitivity changes only the visual
-response. The optional **Live background** turns the backdrop into a light show:
-twelve beams rise from the bottom edge, bass in the middle. Each reaches higher and
-glows brighter with its part of the spectrum as the beams sway, a bass bloom pulses
-from below, and colour clouds drift behind. **Reactivity** scales the response.
+response. The optional **Live background** turns the backdrop into a light show
+that plays along in layers. **Beams**: bass lights, widens and punches the outer
+beams on each kick; hi-hats light the middle beams and glint in the haze; snares
+flick the middle pairs across; sustained vocals tint the smoke. Beams move on
+damped springs, turn on the beat, change look every eight bars or on a drop, and
+come to rest in silence. **Fluid** swirls the cover's colours and breathes with the
+bass. **Bass punch** scales the kick response; black-and-white covers draw clean
+white light. Colours always come from the cover.
 
-Analysis runs at about 30 Hz only while an effect is visible and Tint is active.
-The Metal background draws at 30 Hz into a small surface stretched behind the
-glass. Both clocks stop on pause, when effects are disabled, or with app/system
+Analysis runs at about 30 Hz only while an effect is visible and Tint is active;
+it splits the spectrum into bass, low-mids, mids and highs and detects kicks,
+snares, hats and the tempo. The Metal background draws at about one pixel per point
+on the display's refresh (Beams 60 Hz, Fluid 30 Hz), with the haze at quarter
+resolution. Both clocks stop on pause, when effects are disabled, or with app/system
 Reduce Motion. Hidden visualizers stop analysis unless the live background needs
 it. Self-tests temporarily bypass the foreground requirement.
 
@@ -191,7 +197,8 @@ Tint follows macOS conventions where they fit. The window has a standard unified
 toolbar beside the window controls: Back, a Library / Now Playing / Lyrics switcher,
 and one group of Visuals, Queue, Devices, Appearance and Settings buttons, all in
 the system's Liquid Glass. Settings is a standard tabbed window with grouped forms.
-The Play buttons and the search field use interactive glass, and SF Symbols morph
+The Play buttons use interactive glass, search lives at the top of the sidebar
+(⌘F), and SF Symbols morph
 or bounce for play/pause, like, repeat, transport presses and the volume level.
 Shuffle has a half-second crossover twist, elastic squeeze and fading accent
 ripple on each press. It dispatches playback immediately, adds no idle animation,
@@ -261,7 +268,16 @@ is not a new whole-app CPU measurement.
 `scripts/test-background.sh` exercises the production Metal renderer with synthetic
 colors and spectrum data, including GPU pixel readback. Paused cover/accent changes
 and window resizing redraw one static frame; unchanged settings stay idle. Changes
-that arrive during GPU work coalesce into the latest replacement frame.
+that arrive during GPU work coalesce into the latest replacement frame. It also feeds
+synthetic songs (kicks, snares, hats, vocals, drops, silence) through the real
+analyzer and checks the layer mapping, motion limits, crisp edges and flash rate.
+
+`scripts/test-palette.sh` runs cover colour extraction on drawn covers (black and
+white, sepia, dark red, navy, pastel, neon specks) and checks that neutral covers
+stay neutral, dark ones keep their hue and nothing turns green that isn't.
+`scripts/test-layout.sh` renders the real window offscreen with a fake library at
+three sizes and checks alignment guides, scroll resting positions and search focus;
+PNGs go to /tmp/tint-layout.
 
 `scripts/benchmark-lyrics.sh` opens a separate native window with synthetic timed
 lines, measures CPU during steady/changing/paused lyrics, checks line-clock wakeups,

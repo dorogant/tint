@@ -25,8 +25,8 @@ final class AppSettings {
         self.language = ["system", "en", "uk"].contains(language) ? language : "system"
         glassOpacity = min(Self.glassOpacityRange.upperBound,
                            max(Self.glassOpacityRange.lowerBound, defaults.object(forKey: "glassOpacity") as? Double ?? 0.62))
-        let accent = defaults.string(forKey: "fixedAccent") ?? "green"
-        fixedAccent = ["green", "blue", "violet", "amber"].contains(accent) ? accent : "green"
+        let accent = defaults.string(forKey: "fixedAccent") ?? "blue"
+        fixedAccent = ["green", "blue", "violet", "amber"].contains(accent) ? accent : "blue"
     }
 
     var playbackConfiguration: PlaybackConfiguration {

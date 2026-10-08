@@ -1,8 +1,6 @@
 import SwiftUI
 
 enum Theme {
-    /// Default accent; cover palettes are inherited through the view environment.
-    static let accent = Color(red: 0.12, green: 0.84, blue: 0.38)
     static let base = Color(red: 0.045, green: 0.05, blue: 0.06)
     static let panelStroke = Color.white.opacity(0.08)
     static let hover = Color.white.opacity(0.06)
@@ -49,7 +47,8 @@ struct Backdrop: View {
                 }
                 if visuals.liveBackground {
                     // The album's own colours, even when the interface uses a fixed accent.
-                    ReactiveBackground(colors: appearance.coverURL == nil ? palette.colors : appearance.palette.colors)
+                    let cover = appearance.coverURL == nil ? palette : appearance.palette
+                    ReactiveBackground(colors: cover.colors, neutral: cover.isNeutral)
                         .allowsHitTesting(false)
                 }
                 RadialGradient(colors: [palette.accent.opacity(0.22), .clear],

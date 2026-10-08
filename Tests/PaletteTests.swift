@@ -95,10 +95,10 @@ struct PaletteTests {
     }
 
     static func shadeChecks() {
-        for name in ["green", "blue", "violet", "amber"] {
-            let base = name == "blue" ? RGB.fallback : RGB(r: name == "green" ? 0.12 : name == "violet" ? 0.73 : 1,
-                                                         g: name == "green" ? 0.84 : name == "violet" ? 0.5 : 0.7,
-                                                         b: name == "green" ? 0.38 : name == "violet" ? 1 : 0.3)
+        // The fixed accents, as CoverPalette.fixed defines them.
+        let fixed = [("green", RGB(r: 0.12, g: 0.84, b: 0.38)), ("blue", RGB.fallback),
+                     ("violet", RGB(r: 0.73, g: 0.5, b: 1)), ("amber", RGB(r: 1, g: 0.7, b: 0.3))]
+        for (name, base) in fixed {
             let shades = CoverColorExtractor.shades(of: base).map(OKLab.init)
             expectTrue(shades.count == CoverColorExtractor.paletteSize, "\(name): shades must fill every slot")
             expectTrue(shades.allSatisfy { hueGap($0, OKLab(base)) < 20 }, "\(name): shades must keep the hue")

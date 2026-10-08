@@ -102,9 +102,11 @@ struct OKLab: Equatable, Sendable {
 /// Pixels are weighed in OKLab by how much they catch the eye (area, chroma,
 /// lightness, a little centre bias), so a small neon mark on black can lead
 /// but a speck can't, and deep reds or navies on black still count. A cover
-/// with no colour that matters is neutral: its colours become its own tones
-/// (silver, white, greys) with whatever faint warm or cool cast it has. No hue
-/// is ever invented, and nothing falls back to a fixed colour while a cover exists.
+/// whose only colour is one consistent tint (sepia, a violet haze) leads with
+/// that tint, as quietly as it is. A cover with no colour at all is neutral:
+/// its colours become its own tones (silver, white, greys) with whatever faint
+/// warm or cool cast it has. No hue is ever invented, and nothing falls back
+/// to a fixed colour while a cover exists.
 enum CoverColorExtractor {
     /// Live backgrounds always get this many colours, so their shaders have fixed slots.
     static let paletteSize = 5

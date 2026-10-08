@@ -221,5 +221,17 @@
 "Strobe on the beat" = "Стробоскоп у такт";
 
 /* Live backgrounds */
+"Preset" = "Пресет";
+"General" = "Загальні";
+"Genres" = "Жанри";
+"Custom" = "Власний";
+"Subtle" = "Стриманий";
+"Balanced" = "Збалансований";
+"Intense" = "Яскравий";
+"Club" = "Клуб";
+"Hip-hop" = "Хіп-хоп";
+"Rock" = "Рок";
+"Chill" = "Чіл";
+"Acoustic" = "Акустика";
 "Bass punch" = "Удар басу";
 "Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Обидва розкладають музику на шари. Промені: бочка штовхає крайні промені, хай-хети запалюють середні, вокал наповнює дим кольором, а рухи повертають у такт. Рідина розливає кольори обкладинки, наче чорнило, і дихає разом із басом. Удар басу задає, наскільки сильно бочка рухає світло. Стробоскоп блимає не частіше ніж тричі на секунду.";

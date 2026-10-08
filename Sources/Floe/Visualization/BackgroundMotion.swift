@@ -35,7 +35,7 @@ struct FluidUniforms {
 /// Matches `BeamUniforms` in `ReactiveShader`.
 struct BeamUniforms {
     var colors: Palette
-    /// Haze clock, glitter (the highs), strobe flash, glow.
+    /// Haze clock, a spare, strobe flash, glow.
     var motion: SIMD4<Float>
     /// Drawable width and height, head count, floor beams' intensity.
     var size: SIMD4<Float>
@@ -141,7 +141,7 @@ struct BackgroundAnimator {
         if configuration.neutral { haze = haze * 0.3 + SIMD3(repeating: (haze * SIMD3(0.2126, 0.7152, 0.0722)).sum()) * 0.7 }
         let fill = min(1.2, beams.hazeFill * configuration.reactivity) * (configuration.neutral ? 0.7 : 1)
         return BeamUniforms(colors: Self.palette(palette),
-                            motion: SIMD4(beams.haze, min(1.5, beams.high * configuration.reactivity), beams.flash, configuration.glow),
+                            motion: SIMD4(beams.haze, 0, beams.flash, configuration.glow),
                             size: SIMD4(width, height, Float(count), beams.floorLevel * (0.75 + 0.5 * beams.kickGlow)),
                             floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, sin(beams.floorAngle)),
                             haze: SIMD4(haze, configuration.neutral ? 1 : 0),

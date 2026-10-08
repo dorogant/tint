@@ -11,7 +11,7 @@ import simd
 /// | Kick                                 | the outer beams punch outward and wobble back; their lenses flare |
 /// | Snare, clap (hits in the mids)       | the inner beams flick across each other, alternating sides    |
 /// | Highs envelope (hats, cymbals, air)  | the inner beams' brightness                                   |
-/// | Hat                                  | a glint on the inner beams and glitter in the haze they cross |
+/// | Hat                                  | motes drifting down the inner beams catch the light          |
 /// | Mids envelope (vocals, leads)        | the haze fills with the cover's colour                        |
 /// | Loudness against the last seconds    | overall level and sweep size: a breakdown dims and calms, a drop brings in the floor beams |
 /// | Tempo and beat phase                 | sweeps turn on the beat; the look changes every eight bars    |

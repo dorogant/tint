@@ -30,6 +30,8 @@ struct BackgroundTests {
         beamChecks(device: device)
         mappingChecks(device: device)
         crispnessChecks(device: device)
+        smokeChecks(device: device)
+        presetPreviews(device: device)
         performanceReport(device: device)
         print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
@@ -141,7 +143,7 @@ struct BackgroundTests {
         let beforeSetting = status.backgroundFramesDrawn
         settings.glow = 1.6
         waitUntil("a paused settings change must redraw through SwiftUI") { status.backgroundFramesDrawn > beforeSetting }
-        settings.backgroundKind = .beams
+        settings.backgroundKind = .fluid
         settle()
         let afterKind = status.backgroundFramesDrawn
         settle()
@@ -186,9 +188,8 @@ struct BackgroundTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let fresh = VisualSettings(defaults: defaults)
-        check(fresh.backgroundKind == .fluid && fresh.motionSpeed == 1 && fresh.glow == 1 && fresh.punch == 1
-              && fresh.vividness == 1 && fresh.beamCount == 6 && !fresh.strobe,
-              "new background settings must start at their defaults, with the strobe off")
+        check(fresh.backgroundPreset == .balanced && fresh.backgroundLook == BackgroundPreset.balanced.look && !fresh.strobe,
+              "a fresh install must start on Balanced, with the strobe off")
         for (key, value) in [("backgroundSpeed", 9.0), ("backgroundGlow", -3.0), ("backgroundPunch", 40.0),
                              ("backgroundVividness", 0.0), ("backgroundReactivity", 7.0)] { defaults.set(value, forKey: key) }
         defaults.set(99, forKey: "backgroundBeamCount")
@@ -197,7 +198,7 @@ struct BackgroundTests {
         check(clamped.motionSpeed == VisualSettings.speedRange.upperBound && clamped.glow == VisualSettings.glowRange.lowerBound
               && clamped.punch == VisualSettings.punchRange.upperBound && clamped.vividness == VisualSettings.vividnessRange.lowerBound
               && clamped.reactivity == 2 && clamped.beamCount == VisualSettings.beamCountRange.upperBound
-              && clamped.backgroundKind == .fluid,
+              && clamped.backgroundKind == BackgroundPreset.balancedLook.kind,
               "out-of-range stored settings must clamp, and an unknown kind must fall back")
         defaults.set(1, forKey: "backgroundBeamCount")
         clamped = VisualSettings(defaults: defaults)
@@ -215,6 +216,44 @@ struct BackgroundTests {
         let migrated = VisualSettings(defaults: old)
         check(migrated.punch == 1 && old.object(forKey: "backgroundShake") == nil && migrated.motionSpeed == 0.54,
               "the retired Shake value must be removed and the other knobs kept")
+        check(migrated.backgroundPreset == .custom, "someone who tuned the knobs before presets keeps them, as Custom")
+        presetChecks()
+    }
+
+    /// One click per preset; touching a knob makes it Custom; Custom keeps the
+    /// last hand-tuned values to compare against; all of it persists.
+    static func presetChecks() {
+        let suite = "floe-background-presets-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = VisualSettings(defaults: defaults)
+        settings.reactivity = 1.59; settings.glow = 1.86; settings.punch = 2; settings.vividness = 1.5; settings.motionSpeed = 0.91
+        check(settings.backgroundPreset == .custom, "touching a knob must switch to Custom")
+        let mine = settings.backgroundLook
+        settings.choose(.club)
+        check(settings.backgroundPreset == .club && settings.backgroundLook == BackgroundPreset.club.look, "a preset must set every knob")
+        settings.choose(.rock)
+        check(settings.backgroundLook == BackgroundPreset.rock.look, "presets must switch with one choice")
+        check(VisualSettings(defaults: defaults).backgroundPreset == .rock, "the chosen preset must persist")
+        settings.choose(.custom)
+        check(settings.backgroundPreset == .custom && settings.backgroundLook == mine, "Custom must bring back the hand-tuned values")
+        settings.choose(.subtle)
+        settings.beamCount = 7
+        check(settings.backgroundPreset == .custom && settings.beamCount == 7, "editing a preset's knob must make it Custom")
+        settings.strobe = true
+        settings.choose(.intense)
+        check(settings.backgroundPreset == .intense && settings.strobe, "presets must leave the opt-in strobe alone")
+        let reloaded = VisualSettings(defaults: defaults)
+        check(reloaded.backgroundPreset == .intense && reloaded.customLook.beamCount == 7,
+              "the preset and the last custom values must survive a relaunch")
+
+        let looks = BackgroundPreset.allCases.compactMap(\.look)
+        check(looks.count == BackgroundPreset.allCases.count - 1 && Set(looks.map { "\($0)" }).count == looks.count,
+              "every preset except Custom must have its own look")
+        check(looks.allSatisfy { VisualSettings.speedRange.contains($0.speed) && VisualSettings.glowRange.contains($0.glow)
+                                 && VisualSettings.punchRange.contains($0.punch) && VisualSettings.vividnessRange.contains($0.vividness)
+                                 && VisualSettings.beamCountRange.contains($0.beamCount) && (0...2).contains($0.reactivity) },
+              "preset values must be inside the sliders' ranges")
     }
 
     // MARK: - Layers
@@ -762,6 +801,109 @@ struct BackgroundTests {
             Previews.zoom(crop, "crisp-\(name)-100pct", scale: 1, smooth: false)
             Previews.zoom(crop, "crisp-\(name)-as-on-retina", scale: 2 * points.width / size.width, smooth: true)
         }
+    }
+
+    // MARK: - Smoke
+
+    /// The fog has to read as smoke, not smudges on the glass: down the length
+    /// of a beam its light may only swell and thin over large distances, with
+    /// nothing blotchy at small scales, and frames a second apart must differ
+    /// (it drifts; dirt doesn't). At the user's own settings: glow 186%,
+    /// reactivity 159%, vividness 150%, punch 200%.
+    static func smokeChecks(device: MTLDevice) {
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1500, height: 950), scale: 2)
+        guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { fail("renderer") }
+        let aspect = Float(size.width / size.height)
+        let groove = SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.12, snare: 0.3, vocal: 0.12)
+        let frames = SyntheticTrack.frames([(groove, 8)])
+        for (name, colors, neutralCover) in [("sunset", Covers.palette(Covers.sunset), false), ("neutral", neutral, true)] {
+            func settings(_ beams: Int) -> BackgroundConfiguration {
+                BackgroundConfiguration(kind: .beams, colors: colors, neutral: neutralCover, reactivity: 1.59, speed: 0.91,
+                                        glow: 1.86, punch: 2, vividness: 1.5, beamCount: beams)
+            }
+            // The user's own look, with hats, for the eye.
+            var look = BackgroundAnimator()
+            look.configure(settings(6), animated: false)
+            var shots: [RenderedFrame] = []
+            play(&look, frames) { animator, i, display in
+                if display % 2 == 0, i == 30 * 6 || i == 30 * 7 { shots.append(renderer.render(animator)) }
+            }
+            Previews.write(shots[0], "smoke-\(name)-full")
+            let cropW = Int(size.width) / 4, cropH = Int(size.height) * 3 / 5
+            let crop = shots[0].crop(x: Int(size.width) * 3 / 8, y: Int(size.height) / 8, width: cropW, height: cropH)
+            Previews.zoom(crop, "smoke-\(name)-retina-100pct", scale: 2 * 1500 / size.width, smooth: true)
+            let drift = shots[1].difference(from: shots[0])
+
+            // A lone head in the middle hangs straight down; the light beside its core, row by row.
+            var lone = BackgroundAnimator()
+            lone.configure(settings(1), animated: false)
+            var frame: RenderedFrame?
+            var u = lone.beamUniforms(width: Float(size.width), height: Float(size.height))
+            play(&lone, frames) { animator, i, display in
+                guard display % 2 == 0, i == 30 * 6 else { return }
+                u = animator.beamUniforms(width: Float(size.width), height: Float(size.height))
+                frame = renderer.render(animator)
+            }
+            guard let frame else { fail("smoke frame") }
+            let sine = u.tints.0.w, cosine = (1 - sine * sine).squareRoot()
+            var along: [Float] = []
+            for row in Int(size.height / 6)..<Int(size.height * 5 / 6) {
+                let y = 1 - (Float(row) + 0.5) / Float(size.height)
+                // In the beam's glow, out past its core (and the motes in it), where the fog shows.
+                let distance = (0.985 - y) / cosine
+                let x = (0.5 * aspect + sine * distance + 1.5 * (0.006 + distance * u.heads.0.z)) / aspect * Float(size.width)
+                var sum: Float = 0
+                for dx in -2...2 { sum += frame.luma(Int(x) + dx, row) }
+                along.append(sum / 5)
+            }
+            // Small-scale mottle: what's left after a running mean over a tenth of the height.
+            let window = Int(size.height / 10)
+            var residual: Float = 0, mean: Float = 0, n = 0
+            for i in window..<(along.count - window) {
+                let local = along[(i - window)...(i + window)].reduce(0, +) / Float(2 * window + 1)
+                residual += (along[i] - local) * (along[i] - local)
+                mean += along[i]
+                n += 1
+            }
+            let mottle = (residual / Float(max(1, n))).squareRoot() / max(0.001, mean / Float(max(1, n)))
+            print(String(format: "Smoke (%@, the user's settings): light down a beam mottles %.2f%% at small scales; frames a second apart differ %.4f",
+                         name, mottle * 100, drift))
+            // The specks and fine wisps the user saw as a dirty screen measured 6.2% here.
+            check(along.count > 100 && mottle < 0.045, "\(name): the fog must not look blotchy along a beam (\(mottle))")
+            check(drift > 0.004, "\(name): the fog must drift, not sit on the screen (\(drift))")
+        }
+    }
+
+    // MARK: - Presets
+
+    /// Every preset over the same groove and a quiet passage, for comparing them
+    /// side by side; each must keep text readable.
+    static func presetPreviews(device: MTLDevice) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { fail("renderer") }
+        let groove = SyntheticTrack.frames([(SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.1, snare: 0.3, vocal: 0.12), 7)])
+        let quiet = SyntheticTrack.frames([(SyntheticTrack(pad: 0.1, vocal: 0.15), 5)])
+        var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        for preset in BackgroundPreset.general + BackgroundPreset.genres {
+            guard let look = preset.look else { continue }
+            let configuration = BackgroundConfiguration(kind: look.kind, colors: Covers.palette(Covers.sunset), reactivity: Float(look.reactivity),
+                                                        speed: Float(look.speed), glow: Float(look.glow), punch: Float(look.punch),
+                                                        vividness: Float(look.vividness), beamCount: look.beamCount)
+            for (section, frames) in [("groove", groove), ("quiet", quiet)] {
+                var animator = BackgroundAnimator()
+                animator.configure(configuration, animated: false)
+                var shot: RenderedFrame?
+                play(&animator, frames) { animator, i, display in
+                    // Just after a kick in the groove; anywhere late in the quiet passage.
+                    if shot == nil, display % 2 == 1, i > frames.count - 40, section == "quiet" || animator.pulse.kick > 0.5 {
+                        shot = renderer.render(animator)
+                    }
+                }
+                guard let shot else { fail("\(preset): no frame") }
+                check(shot.meanLuma < 0.2 && shot.share(above: legibleLuma) < 0.1, "\(preset): must stay dark enough for text (\(shot.meanLuma))")
+                cells.append((shot, "\(preset.title), \(section)", nil))
+            }
+        }
+        Previews.strip(cells, "presets-sheet", columns: 4, scale: 0.5)
     }
 
     // MARK: - Cost

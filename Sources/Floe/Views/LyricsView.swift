@@ -6,22 +6,15 @@ struct LyricsView: View {
     @ViewState private var follow = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Lyrics", systemImage: "quote.bubble")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(Theme.secondary)
-                .padding(.horizontal, 24)
+        ZStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // New content gets a fresh line clock; it never reuses the old lines.
                 .id(phaseKey)
                 .transition(.blurReplace)
-            if case .loaded = lyrics.state {
-                Link("Lyrics from LRCLIB", destination: URL(string: "https://lrclib.net")!)
-                    .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                    .padding(.horizontal, 24)
-            }
         }
+        // Synced lines rest at 40% of the height under a faded edge, so only
+        // messages and untimed lyrics need this inset from the panel's top.
         .padding(.vertical, 24)
         .overlay(alignment: .bottom) {
             if !follow, case .loaded(.synced) = lyrics.state {

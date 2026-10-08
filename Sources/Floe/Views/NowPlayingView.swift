@@ -21,7 +21,10 @@ struct NowPlayingView: View {
                 let controlsHeight: CGFloat = compact ? 310 : 390
                 let ring = circular ? VisualizerView.ringScale : 1
                 let available = (geometry.size.height - controlsHeight - (normal ? 96 : 0)) / ring
-                let coverSize = min(showLyrics ? 330 : 420, max(100, available))
+                let lyricsWidth = showLyrics ? max(330, geometry.size.width * 0.42) : 0
+                let columnWidth = geometry.size.width - 24 - lyricsWidth - (showLyrics ? 20 : 0)
+                let coverWidth = (columnWidth - (compact ? 24 : 40)) / ring
+                let coverSize = min(showLyrics ? 330 : 420, max(100, min(available, coverWidth)))
                 VStack(spacing: 12) {
                     HStack(spacing: 20) {
                         VStack(spacing: compact ? 8 : 14) {
@@ -51,7 +54,7 @@ struct NowPlayingView: View {
                         .padding(compact ? 12 : 20)
                         .floeAnimation(value: track.uri, duration: 0.45, bounce: 0.1)
                         if showLyrics {
-                            LyricsView().frame(width: max(330, geometry.size.width * 0.42))
+                            LyricsView().frame(width: lyricsWidth)
                                 .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
                                 .transition(.opacity.combined(with: .offset(x: 60)))
                         }

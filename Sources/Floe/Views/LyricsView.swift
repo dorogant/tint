@@ -79,7 +79,7 @@ struct LyricsView: View {
 }
 
 /// Wakes only when the next line is due, so SwiftUI updates once per line.
-/// One frosted pill glides between lines while the list springs into place.
+/// One frosted pill glides between lines while the list eases into place.
 private struct SyncedLyricsView: View {
     let lines: [LyricLine]
     @Binding var follow: Bool
@@ -104,7 +104,7 @@ private struct SyncedLyricsView: View {
                     ForEach(lines) { line in
                         // Decoder rounding can report a position just before the tag when paused.
                         LyricRow(line: line, distance: distance(of: line), fontSize: fontSize,
-                                 softened: follow && !still, still: still, pill: pill) {
+                                 softened: follow && !still, still: still, playing: player.isPlaying, pill: pill) {
                             player.seek(toMs: line.time * 1000 + 50)
                         }
                     }
@@ -122,7 +122,7 @@ private struct SyncedLyricsView: View {
             }
             .onChange(of: follow) {
                 guard follow, let active else { return }
-                withAnimation(still ? nil : .smooth(duration: 0.5)) {
+                withAnimation(still ? nil : .easeInOut(duration: 0.35)) {
                     position.scrollTo(id: active, anchor: Self.anchor)
                 }
             }
@@ -153,14 +153,18 @@ private struct SyncedLyricsView: View {
             }
             guard player.isPlaying else { return }
             let next = (index ?? -1) + 1
-            let wait = next < lines.count ? lines[next].time - now : 1
-            do { try await Task.sleep(for: .seconds(min(max(wait, 0.02), 1))) } catch { return }
+            guard next < lines.count else { return }
+            // Seek, pause and playback corrections replace playbackAnchor and
+            // restart this task. Long gaps need at most one wake per minute;
+            // ordinary line timings need no polling between tags.
+            let wait = min(max(lines[next].time - now, 0.02), 60)
+            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
         }
     }
 
     private func advance(to index: Int?, animated: Bool) {
-        var transaction = Transaction(animation: animated && !still ? .spring(duration: 0.6, bounce: 0.14) : nil)
-        transaction.disablesAnimations = !animated
+        var transaction = Transaction(animation: animated && !still ? .easeInOut(duration: 0.35) : nil)
+        transaction.disablesAnimations = !animated || still
         withTransaction(transaction) {
             active = index
             if follow, let index { position.scrollTo(id: index, anchor: Self.anchor) }
@@ -176,6 +180,7 @@ private struct LyricRow: View {
     let fontSize: CGFloat
     let softened: Bool
     let still: Bool
+    let playing: Bool
     let pill: Namespace.ID
     let seek: () -> Void
     @Environment(\.coverPalette) private var palette
@@ -220,7 +225,7 @@ private struct LyricRow: View {
     @ViewBuilder private var label: some View {
         if line.text.isEmpty {
             Image(systemName: "ellipsis")
-                .symbolEffect(.breathe, isActive: distance == 0 && !still)
+                .symbolEffect(.breathe, isActive: distance == 0 && playing && !still)
                 .accessibilityLabel("Instrumental")
         } else {
             Text(line.text)
@@ -241,8 +246,9 @@ private struct LyricRow: View {
         return CGFloat(min(abs(distance), 4)) * 0.6
     }
 
-    /// Upcoming lines settle one after another, like a sheet catching up.
+    /// Keep the short cascade on a bounded curve: springs can still be settling
+    /// when the next line arrives, extending full-list redraws into the next beat.
     private var rowAnimation: Animation? {
-        still ? nil : .spring(duration: 0.6, bounce: 0.14).delay(distance > 0 ? Double(distance) * 0.035 : 0)
+        still ? nil : .easeOut(duration: 0.3).delay(distance > 0 ? Double(min(distance, 3)) * 0.02 : 0)
     }
 }

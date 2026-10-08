@@ -81,6 +81,7 @@ struct ProgressBar: View {
     @Environment(\.coverPalette) private var palette
     var wavy = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("reduceMotion") private var reduceMotion = false
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragFraction: Double?
@@ -90,7 +91,7 @@ struct ProgressBar: View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
         // Both bars tick once a second; Core Animation scrolls the Now Playing wave
         // and glides its playhead in between.
-        TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil)) { context in
+        TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil || scenePhase != .active)) { context in
             let fraction = dragFraction ?? min(player.positionMs(at: context.date) / duration, 1)
             // Aim the glide at where playback will be on the next tick.
             let ahead = dragFraction ?? min(player.positionMs(at: context.date.addingTimeInterval(1)) / duration, 1)
@@ -100,9 +101,10 @@ struct ProgressBar: View {
                 GeometryReader { geometry in
                     Group {
                         if wavy {
-                            let playing = player.isPlaying && dragFraction == nil
-                            WavyProgress(progress: playing ? ahead : fraction, color: palette.highlight,
-                                         moving: playing && !reduceMotion && !systemReduceMotion, glide: playing)
+                            let playing = player.isPlaying && dragFraction == nil && scenePhase == .active
+                            let animate = playing && !reduceMotion && !systemReduceMotion
+                            WavyProgress(progress: animate ? ahead : fraction, color: palette.highlight,
+                                         moving: animate, glide: animate)
                         } else {
                             SliderTrack(fraction: fraction, active: hovering || dragFraction != nil,
                                         tint: dragFraction == nil ? .white.opacity(0.85) : palette.accent)

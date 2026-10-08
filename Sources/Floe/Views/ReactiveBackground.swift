@@ -11,7 +11,7 @@ struct ReactiveBackground: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> MTKView {
-        let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
+        let view = BackgroundMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.isPaused = true
         view.enableSetNeedsDisplay = false
         view.autoResizeDrawable = false
@@ -23,6 +23,7 @@ struct ReactiveBackground: NSViewRepresentable {
             let renderer = try BackgroundRenderer(view: view, status: visualization)
             context.coordinator.renderer = renderer
             view.delegate = renderer
+            view.onResize = { [weak renderer] in renderer?.redrawIfPaused() }
         } catch {
             DispatchQueue.main.async { visualization.backgroundFailure = L10n.string("Live background is unavailable on this Mac.") }
         }
@@ -37,12 +38,26 @@ struct ReactiveBackground: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
+        (view as? BackgroundMetalView)?.onResize = nil
         coordinator.renderer?.stop()
         coordinator.renderer = nil
         view.delegate = nil
     }
 
     final class Coordinator { var renderer: BackgroundRenderer? }
+}
+
+/// A paused background still needs one fresh frame when the window is resized.
+private final class BackgroundMetalView: MTKView {
+    var onResize: (() -> Void)?
+    private var lastSize = CGSize.zero
+
+    override func layout() {
+        super.layout()
+        guard bounds.size != lastSize else { return }
+        lastSize = bounds.size
+        onResize?()
+    }
 }
 
 @MainActor
@@ -68,6 +83,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     private var time: Float = 0
     private var previous: Date?
     private var busy = false
+    private var needsStaticDraw = true
 
     init(view: MTKView, status: VisualizationModel) throws {
         guard let device = view.device, let queue = device.makeCommandQueue() else { throw Failure.unavailable }
@@ -85,11 +101,13 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(running: Bool, color: RGB, reactivity: Float) {
-        uniforms.color = SIMD4(Float(color.r), Float(color.g), Float(color.b), 1)
+        let newColor = SIMD4<Float>(Float(color.r), Float(color.g), Float(color.b), 1)
+        let changed = uniforms.color != newColor || uniforms.motion.z != reactivity
+        uniforms.color = newColor
         uniforms.motion.z = reactivity
         guard running else {
             stop()
-            if time == 0 { view?.draw() } // one static frame for Reduce Motion / paused startup
+            if changed || needsStaticDraw { redrawIfPaused() }
             return
         }
         guard timer == nil else { return }
@@ -143,6 +161,12 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         previous = nil
     }
 
+    func redrawIfPaused() {
+        guard timer == nil else { return }
+        needsStaticDraw = true
+        if !busy { view?.draw() }
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
@@ -155,6 +179,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
               let command = commandQueue.makeCommandBuffer(), let encoder = command.makeRenderCommandEncoder(descriptor: pass)
         else { return }
         busy = true
+        needsStaticDraw = false
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
@@ -165,7 +190,12 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.busy = false
-                if succeeded { self.status?.backgroundFramesDrawn += 1 }
+                if succeeded {
+                    self.status?.backgroundFramesDrawn += 1
+                    // A color/resize update can arrive while the last GPU frame
+                    // is in flight. Draw its replacement once, without a timer.
+                    if self.needsStaticDraw { self.redrawIfPaused() }
+                }
                 else { self.status?.backgroundFailure = L10n.string("Live background stopped unexpectedly."); self.stop() }
             }
         }

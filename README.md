@@ -60,10 +60,24 @@ The live background defaults off.
 ```sh
 scripts/build-app.sh          # -> build/Floe.app (release, ad-hoc signed)
 scripts/build-app.sh --open   # build, then launch
+scripts/build-app.sh --install # install/update Applications + Desktop icon
 ```
 
 The script runs `cargo build --release` for the Rust core, `swift build` for the app,
 assembles the bundle (Info.plist, generated native icon) and signs it (see below).
+
+### Desktop launch icon
+
+Double-click **Floe** on the Desktop to open the app without a terminal. The icon
+points to `~/Applications/Floe.app`, a signed copy of the native macOS app bundle.
+Rebuild with `scripts/build-app.sh --install` to update that copy while keeping the
+same Desktop icon. To install an already-built app, run `scripts/install-app.sh`.
+The installer verifies its signature before replacing an existing Floe bundle and
+does not overwrite unrelated items with the same name.
+
+If macOS asks to access your saved Spotify login, unlock your login Keychain and
+choose **Always Allow** for Floe. This system dialog requires your own password;
+the installer does not read or change credentials.
 
 On first launch Floe asks for two approvals in the browser: **playback** (librespot,
 Spotify's own client ID) and **library** (the Web API, through your own developer app).
@@ -207,7 +221,7 @@ is louder.
 
 In synced lyrics the current line sits on a frosted pill that glides to the next
 line and glows softly, tinted toward the cover. Upcoming lines settle one after
-another with a short spring; lines further away dim, shrink and soften. The line
+another with a short easing curve; lines further away dim, shrink and soften. The line
 clock wakes only when the next line is due, about 150 ms early so the motion lands
 with the vocal. Neighbouring lines glide, while opening the view or a long seek
 jumps straight there. Hover highlights a line, and clicking it seeks. After a manual
@@ -228,7 +242,34 @@ renders the real cover, visualizer and progress-wave layers offscreen with
 `CARenderer`, inside a top-down parent as SwiftUI hosts them. It checks pixels: the
 cover is upright and shows a new image even while paused, bass sits at the top of the
 ring, bottom bars stand on the floor, the halo is pale on top, and the wave fills only
-the elapsed part.
+the elapsed part. Additional checks cover height-only progress resizing and the
+bead ribbon's overlap. Its dim rear ribbon is now clipped by Core Animation rather
+than a polygon subtraction on every frame. Synthetic path-generation time fell
+from 0.411–0.433 ms to 0.051 ms/frame (~88%); this excludes compositor/GPU work and
+is not a new whole-app CPU measurement.
+
+`scripts/test-background.sh` exercises the production Metal renderer with synthetic
+colors and spectrum data, including GPU pixel readback. Paused cover/accent changes
+and window resizing redraw one static frame; unchanged settings stay idle. Changes
+that arrive during GPU work coalesce into the latest replacement frame.
+
+`scripts/benchmark-lyrics.sh` opens a separate native window with synthetic timed
+lines, measures CPU during steady/changing/paused lyrics, checks line-clock wakeups,
+then closes it. It needs neither Spotify nor Keychain access. An optional first
+argument selects another `LyricsView.swift` to benchmark against the same fixture.
+The production lyric clock now sleeps until the next line, and stops waking after
+the final line or during pauses. Progress motion also stops while Floe is inactive
+and with Reduce Motion. Now Playing bounds the cover and visualizer by the available
+column width so they fit in tall, narrow windows.
+
+The lyric blur/glow treatment is retained: removing it alone did not reduce CPU in
+the isolated test. Bounded 0.35 s scrolling and 0.3 s row transitions settle before
+the next dense line change. With synthetic changes every 1.25 s, the final view
+measured 31.7–33.1% CPU; the old view measured 35.6% after warmup and 66.6% in a
+changing-only run. Warmup variance is substantial, and these figures describe the
+isolated lyric window, not whole-app playback. Final steady/paused samples were
+0.02%, with no clock reads. Changing lines required 16 reads over 20 s, versus 32
+before the clock change.
 
 ### Settings and recovery
 

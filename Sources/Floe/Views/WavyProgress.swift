@@ -33,7 +33,7 @@ final class WavyProgressView: NSView {
     private let knob = CALayer()
     private var progress = 0.0
     private var moving = false
-    private var pathWidth: CGFloat = 0
+    private var pathSize = CGSize.zero
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -87,8 +87,8 @@ final class WavyProgressView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        if bounds.width != pathWidth, bounds.width > 0 {
-            pathWidth = bounds.width
+        if bounds.size != pathSize, bounds.width > 0, bounds.height > 0 {
+            pathSize = bounds.size
             drawPaths()
         }
         placePlayhead()

@@ -33,6 +33,8 @@ final class VisualizerLayerView: NSView {
     private weak var model: VisualizationModel?
     private let container = CALayer()
     private let glow = CAShapeLayer()
+    private let echoClip = CALayer()
+    private let echoExclusion = CAShapeLayer()
     private let echo = CAGradientLayer()
     private let echoMask = CAShapeLayer()
     private let fill = CAGradientLayer()
@@ -53,8 +55,12 @@ final class VisualizerLayerView: NSView {
         layer?.addSublayer(container)
         echo.opacity = 0.35
         echo.mask = echoMask
+        echoClip.addSublayer(echo)
+        echoClip.mask = echoExclusion
+        echoExclusion.fillRule = .evenOdd
+        echoExclusion.fillColor = NSColor.black.cgColor
         fill.mask = fillMask
-        for layer in [glow, echo, fill, rim] { container.addSublayer(layer) }
+        for layer in [glow, echoClip, fill, rim] { container.addSublayer(layer) }
         for shape in [glow, rim, echoMask, fillMask] {
             shape.lineCap = .round
             shape.lineJoin = .round
@@ -85,7 +91,7 @@ final class VisualizerLayerView: NSView {
             layer.startPoint = CGPoint(x: 0.5, y: 0)
             layer.endPoint = CGPoint(x: 0.5, y: 1)
         }
-        echo.isHidden = !beads
+        echoClip.isHidden = !beads
         rim.isHidden = style == .bars || style == .radialBars
         rim.strokeColor = beads ? color.blended(withFraction: 0.45, of: .black)?.withAlphaComponent(0.7).cgColor
                                 : color.withAlphaComponent(0.45).cgColor
@@ -106,7 +112,7 @@ final class VisualizerLayerView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         container.frame = bounds
-        for layer in [glow, echo, echoMask, fill, fillMask, rim] { layer.frame = bounds }
+        for layer in [glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim] { layer.frame = bounds }
         CATransaction.commit()
         drawnFrame = nil
         redraw()
@@ -115,7 +121,7 @@ final class VisualizerLayerView: NSView {
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         let scale = window?.backingScaleFactor ?? 2
-        for layer in [container, glow, echo, echoMask, fill, fillMask, rim] { layer.contentsScale = scale }
+        for layer in [container, glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim] { layer.contentsScale = scale }
     }
 
     override func viewDidMoveToWindow() {
@@ -162,7 +168,13 @@ final class VisualizerLayerView: NSView {
         case .beads:
             let (front, back) = VisualizerGeometry.beads(size: size, levels: levels, clock: model.flow)
             outline(front.cgPath, glowWidth: 6, glowAlpha: 0.12)
-            echoMask.path = back.cgPath.subtracting(front.cgPath)
+            echoMask.path = back.cgPath
+            // Exclude the front ribbon in the compositor instead of computing
+            // a polygon subtraction on the main thread for every audio frame.
+            let exclusion = CGMutablePath()
+            exclusion.addRect(CGRect(origin: .zero, size: size))
+            exclusion.addPath(front.cgPath)
+            echoExclusion.path = exclusion
         }
         CATransaction.commit()
     }

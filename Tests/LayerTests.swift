@@ -12,8 +12,10 @@ struct LayerTests {
         _ = NSApplication.shared
         coverIsUprightAndSwapsWhilePaused()
         visualizerIsUpright()
+        beadEchoDoesNotTintTheFront()
         waveFillsOnlyTheElapsedPart()
-        print("PASS: 6 layer checks (cover orientation, paused swap, ring and bar orientation, halo gradient, wave clip)")
+        waveRecentersAfterHeightOnlyResize()
+        print("PASS: 8 layer checks (cover orientation, paused swap, ring and bar orientation, halo gradient, bead overlap, wave clip and resize)")
     }
 
     // MARK: - Checks
@@ -78,6 +80,79 @@ struct LayerTests {
         check(elapsed && !rest, "the wave must fill the elapsed part only")
     }
 
+    static func beadEchoDoesNotTintTheFront() {
+        let size = CGSize(width: 600, height: 84)
+        let model = VisualizationModel()
+        let levels = (0..<48).map { Float(0.5 + 0.4 * sin(Double($0) * 0.2)) }
+        model.frame = SpectrumFrame(bands: levels, levels: levels, rms: 0.3)
+        model.flow = 1.3
+        let color = NSColor(red: 0.2, green: 0.5, blue: 1, alpha: 1)
+        let view = VisualizerLayerView(model: model)
+        let actual = render(view, size: size) {
+            view.configure(style: .beads, sensitivity: 1, color: color, pale: .white, running: false)
+        }
+        let frontOnly = VisualizerLayerView(model: model)
+        let expected = render(frontOnly, size: size, beforeRender: {
+            // Turn off the dim echo, leaving the same front gradient/glow/rim.
+            // In an overlap the actual pixels must look exactly like this.
+            func hideEcho(in layer: CALayer?) {
+                guard let layer else { return }
+                if layer is CAGradientLayer && layer.opacity < 0.5 { layer.isHidden = true }
+                layer.sublayers?.forEach { hideEcho(in: $0) }
+            }
+            hideEcho(in: frontOnly.layer)
+        }) {
+            frontOnly.configure(style: .beads, sensitivity: 1, color: color, pale: .white, running: false)
+        }
+        let shapes = VisualizerGeometry.beads(size: size, levels: levels.map(CGFloat.init), clock: model.flow)
+        let front = shapes.front.cgPath, back = shapes.echo.cgPath
+        var overlaps = 0, visibleEcho = 0, tintedOverlaps = 0
+        for y in stride(from: 5, to: 79, by: 3) {
+            for x in stride(from: 5, to: 595, by: 5) {
+                let point = CGPoint(x: x, y: y)
+                // Ignore the antialias/glow strip along either outline.
+                let neighbours = [point, CGPoint(x: x - 4, y: y), CGPoint(x: x + 4, y: y),
+                                  CGPoint(x: x, y: y - 4), CGPoint(x: x, y: y + 4)]
+                guard neighbours.allSatisfy({ back.contains($0) }) else { continue }
+                let a = actual.color(at: x, y), e = expected.color(at: x, y)
+                let delta = max(abs(a.r - e.r), abs(a.g - e.g), abs(a.b - e.b))
+                if neighbours.allSatisfy({ front.contains($0) }) {
+                    overlaps += 1
+                    if delta > 0.02 { tintedOverlaps += 1 }
+                } else if neighbours.allSatisfy({ !front.contains($0) }), delta > 0.02 {
+                    visibleEcho += 1
+                }
+            }
+        }
+        check(overlaps > 10 && visibleEcho > 10 && tintedOverlaps == 0,
+              "the bead echo must remain visible outside the front without tinting overlaps")
+    }
+
+    static func waveRecentersAfterHeightOnlyResize() {
+        let resized = WavyProgressView()
+        _ = render(resized, size: CGSize(width: 400, height: 24)) {
+            resized.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+        }
+        let size = CGSize(width: 400, height: 40)
+        let actual = render(resized, size: size) {
+            resized.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+        }
+        let fresh = WavyProgressView()
+        let expected = render(fresh, size: size) {
+            fresh.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+        }
+        // A fixed width used to leave the sine path at the old midpoint while
+        // the knob and remaining line moved to the new one. Compare real pixels
+        // with a fresh view at the final size, at several points on the wave.
+        let columns = [50, 100, 150]
+        func greenRows(_ image: Image) -> [[Int]] {
+            columns.map { x in (0..<image.height).filter { image.color(at: x, $0).isGreenish } }
+        }
+        let wanted = greenRows(expected)
+        check(wanted.allSatisfy { !$0.isEmpty } && greenRows(actual) == wanted,
+              "a height-only resize must recenter the elapsed wave")
+    }
+
     /// Optimized builds drop `precondition` messages, so say what failed.
     static func check(_ condition: Bool, _ message: String) {
         guard !condition else { return }
@@ -112,7 +187,8 @@ struct LayerTests {
         override var isFlipped: Bool { true }
     }
 
-    static func render(_ view: NSView, size: CGSize, configure: () -> Void) -> Image {
+    static func render(_ view: NSView, size: CGSize, beforeRender: (() -> Void)? = nil,
+                       configure: () -> Void) -> Image {
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         let parent = TopDown(frame: CGRect(origin: .zero, size: size))
@@ -125,6 +201,7 @@ struct LayerTests {
         window.displayIfNeeded() // lets AppKit set up the backing layers
         configure()
         view.layout()
+        beforeRender?()
         // Rebuild the flips AppKit set: an unflipped root, the parent, then the view.
         let root = CALayer()
         root.frame = parent.bounds

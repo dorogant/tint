@@ -3,7 +3,14 @@ import Observation
 import SwiftUI
 
 struct CoverPalette: Equatable {
-    var rgb = RGB.fallback
+    var rgb: RGB
+    /// Distinct cover colours for the live background, accent first; shades of
+    /// the accent when there's no cover to read them from.
+    var colors: [RGB]
+    init(rgb: RGB = .fallback, colors: [RGB]? = nil) {
+        self.rgb = rgb
+        self.colors = colors ?? CoverColorExtractor.shades(of: rgb)
+    }
     var accent: Color { Color(red: rgb.r, green: rgb.g, blue: rgb.b) }
     /// Lift dark cover colors only for small text/icons on the dark glass.
     var highlight: Color {
@@ -44,6 +51,7 @@ final class CoverAppearance {
     private(set) var background: CGImage?
     private(set) var backgroundURL: URL?
     private(set) var palette = CoverPalette()
+    @ObservationIgnored private var paletteURL: URL?
 
     func load(_ url: URL?, blur: Double = 9) async {
         guard !Task.isCancelled else { return }
@@ -55,6 +63,7 @@ final class CoverAppearance {
             background = nil
             backgroundURL = nil
             palette = CoverPalette()
+            paletteURL = nil
         } else if sameCover {
             try? await Task.sleep(for: .milliseconds(120)) // coalesce slider drags
             guard !Task.isCancelled else { return }
@@ -75,13 +84,23 @@ final class CoverAppearance {
         imageURL = url
         let small = await thumbnail
         guard !Task.isCancelled else { return }
+        // A blur change reloads the same cover; its colours are already known.
+        let known = paletteURL == url ? palette : nil
         let processed = await Task.detached(priority: .utility) {
-            (small.flatMap { Self.blur($0, radius: blur) }, small.flatMap(CoverColorExtractor.extract))
+            (small.flatMap { Self.blur($0, radius: blur) }, known ?? small.map(Self.palette) ?? CoverPalette())
         }.value
         guard !Task.isCancelled else { return }
         background = processed.0
         backgroundURL = url
-        palette = CoverPalette(rgb: processed.1 ?? .fallback)
+        palette = processed.1
+        paletteURL = small == nil ? nil : url
+    }
+
+    /// The accent and the background's colours, read once per cover off the main thread.
+    private nonisolated static func palette(of image: CGImage) -> CoverPalette {
+        let accent = CoverColorExtractor.extract(of: image)
+        return CoverPalette(rgb: accent ?? .fallback,
+                            colors: CoverColorExtractor.palette(of: image, accent: accent ?? .fallback))
     }
 
     private nonisolated static func blur(_ image: CGImage, radius: Double) -> CGImage? {

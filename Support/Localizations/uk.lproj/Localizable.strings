@@ -212,3 +212,13 @@
 "Repeat one" = "Повторювати одну пісню";
 "More" = "Більше";
 "Go to %@" = "Перейти до %@";
+"Kind" = "Вид";
+"Fluid" = "Рідина";
+"Beams" = "Промені";
+"Speed" = "Швидкість";
+"Glow" = "Сяйво";
+"Vividness" = "Насиченість";
+"Shake" = "Тремтіння";
+"Beam count" = "Кількість променів";
+"Strobe on the beat" = "Стробоскоп у такт";
+"Fluid swirls the cover's colors like ink, shakes on the beat and glows with the music. Beams sweep stage lights through haze and punch on every kick. The strobe never flashes more than three times a second." = "Рідина розливає кольори обкладинки, наче чорнило, тремтить у такт і сяє разом із музикою. Промені водять сценічним світлом крізь дим і спалахують на кожному ударі. Стробоскоп блимає не частіше ніж тричі на секунду.";

@@ -221,5 +221,17 @@
 "Strobe on the beat" = "Strobe on the beat";
 
 /* Live backgrounds */
+"Preset" = "Preset";
+"General" = "General";
+"Genres" = "Genres";
+"Custom" = "Custom";
+"Subtle" = "Subtle";
+"Balanced" = "Balanced";
+"Intense" = "Intense";
+"Club" = "Club";
+"Hip-hop" = "Hip-hop";
+"Rock" = "Rock";
+"Chill" = "Chill";
+"Acoustic" = "Acoustic";
 "Bass punch" = "Bass punch";
 "Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.";

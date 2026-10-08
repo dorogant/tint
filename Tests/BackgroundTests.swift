@@ -31,6 +31,7 @@ struct BackgroundTests {
         mappingChecks(device: device)
         crispnessChecks(device: device)
         smokeChecks(device: device)
+        presetPreviews(device: device)
         performanceReport(device: device)
         print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
@@ -142,7 +143,7 @@ struct BackgroundTests {
         let beforeSetting = status.backgroundFramesDrawn
         settings.glow = 1.6
         waitUntil("a paused settings change must redraw through SwiftUI") { status.backgroundFramesDrawn > beforeSetting }
-        settings.backgroundKind = .beams
+        settings.backgroundKind = .fluid
         settle()
         let afterKind = status.backgroundFramesDrawn
         settle()
@@ -187,9 +188,8 @@ struct BackgroundTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let fresh = VisualSettings(defaults: defaults)
-        check(fresh.backgroundKind == .fluid && fresh.motionSpeed == 1 && fresh.glow == 1 && fresh.punch == 1
-              && fresh.vividness == 1 && fresh.beamCount == 6 && !fresh.strobe,
-              "new background settings must start at their defaults, with the strobe off")
+        check(fresh.backgroundPreset == .balanced && fresh.backgroundLook == BackgroundPreset.balanced.look && !fresh.strobe,
+              "a fresh install must start on Balanced, with the strobe off")
         for (key, value) in [("backgroundSpeed", 9.0), ("backgroundGlow", -3.0), ("backgroundPunch", 40.0),
                              ("backgroundVividness", 0.0), ("backgroundReactivity", 7.0)] { defaults.set(value, forKey: key) }
         defaults.set(99, forKey: "backgroundBeamCount")
@@ -198,7 +198,7 @@ struct BackgroundTests {
         check(clamped.motionSpeed == VisualSettings.speedRange.upperBound && clamped.glow == VisualSettings.glowRange.lowerBound
               && clamped.punch == VisualSettings.punchRange.upperBound && clamped.vividness == VisualSettings.vividnessRange.lowerBound
               && clamped.reactivity == 2 && clamped.beamCount == VisualSettings.beamCountRange.upperBound
-              && clamped.backgroundKind == .fluid,
+              && clamped.backgroundKind == BackgroundPreset.balancedLook.kind,
               "out-of-range stored settings must clamp, and an unknown kind must fall back")
         defaults.set(1, forKey: "backgroundBeamCount")
         clamped = VisualSettings(defaults: defaults)
@@ -216,6 +216,44 @@ struct BackgroundTests {
         let migrated = VisualSettings(defaults: old)
         check(migrated.punch == 1 && old.object(forKey: "backgroundShake") == nil && migrated.motionSpeed == 0.54,
               "the retired Shake value must be removed and the other knobs kept")
+        check(migrated.backgroundPreset == .custom, "someone who tuned the knobs before presets keeps them, as Custom")
+        presetChecks()
+    }
+
+    /// One click per preset; touching a knob makes it Custom; Custom keeps the
+    /// last hand-tuned values to compare against; all of it persists.
+    static func presetChecks() {
+        let suite = "floe-background-presets-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = VisualSettings(defaults: defaults)
+        settings.reactivity = 1.59; settings.glow = 1.86; settings.punch = 2; settings.vividness = 1.5; settings.motionSpeed = 0.91
+        check(settings.backgroundPreset == .custom, "touching a knob must switch to Custom")
+        let mine = settings.backgroundLook
+        settings.choose(.club)
+        check(settings.backgroundPreset == .club && settings.backgroundLook == BackgroundPreset.club.look, "a preset must set every knob")
+        settings.choose(.rock)
+        check(settings.backgroundLook == BackgroundPreset.rock.look, "presets must switch with one choice")
+        check(VisualSettings(defaults: defaults).backgroundPreset == .rock, "the chosen preset must persist")
+        settings.choose(.custom)
+        check(settings.backgroundPreset == .custom && settings.backgroundLook == mine, "Custom must bring back the hand-tuned values")
+        settings.choose(.subtle)
+        settings.beamCount = 7
+        check(settings.backgroundPreset == .custom && settings.beamCount == 7, "editing a preset's knob must make it Custom")
+        settings.strobe = true
+        settings.choose(.intense)
+        check(settings.backgroundPreset == .intense && settings.strobe, "presets must leave the opt-in strobe alone")
+        let reloaded = VisualSettings(defaults: defaults)
+        check(reloaded.backgroundPreset == .intense && reloaded.customLook.beamCount == 7,
+              "the preset and the last custom values must survive a relaunch")
+
+        let looks = BackgroundPreset.allCases.compactMap(\.look)
+        check(looks.count == BackgroundPreset.allCases.count - 1 && Set(looks.map { "\($0)" }).count == looks.count,
+              "every preset except Custom must have its own look")
+        check(looks.allSatisfy { VisualSettings.speedRange.contains($0.speed) && VisualSettings.glowRange.contains($0.glow)
+                                 && VisualSettings.punchRange.contains($0.punch) && VisualSettings.vividnessRange.contains($0.vividness)
+                                 && VisualSettings.beamCountRange.contains($0.beamCount) && (0...2).contains($0.reactivity) },
+              "preset values must be inside the sliders' ranges")
     }
 
     // MARK: - Layers
@@ -834,6 +872,38 @@ struct BackgroundTests {
             check(along.count > 100 && mottle < 0.045, "\(name): the fog must not look blotchy along a beam (\(mottle))")
             check(drift > 0.004, "\(name): the fog must drift, not sit on the screen (\(drift))")
         }
+    }
+
+    // MARK: - Presets
+
+    /// Every preset over the same groove and a quiet passage, for comparing them
+    /// side by side; each must keep text readable.
+    static func presetPreviews(device: MTLDevice) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { fail("renderer") }
+        let groove = SyntheticTrack.frames([(SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.1, snare: 0.3, vocal: 0.12), 7)])
+        let quiet = SyntheticTrack.frames([(SyntheticTrack(pad: 0.1, vocal: 0.15), 5)])
+        var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        for preset in BackgroundPreset.general + BackgroundPreset.genres {
+            guard let look = preset.look else { continue }
+            let configuration = BackgroundConfiguration(kind: look.kind, colors: Covers.palette(Covers.sunset), reactivity: Float(look.reactivity),
+                                                        speed: Float(look.speed), glow: Float(look.glow), punch: Float(look.punch),
+                                                        vividness: Float(look.vividness), beamCount: look.beamCount)
+            for (section, frames) in [("groove", groove), ("quiet", quiet)] {
+                var animator = BackgroundAnimator()
+                animator.configure(configuration, animated: false)
+                var shot: RenderedFrame?
+                play(&animator, frames) { animator, i, display in
+                    // Just after a kick in the groove; anywhere late in the quiet passage.
+                    if shot == nil, display % 2 == 1, i > frames.count - 40, section == "quiet" || animator.pulse.kick > 0.5 {
+                        shot = renderer.render(animator)
+                    }
+                }
+                guard let shot else { fail("\(preset): no frame") }
+                check(shot.meanLuma < 0.2 && shot.share(above: legibleLuma) < 0.1, "\(preset): must stay dark enough for text (\(shot.meanLuma))")
+                cells.append((shot, "\(preset.title), \(section)", nil))
+            }
+        }
+        Previews.strip(cells, "presets-sheet", columns: 4, scale: 0.5)
     }
 
     // MARK: - Cost

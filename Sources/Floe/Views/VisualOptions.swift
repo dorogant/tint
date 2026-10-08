@@ -26,10 +26,12 @@ struct VisualizerOptions: View {
 struct BackgroundOptions: View {
     @Environment(VisualizationModel.self) private var visualization
     @Environment(VisualSettings.self) private var settings
+    @ReducedMotion private var reduceMotion
     var body: some View {
         @Bindable var settings = settings
         Toggle("Live background", isOn: $settings.liveBackground)
         Group {
+            presets
             Picker("Kind", selection: $settings.backgroundKind) {
                 Text("Fluid").tag(VisualSettings.BackgroundKind.fluid)
                 Text("Beams").tag(VisualSettings.BackgroundKind.beams)
@@ -52,6 +54,25 @@ struct BackgroundOptions: View {
         if settings.liveBackground, let error = visualization.backgroundFailure {
             Text(error).font(.callout).foregroundStyle(.orange)
         }
+    }
+
+    /// One click per preset, so looks can be compared quickly. The sliders below
+    /// glide to the preset's values, and touching one switches to Custom, which
+    /// keeps the last hand-tuned values to come back to.
+    private var presets: some View {
+        Picker("Preset", selection: Binding(get: { settings.backgroundPreset }, set: { preset in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { settings.choose(preset) }
+        })) {
+            Section("General") {
+                ForEach(BackgroundPreset.general) { Text(LocalizedStringKey($0.title)).tag($0) }
+            }
+            Section("Genres") {
+                ForEach(BackgroundPreset.genres) { Text(LocalizedStringKey($0.title)).tag($0) }
+            }
+            Divider()
+            Text("Custom").tag(BackgroundPreset.custom)
+        }
+        .pickerStyle(.menu)
     }
 
     private func percent(_ value: Double) -> Text { Text("\(Int((value * 100).rounded()))%") }

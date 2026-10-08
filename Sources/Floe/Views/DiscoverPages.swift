@@ -208,8 +208,9 @@ struct SearchField: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: 420)
-        .background(.white.opacity(0.08), in: Capsule())
+        .glassControl(in: .capsule)
         .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.6) : .clear))
+        .floeAnimation(value: focused, duration: 0.2)
         .onAppear { focused = true }
     }
 }

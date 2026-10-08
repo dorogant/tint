@@ -18,15 +18,16 @@ struct TransportControls: View {
                         ProgressView().controlSize(.small).tint(palette.onAccent)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .contentTransition(.symbolEffect(.replace))
                     }
                 }
                     .font(.system(size: playSize * 0.4, weight: .bold))
                     .foregroundStyle(palette.onAccent)
                     .frame(width: playSize, height: playSize)
-                    .background(palette.accent, in: Circle())
+                    .glassControl(tint: palette.accent, in: .circle)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.floe)
             .help(player.isPlaying || player.isLoading ? "Pause" : "Play")
             IconButton(systemImage: "forward.fill", size: 15, help: "Next") { player.next() }
             IconButton(systemImage: player.repeatMode == .track ? "repeat.1" : "repeat", size: 14,

@@ -160,6 +160,8 @@ struct TrackRow: View {
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .floeAnimation(value: hovering, duration: 0.16)
+        .floeAnimation(value: isCurrent, duration: 0.2)
         .onTapGesture(count: 2) { if playable { play() } }
         .contextMenu { TrackMenuItems(track: track) }
         .onAppear { library.requestLikedState(track.uri) }
@@ -241,6 +243,8 @@ struct LikeButton: View {
         } label: {
             Image(systemName: liked ? "star.fill" : "star")
                 .font(.system(size: size))
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: liked)
                 .foregroundStyle(liked ? palette.highlight : Theme.tertiary)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())

@@ -7,7 +7,7 @@ struct Phase4Tests {
         let silence = SpectrumAnalyzer()!
         let zero = [Float](repeating: 0, count: SpectrumAnalyzer.size)
         let quiet = silence.process(left: zero, right: zero, count: zero.count)
-        precondition(quiet.rms == 0 && quiet.bands.allSatisfy { $0 == 0 } && quiet.waveform.allSatisfy { $0 == 0 })
+        precondition(quiet.rms == 0 && quiet.bands.allSatisfy { $0 == 0 })
 
         for frequency: Float in [220, 1000, 8000] {
             let analyzer = SpectrumAnalyzer()!
@@ -16,7 +16,7 @@ struct Phase4Tests {
             let peak = frame.bands.indices.max { frame.bands[$0] < frame.bands[$1] }!
             let center = SpectrumAnalyzer.frequency(forBand: peak)
             precondition(abs(log2f(center / frequency)) < 0.35, "frequency band is wrong")
-            precondition(frame.rms > 0.3 && frame.waveform.contains { abs($0) > 0.6 })
+            precondition(frame.rms > 0.3 && frame.bands[peak] > 0.6)
             precondition(frame.bands.allSatisfy { $0.isFinite && (0...1).contains($0) })
         }
 

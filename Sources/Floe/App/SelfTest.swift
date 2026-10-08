@@ -31,6 +31,24 @@ enum SelfTest {
             player.pause()
             return finish(passed, "song switching checks")
         }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestDesign") {
+            guard let song = try? await library.api.savedTracks(offset: 0).items.first?.track,
+                  let profile = library.profile else { return finish(false, "needs a liked song") }
+            player.play(PlayRequest(contextURI: "spotify:user:\(profile.id):collection", startURI: song.uri), selectedTrack: song)
+            guard await wait(timeout: 20, { player.isPlaying && !player.isLoading })
+            else { return finish(false, "audio did not start") }
+            let passed = await phase4(player: player, navigator: navigator, lyrics: lyrics,
+                                      visualization: visualization, visuals: visuals)
+            if UserDefaults.standard.bool(forKey: "FloeVisualTest") {
+                lyrics.showVisualTestFixture()
+                player.seek(toMs: 9000)
+                navigator.surface = .lyrics
+                try? await Task.sleep(for: .seconds(2))
+                Snapshot.capture("8-lyrics-synthetic")
+            }
+            navigator.surface = .nowPlaying
+            return finish(passed, "design and real-audio effects checks")
+        }
         say("library: \(library.playlists.count) playlists, \(library.recent.count) recently played, "
             + "\(library.topArtists.count) top artists, \(library.savedAlbums.count) saved albums")
         let ram0 = MemoryFootprint.currentMB

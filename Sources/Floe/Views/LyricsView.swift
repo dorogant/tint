@@ -6,110 +6,238 @@ struct LyricsView: View {
     @ViewState private var follow = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Lyrics").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.secondary)
-                Spacer()
-                if !follow {
-                    Button("Follow lyrics") { follow = true }
-                        .buttonStyle(.plain).font(.system(size: 12))
-                }
-            }
-            switch lyrics.state {
-            case .idle: MessageView(systemImage: "text.quote", message: L10n.string("Pick a song to see its lyrics."))
-            case .loading: LoadingView()
-            case let .failed(message):
-                VStack {
-                    MessageView(systemImage: "wifi.exclamationmark", message: message)
-                    Button("Try Again") { Task { await lyrics.load(player.displayTrack) } }
-                }
-            case .loaded(.instrumental):
-                MessageView(systemImage: "pianokeys", message: L10n.string("Instrumental"))
-            case .loaded(.missing):
-                MessageView(systemImage: "text.quote", message: L10n.string("No lyrics found for this song."))
-            case let .loaded(.plain(text)):
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("These lyrics have no timing.").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
-                        Text(text).font(.system(size: 22, weight: .medium)).lineSpacing(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }.padding(.horizontal, 12)
-                }
-            case let .loaded(.synced(lines)):
-                SyncedLyricsView(lines: lines, follow: $follow)
-            }
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Lyrics", systemImage: "quote.bubble")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(Theme.secondary)
+                .padding(.horizontal, 24)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // New content gets a fresh line clock; it never reuses the old lines.
+                .id(phaseKey)
+                .transition(.blurReplace)
             if case .loaded = lyrics.state {
                 Link("Lyrics from LRCLIB", destination: URL(string: "https://lrclib.net")!)
                     .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+                    .padding(.horizontal, 24)
             }
         }
-        .padding(24)
+        .padding(.vertical, 24)
+        .overlay(alignment: .bottom) {
+            if !follow, case .loaded(.synced) = lyrics.state {
+                Button { follow = true } label: {
+                    Label("Follow lyrics", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .padding(.bottom, 48)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .floeAnimation(value: phaseKey, duration: 0.45)
+        .floeAnimation(value: follow, duration: 0.3)
         .onChange(of: player.displayTrack?.uri) { follow = true }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch lyrics.state {
+        case .idle: MessageView(systemImage: "text.quote", message: L10n.string("Pick a song to see its lyrics."))
+        case .loading: LoadingView()
+        case let .failed(message):
+            VStack {
+                MessageView(systemImage: "wifi.exclamationmark", message: message)
+                Button("Try Again") { Task { await lyrics.load(player.displayTrack) } }
+            }
+        case .loaded(.instrumental):
+            MessageView(systemImage: "pianokeys", message: L10n.string("Instrumental"))
+        case .loaded(.missing):
+            MessageView(systemImage: "text.quote", message: L10n.string("No lyrics found for this song."))
+        case let .loaded(.plain(text)):
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("These lyrics have no timing.").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+                    Text(text).font(.system(size: 22, weight: .semibold, design: .rounded)).lineSpacing(10)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal, 24)
+            }
+        case let .loaded(.synced(lines)):
+            SyncedLyricsView(lines: lines, follow: $follow)
+        }
+    }
+
+    /// Cheap animation key: which song and which state, never the lyric text itself.
+    private var phaseKey: String {
+        let phase = switch lyrics.state {
+        case .idle: "idle"
+        case .loading: "loading"
+        case .loaded: "loaded"
+        case .failed: "failed"
+        }
+        return "\(lyrics.trackURI ?? "")|\(phase)|\(lyrics.isSynthetic)"
     }
 }
 
-/// Poll the playback clock cheaply; SwiftUI only updates when a line changes.
+/// Wakes only when the next line is due, so SwiftUI updates once per line.
+/// One frosted pill glides between lines while the list springs into place.
 private struct SyncedLyricsView: View {
     let lines: [LyricLine]
     @Binding var follow: Bool
     @Environment(PlayerModel.self) private var player
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
+    @Namespace private var pill
     @ViewState private var active: Int?
+    @ViewState private var position = ScrollPosition(idType: Int.self)
+
+    /// Lines switch slightly early so the glide lands with the vocal.
+    private static let lead: TimeInterval = 0.15
+    /// The current line rests a little above the middle, leaving room to read ahead.
+    private static let anchor = UnitPoint(x: 0.5, y: 0.4)
+    private var still: Bool { reduceMotion || systemReduceMotion }
 
     var body: some View {
-        content
-            .task(id: player.playbackAnchor) {
-                repeat {
-                    let index = LRC.activeIndex(in: lines, at: player.positionMs(at: Date()) / 1000)
-                    if active != index { active = index }
-                    guard player.isPlaying else { return }
-                    do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-                } while !Task.isCancelled
-            }
-    }
-
-    private var content: some View {
-        ScrollViewReader { proxy in
-            GeometryReader { geometry in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(lines) { line in
-                            let current = line.id == active
-                            // Decoder rounding can report a position just before the tag when paused.
-                            Button { player.seek(toMs: line.time * 1000 + 50) } label: {
-                                Text(line.text.isEmpty ? "···" : line.text)
-                                    .font(.system(size: 24, weight: current ? .bold : .medium))
-                                    .foregroundStyle(current ? .white : .white.opacity(line.id < (active ?? -1) ? 0.3 : 0.5))
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 16).padding(.vertical, 12)
-                                    .background(current ? .white.opacity(0.1) : .clear,
-                                                in: RoundedRectangle(cornerRadius: 16))
-                                    .overlay(RoundedRectangle(cornerRadius: 16)
-                                        .strokeBorder(current ? Theme.panelStroke : .clear))
-                            }
-                            .buttonStyle(.plain).id(line.id)
-                            .help("Seek to this line")
+        GeometryReader { geometry in
+            let fontSize = min(34, max(22, geometry.size.width / 18))
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(lines) { line in
+                        // Decoder rounding can report a position just before the tag when paused.
+                        LyricRow(line: line, distance: distance(of: line), fontSize: fontSize,
+                                 softened: follow && !still, still: still, pill: pill) {
+                            player.seek(toMs: line.time * 1000 + 50)
                         }
                     }
-                    .padding(.vertical, geometry.size.height * 0.4)
                 }
-                .onScrollPhaseChange { _, phase in
-                    if phase == .interacting { follow = false }
-                }
-                .onChange(of: active) { scroll(proxy, to: active) }
-                .onChange(of: follow) { if follow { scroll(proxy, to: active) } }
-                .onAppear { if let active { proxy.scrollTo(active, anchor: .center) } }
+                .scrollTargetLayout()
+                .padding(.horizontal, 12)
+                .padding(.top, geometry.size.height * Self.anchor.y)
+                .padding(.bottom, geometry.size.height * (1 - Self.anchor.y))
             }
+            .scrollPosition($position)
+            .scrollIndicators(.hidden)
+            .mask(edgeFade)
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { follow = false }
+            }
+            .onChange(of: follow) {
+                guard follow, let active else { return }
+                withAnimation(still ? nil : .smooth(duration: 0.5)) {
+                    position.scrollTo(id: active, anchor: Self.anchor)
+                }
+            }
+        }
+        .task(id: player.playbackAnchor) { await followPlayback() }
+    }
+
+    private var edgeFade: some View {
+        LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.1),
+                               .init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+                       startPoint: .top, endPoint: .bottom)
+    }
+
+    /// Clamped, so lines far from the current one don't redraw on every change.
+    private func distance(of line: LyricLine) -> Int {
+        guard let active else { return min(6, line.id + 1) }
+        return max(-6, min(6, line.id - active))
+    }
+
+    private func followPlayback() async {
+        while !Task.isCancelled {
+            let now = player.positionMs(at: Date()) / 1000 + Self.lead
+            let index = LRC.activeIndex(in: lines, at: now)
+            if index != active {
+                // Neighbouring lines glide; opening the view or a long seek jumps.
+                let near = if let index, let active { abs(index - active) <= 8 } else { false }
+                advance(to: index, animated: near)
+            }
+            guard player.isPlaying else { return }
+            let next = (index ?? -1) + 1
+            let wait = next < lines.count ? lines[next].time - now : 1
+            do { try await Task.sleep(for: .seconds(min(max(wait, 0.02), 1))) } catch { return }
         }
     }
 
-    private func scroll(_ proxy: ScrollViewProxy, to active: Int?) {
-        guard follow, let active else { return }
-        withAnimation(reduceMotion || systemReduceMotion ? nil : .easeInOut(duration: 0.45)) {
-            proxy.scrollTo(active, anchor: .center)
+    private func advance(to index: Int?, animated: Bool) {
+        var transaction = Transaction(animation: animated && !still ? .spring(duration: 0.6, bounce: 0.14) : nil)
+        transaction.disablesAnimations = !animated
+        withTransaction(transaction) {
+            active = index
+            if follow, let index { position.scrollTo(id: index, anchor: Self.anchor) }
         }
+    }
+}
+
+/// The current line sits on the frosted pill; the rest dim, shrink and soften with distance.
+private struct LyricRow: View {
+    let line: LyricLine
+    /// 0 is the current line, negative already sung, positive upcoming.
+    let distance: Int
+    let fontSize: CGFloat
+    let softened: Bool
+    let still: Bool
+    let pill: Namespace.ID
+    let seek: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        let current = distance == 0
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        Button(action: seek) {
+            label
+                .font(.system(size: fontSize, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(opacity))
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .scaleEffect(current || still ? 1 : 0.94, anchor: .leading)
+                .blur(radius: blur)
+                .background {
+                    if current {
+                        shape.fill(.white.opacity(0.1))
+                            .overlay(shape.strokeBorder(.white.opacity(0.1)))
+                            .matchedGeometryEffect(id: "pill", in: pill)
+                    } else if hovering {
+                        shape.fill(.white.opacity(0.035))
+                    }
+                }
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(rowAnimation, value: distance)
+        .floeAnimation(value: hovering, duration: 0.18)
+        .help("Seek to this line")
+    }
+
+    @ViewBuilder private var label: some View {
+        if line.text.isEmpty {
+            Image(systemName: "ellipsis")
+                .symbolEffect(.breathe, isActive: distance == 0 && !still)
+                .accessibilityLabel("Instrumental")
+        } else {
+            Text(line.text)
+        }
+    }
+
+    private var opacity: Double {
+        switch distance {
+        case 0: 1
+        case _ where hovering: 0.7
+        case ..<0: 0.3
+        default: max(0.32, 0.58 - Double(distance - 1) * 0.06)
+        }
+    }
+
+    private var blur: CGFloat {
+        guard softened, distance != 0, !hovering else { return 0 }
+        return CGFloat(min(abs(distance), 4)) * 0.6
+    }
+
+    /// Upcoming lines settle one after another, like a sheet catching up.
+    private var rowAnimation: Animation? {
+        still ? nil : .spring(duration: 0.6, bounce: 0.14).delay(distance > 0 ? Double(distance) * 0.035 : 0)
     }
 }

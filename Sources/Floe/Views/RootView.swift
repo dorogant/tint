@@ -30,11 +30,9 @@ struct RootView: View {
 }
 
 struct MainView: View {
-    @Environment(\.coverPalette) private var palette
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
 
-    @Environment(\.openSettings) private var openSettings
     @ViewState private var showingConnect: ConnectSection?
     @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
@@ -42,30 +40,6 @@ struct MainView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack {
-                Text("Floe").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.secondary)
-                Spacer()
-                surfaceButton("Library", icon: "square.grid.2x2", surface: .library)
-                surfaceButton("Now Playing", icon: "play.circle", surface: .nowPlaying)
-                surfaceButton("Lyrics", icon: "text.quote", surface: .lyrics)
-                Button { showingVisuals.toggle() } label: {
-                    Image(systemName: "waveform").frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain).help("Visuals")
-                .popover(isPresented: $showingVisuals) { VisualControls() }
-                ForEach(ConnectSection.allCases) { section in
-                    connectButton(section)
-                }
-                Button { openSettings() } label: { Image(systemName: "gearshape").frame(width: 30, height: 30) }
-                    .buttonStyle(.plain).help("Settings")
-                Menu {
-                    Toggle("Accent from cover", isOn: $accentFromCover)
-                    Toggle("Reduce motion", isOn: $reduceMotion)
-                } label: { Image(systemName: "paintpalette").frame(width: 30, height: 30) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Appearance")
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 40)
             PlaybackStatusView()
             Group {
                 switch navigator.surface {
@@ -73,13 +47,18 @@ struct MainView: View {
                     HStack(spacing: 10) {
                         SidebarView().frame(width: 236).glassPanel()
                         VStack(spacing: 0) {
-                            topBar
+                            if navigator.current == .search {
+                                SearchField(search: search)
+                                    .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 4)
+                            }
                             ScrollView {
-                                page.padding(.horizontal, 18).padding(.bottom, 24)
+                                page.padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 24)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .id(navigator.current)
+                            .transition(.opacity.combined(with: .offset(y: 6)))
                         }.glassPanel()
+                        .floeAnimation(value: navigator.current)
                     }
                 case .nowPlaying:
                     NowPlayingView().glassPanel()
@@ -88,46 +67,64 @@ struct MainView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .id(navigator.surface)
+            .transition(.opacity.combined(with: .offset(y: 8)))
             if navigator.surface != .nowPlaying {
                 MiniPlayerView().frame(height: 76).glassPanel()
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .padding(10)
-        .ignoresSafeArea(.container, edges: .top)
+        .padding([.horizontal, .bottom], 10)
+        .floeAnimation(value: navigator.surface, duration: 0.28)
+        .toolbar { toolbarContent }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    }
+
+    /// A standard unified toolbar: macOS supplies the glass grouping, overflow
+    /// menu and alignment with the window controls.
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        @Bindable var navigator = navigator
+        ToolbarItem(placement: .navigation) {
+            Button { navigator.back() } label: { Label("Back", systemImage: "chevron.left") }
+                .disabled(navigator.surface != .library || !navigator.canGoBack)
+                .help("Back")
+        }
+        ToolbarItem(placement: .principal) {
+            Picker("View", selection: $navigator.surface) {
+                Text("Library").tag(Navigator.Surface.library)
+                Text("Now Playing").tag(Navigator.Surface.nowPlaying)
+                Text("Lyrics").tag(Navigator.Surface.lyrics)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { showingVisuals.toggle() } label: { Label("Visuals", systemImage: "waveform") }
+                .help("Visuals")
+                .popover(isPresented: $showingVisuals) { VisualControls() }
+            ForEach(ConnectSection.allCases) { section in
+                connectButton(section)
+            }
+            Menu {
+                Toggle("Accent from cover", isOn: $accentFromCover)
+                Toggle("Reduce motion", isOn: $reduceMotion)
+            } label: { Label("Appearance", systemImage: "paintpalette") }
+            .menuIndicator(.hidden)
+            .help("Appearance")
+            SettingsLink { Label("Settings", systemImage: "gearshape") }
+                .help("Settings")
+        }
     }
 
     private func connectButton(_ section: ConnectSection) -> some View {
         Button { showingConnect = section } label: {
-            Image(systemName: section.symbol).frame(width: 30, height: 30)
+            Label(LocalizedStringKey(section.title), systemImage: section.symbol)
         }
-        .buttonStyle(.plain).help(LocalizedStringKey(section.title))
+        .help(LocalizedStringKey(section.title))
         .popover(isPresented: Binding(
             get: { showingConnect == section },
             set: { if !$0, showingConnect == section { showingConnect = nil } }
         )) { ConnectPanel(section: section) }
-    }
-
-    private func surfaceButton(_ title: LocalizedStringKey, icon: String, surface: Navigator.Surface) -> some View {
-        Button { navigator.surface = surface } label: {
-            Label(title, systemImage: icon).font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(navigator.surface == surface ? .white.opacity(0.12) : .clear, in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var topBar: some View {
-        HStack(spacing: 10) {
-            IconButton(systemImage: "chevron.left", size: 13, help: "Back") { navigator.back() }
-                .disabled(!navigator.canGoBack)
-                .opacity(navigator.canGoBack ? 1 : 0.35)
-            if navigator.current == .search {
-                SearchField(search: search)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 50)
     }
 
     @ViewBuilder

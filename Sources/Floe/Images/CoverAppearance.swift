@@ -40,31 +40,39 @@ extension EnvironmentValues {
 final class CoverAppearance {
     private(set) var coverURL: URL?
     private(set) var image: CGImage?
+    private(set) var imageURL: URL?
     private(set) var background: CGImage?
+    private(set) var backgroundURL: URL?
     private(set) var palette = CoverPalette()
 
     func load(_ url: URL?, blur: Double = 9) async {
         guard !Task.isCancelled else { return }
         let sameCover = coverURL == url
         coverURL = url
-        if !sameCover {
+        if url == nil {
             image = nil
+            imageURL = nil
             background = nil
+            backgroundURL = nil
             palette = CoverPalette()
-        } else {
+        } else if sameCover {
             try? await Task.sleep(for: .milliseconds(120)) // coalesce slider drags
             guard !Task.isCancelled else { return }
         }
         guard let url else { return }
         if !sameCover {
-            image = ArtworkCache.shared.cached(url, pixels: 720)
-                ?? ArtworkCache.shared.cached(url, pixels: 96)
+            if let cached = ArtworkCache.shared.cached(url, pixels: 720)
+                ?? ArtworkCache.shared.cached(url, pixels: 96) {
+                image = cached
+                imageURL = url
+            }
         }
         async let cover = ArtworkCache.shared.image(for: url, pixels: 720)
         async let thumbnail = ArtworkCache.shared.image(for: url, pixels: 96)
         let loaded = await cover
         guard !Task.isCancelled else { return }
         image = loaded
+        imageURL = url
         let small = await thumbnail
         guard !Task.isCancelled else { return }
         let processed = await Task.detached(priority: .utility) {
@@ -72,6 +80,7 @@ final class CoverAppearance {
         }.value
         guard !Task.isCancelled else { return }
         background = processed.0
+        backgroundURL = url
         palette = CoverPalette(rgb: processed.1 ?? .fallback)
     }
 

@@ -94,6 +94,7 @@ struct ArtworkView: View {
 
     @Environment(\.displayScale) private var displayScale
     @ViewState private var loaded: CGImage?
+    @ViewState private var loadedURL: URL?
 
     init(url: URL?, size: CGFloat, cornerRadius: CGFloat = 6, circle: Bool = false) {
         self.url = url
@@ -110,13 +111,17 @@ struct ArtworkView: View {
     private var pixels: Int { Int((size * displayScale).rounded(.up)) }
 
     var body: some View {
-        let image = loaded ?? url.flatMap { ArtworkCache.shared.cached($0, pixels: pixels) }
+        let cached = url.flatMap { ArtworkCache.shared.cached($0, pixels: pixels) }
+        let image = cached ?? loaded
+        let displayedURL = cached == nil ? loadedURL : url
         ZStack {
             Rectangle().fill(.white.opacity(0.06))
             if let image {
                 Image(decorative: image, scale: displayScale)
                     .resizable()
                     .scaledToFill()
+                    .id(displayedURL)
+                    .transition(.opacity)
             } else {
                 Image(systemName: circle ? "person.fill" : "music.note")
                     .font(.system(size: size * 0.3))
@@ -125,12 +130,14 @@ struct ArtworkView: View {
         }
         .frame(width: size, height: size)
         .clipShape(circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: cornerRadius)))
+        .floeAnimation(value: displayedURL, duration: 0.22)
         .task(id: "\(url?.absoluteString ?? "")#\(pixels)") {
-            loaded = nil
-            guard let url, ArtworkCache.shared.cached(url, pixels: pixels) == nil else { return }
-            let image = await ArtworkCache.shared.image(for: url, pixels: pixels)
+            guard let url else { loaded = nil; loadedURL = nil; return }
+            var image = ArtworkCache.shared.cached(url, pixels: pixels)
+            if image == nil { image = await ArtworkCache.shared.image(for: url, pixels: pixels) }
             guard !Task.isCancelled else { return }
             loaded = image
+            loadedURL = url
         }
     }
 }

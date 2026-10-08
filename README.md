@@ -12,6 +12,9 @@ language in Appearance. Queue and Devices have dedicated toolbar panels and an
 opt-in Spotify permission flow. Playback quality, normalization and gapless
 settings now reach librespot, and reconnecting preserves the song, position and
 pause state. Floe has a new native flower-and-rhythm icon (version 0.2.0).
+A design pass adds a standard macOS toolbar and Settings window, Liquid Glass
+controls, smooth transitions, redesigned lyrics and reference-style visualizers
+(see [Design and motion](#design-and-motion)).
 
 Limitations: the pinned engine has no crossfade support, so Settings labels it
 unavailable. Offline downloads remain unavailable. Queue/device requests need
@@ -85,10 +88,12 @@ Options: `-FloeSelfTestWrites YES` likes and then unlikes one song (no net chang
 `-FloeSelfTestTour YES` visits every page (`-FloeSelfTestTourRounds N` repeats it, to
 watch memory); `-FloeSnapshotDir <dir>` saves PNGs of each page (and on
 `notifyutil -p com.antonchurchyn.floe.snapshot`), since Screen Recording isn't needed for that.
+Window capture can't draw Liquid Glass, so snapshot runs draw glass controls as flat
+tints and composite the toolbar on top; check the real window for the glass itself.
 
 ### Now Playing and lyrics
 
-Use the top-right **Now Playing** or **Lyrics** button. Timed lyrics follow playback;
+Use **Now Playing** or **Lyrics** in the toolbar's centre switcher. Timed lyrics follow playback;
 click a line to seek to it. Scrolling manually stops automatic following until you
 click **Follow lyrics**. Untimed lyrics, instrumental songs, missing lyrics and
 request failures have separate states.
@@ -144,6 +149,44 @@ The live check measures real PCM, cadence and audio underruns, exercises every
 style/shape, and verifies pause, hiding, disabled effects and Reduce Motion. Add
 `-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` for synthetic-only visual QA.
 The live test restores visual preferences afterward and leaves playback paused.
+
+### Design and motion
+
+Floe follows macOS conventions where they fit. The window has a standard unified
+toolbar beside the window controls: Back, a Library / Now Playing / Lyrics switcher,
+and one group of Visuals, Queue, Devices, Appearance and Settings buttons, all in
+the system's Liquid Glass. Settings is a standard tabbed window with grouped forms.
+The Play buttons and the search field use interactive glass, and SF Symbols morph
+or bounce for play/pause, like, repeat, transport presses and the volume level.
+Large panels stay tinted rather than live-blurred, which keeps GPU and memory use down.
+
+Motion is short and event-driven. Navigation, selections, covers and backgrounds
+crossfade, and app or system Reduce Motion turns it off.
+
+On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. It
+turns slowly and breathes with the music while playing, and stops on pause. The
+circular visualizer scales with the cover. **Bars** are mirrored radial bars with
+bass at the top; **Wave** is a filled halo whose lobes follow the spectrum. The
+bottom strip unrolls the same look into mirrored bars or a ribbon, with bass in the
+middle. Colors run from pale at the top to the cover accent at the bottom.
+
+In synced lyrics the current line sits on a frosted pill that glides to the next
+line. Upcoming lines settle one after another with a short spring; lines further
+away dim, shrink and soften. The line clock wakes only when the next line is due,
+about 150 ms early so the motion lands with the vocal. Neighbouring lines glide,
+while opening the view or a long seek jumps straight there. Hover highlights a line,
+and clicking it seeks. After a manual scroll, a glass **Follow lyrics** button resumes
+following.
+
+`-FloeSelfTest YES -FloeSelfTestDesign YES` plays a liked song and runs the
+real-audio effect checks; add `-FloeVisualTest YES -FloeSnapshotDir <dir>` for
+synthetic-only snapshots of every visualizer style and the lyrics view. On
+2026-10-08 the release build passed it: 90 FFT frames per 3 s, audio flow without
+new underruns, and analysis stopping on pause, hiding, disabled effects and Reduce
+Motion. During that run (which also holds snapshot buffers) the footprint was
+~204 MiB with effects off, ~244 MiB with the circular visualizer and ~205 MiB with
+the live background. A clean launch, connected and idle, used ~117 MiB RSS and a
+~125 MB footprint at 0% CPU.
 
 ### Settings and recovery
 

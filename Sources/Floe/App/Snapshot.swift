@@ -30,10 +30,22 @@ enum Snapshot {
 
     static func capture(_ name: String) {
         guard canCapture?() == true, let directory,
-              let view = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })?.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+              let content = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })?.contentView,
+              let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)
         else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
+        content.cacheDisplay(in: content.bounds, to: rep)
+        // The toolbar lives in the titlebar, outside the content view; draw it on top.
+        if let titlebar = content.superview?.subviews.first(where: { "\(type(of: $0))".contains("Titlebar") }),
+           let bar = titlebar.bitmapImageRepForCachingDisplay(in: titlebar.bounds),
+           let context = NSGraphicsContext(bitmapImageRep: rep) {
+            titlebar.cacheDisplay(in: titlebar.bounds, to: bar)
+            let origin = content.convert(content.bounds, to: nil).origin
+            let frame = titlebar.convert(titlebar.bounds, to: nil).offsetBy(dx: -origin.x, dy: -origin.y)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            bar.draw(in: frame)
+            NSGraphicsContext.restoreGraphicsState()
+        }
         let url = directory.appendingPathComponent("\(name).png")
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
         print("[snapshot] \(url.path)")

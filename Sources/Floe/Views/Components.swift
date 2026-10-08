@@ -26,12 +26,16 @@ struct Backdrop: View {
                     Image(decorative: image, scale: 1).resizable().scaledToFill()
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .clipped().opacity(0.45)
+                        .id(appearance.backgroundURL)
+                        .transition(.opacity)
                 }
                 if visuals.liveBackground { ReactiveBackground().allowsHitTesting(false) }
                 RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
                                center: .topLeading, startRadius: 0, endRadius: 700)
                 Color.black.opacity(0.28)
             }
+            .floeAnimation(value: appearance.backgroundURL, duration: 0.45)
+            .floeAnimation(value: palette.rgb, duration: 0.45)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -53,7 +57,28 @@ private struct GlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content.background(Color(white: 0.11).opacity(opacity), in: shape)
-            .overlay(shape.strokeBorder(Theme.panelStroke))
+            .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.14), Theme.panelStroke, .white.opacity(0.035)],
+                                                       startPoint: .topLeading, endPoint: .bottomTrailing)))
+    }
+}
+
+extension View {
+    /// Interactive Liquid Glass for small controls, optionally tinted. Development
+    /// snapshots can't render glass, so they get a flat tint in its place.
+    func glassControl(tint: Color? = nil, in shape: some Shape) -> some View {
+        modifier(GlassControlModifier(tint: tint, shape: shape))
+    }
+}
+
+private struct GlassControlModifier<S: Shape>: ViewModifier {
+    var tint: Color?
+    var shape: S
+    @ViewBuilder func body(content: Content) -> some View {
+        if Snapshot.isEnabled {
+            content.background(tint ?? .white.opacity(0.1), in: shape)
+        } else {
+            content.glassEffect(.regular.tint(tint).interactive(), in: shape)
+        }
     }
 }
 
@@ -70,33 +95,43 @@ struct PlayPill: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 9)
                 .foregroundStyle(palette.onAccent)
-                .background(palette.accent, in: Capsule())
+                .glassControl(tint: palette.accent, in: .capsule)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.floe)
     }
 }
 
-/// Round, quiet icon button used in toolbars and the mini player.
+/// Round, quiet icon button used in toolbars and the mini player. The symbol
+/// bounces on press and morphs when it changes, like the system's own controls.
 struct IconButton: View {
     @Environment(\.coverPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage("reduceMotion") private var reduceMotion = false
     let systemImage: String
     var size: CGFloat = 15
     var active = false
     var help: LocalizedStringKey = ""
     let action: () -> Void
     @ViewState private var hovering = false
+    @ViewState private var presses = 0
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            presses += 1
+            action()
+        } label: {
             Image(systemName: systemImage)
                 .font(.system(size: size, weight: .medium))
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion || systemReduceMotion ? 0 : presses)
                 .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
                 .frame(width: size * 2.1, height: size * 2.1)
                 .background(hovering ? Theme.hover : .clear, in: Circle())
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.floe)
         .onHover { hovering = $0 }
+        .floeAnimation(value: hovering, duration: 0.18)
         .help(help)
     }
 }
@@ -162,8 +197,9 @@ struct Card: View {
             .background(hovering ? Theme.hover : .clear, in: RoundedRectangle(cornerRadius: 14))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.floe)
         .onHover { hovering = $0 }
+        .floeAnimation(value: hovering, duration: 0.18)
     }
 }
 

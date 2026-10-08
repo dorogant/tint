@@ -62,6 +62,7 @@ struct FloeApp: App {
                 }
         }
         .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1220, height: 800)
         .commands {
             CommandGroup(after: .sidebar) {

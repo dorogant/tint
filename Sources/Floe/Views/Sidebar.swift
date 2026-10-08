@@ -7,7 +7,6 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: 30) // room for the window's traffic lights
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     NavRow(title: "Home", systemImage: "house.fill", route: .home)
@@ -22,7 +21,7 @@ struct SidebarView: View {
                     ForEach(library.playlists) { PlaylistRow(playlist: $0) }
                 }
                 .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                .padding(.vertical, 10)
             }
             Rectangle().fill(Theme.panelStroke).frame(height: 1)
             AccountRow().padding(12)
@@ -64,8 +63,10 @@ private struct NavRow: View {
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.floe)
         .onHover { hovering = $0 }
+        .floeAnimation(value: hovering, duration: 0.16)
+        .floeAnimation(value: selected, duration: 0.2)
     }
 }
 
@@ -98,8 +99,10 @@ private struct PlaylistRow: View {
                         in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.floe)
         .onHover { hovering = $0 }
+        .floeAnimation(value: hovering, duration: 0.16)
+        .floeAnimation(value: selected, duration: 0.2)
         .contextMenu {
             Button("Play") { player.play(PlayRequest(contextURI: playlist.uri)) }
             Button(library.isPinned(playlist.id) ? "Unpin" : "Pin to Sidebar") {

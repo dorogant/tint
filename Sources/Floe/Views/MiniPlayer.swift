@@ -136,7 +136,10 @@ struct VolumeControl: View {
                 if player.volume > 0 { audibleVolume = player.volume; player.setVolume(0) }
                 else { player.setVolume(audibleVolume) }
             } label: {
-                Image(systemName: icon).font(.system(size: 13)).foregroundStyle(Theme.secondary).frame(width: 20)
+                Image(systemName: player.volume > 0 ? "speaker.wave.3.fill" : "speaker.slash.fill",
+                      variableValue: player.volume)
+                    .contentTransition(.symbolEffect(.replace))
+                    .font(.system(size: 13)).foregroundStyle(Theme.secondary).frame(width: 22)
             }.buttonStyle(.plain).help(player.volume > 0 ? "Mute" : "Unmute")
             GeometryReader { geometry in
                 Canvas { context, size in
@@ -166,15 +169,6 @@ struct VolumeControl: View {
         .accessibilityValue(Text("\(Int(player.volume * 100))%"))
         .accessibilityAdjustableAction { direction in
             player.setVolume(player.volume + (direction == .increment ? 0.05 : -0.05))
-        }
-    }
-
-    private var icon: String {
-        switch player.volume {
-        case 0: "speaker.slash.fill"
-        case ..<0.33: "speaker.wave.1.fill"
-        case ..<0.66: "speaker.wave.2.fill"
-        default: "speaker.wave.3.fill"
         }
     }
 }

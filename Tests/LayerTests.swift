@@ -14,9 +14,11 @@ struct LayerTests {
         visualizerIsUpright()
         haloBackLayerFollowsBass()
         beadEchoDoesNotTintTheFront()
-        waveFillsOnlyTheElapsedPart()
-        waveRecentersAfterHeightOnlyResize()
-        print("PASS: 8 layer checks (cover orientation, paused swap, ring and bar orientation, halo bass layer, bead overlap, wave clip and resize)")
+        progressFillsOnlyTheElapsedPart()
+        progressRecentersAfterHeightOnlyResize()
+        progressThickensAndShowsThumbOnlyUnderPointer()
+        progressGlidesOnlyWhilePlaying()
+        print("PASS: 10 layer checks (cover orientation, paused swap, ring and bar orientation, halo bass layer, bead overlap, progress fill, resize, hover and glide)")
     }
 
     // MARK: - Checks
@@ -87,14 +89,15 @@ struct LayerTests {
         check(bassHit > 40 && trebleHit == 0, "the halo's outer layer must follow the bass (\(bassHit), \(trebleHit))")
     }
 
-    static func waveFillsOnlyTheElapsedPart() {
-        let view = WavyProgressView()
+    static func progressFillsOnlyTheElapsedPart() {
+        let view = ProgressTrackView()
         let image = render(view, size: CGSize(width: 400, height: 24)) {
-            view.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+            view.update(progress: 0.5, fill: .systemGreen, glide: false)
         }
         let elapsed = (8..<16).contains { image.color(at: 100, $0).isGreenish }
         let rest = (8..<16).contains { image.color(at: 320, $0).isGreenish }
-        check(elapsed && !rest, "the wave must fill the elapsed part only")
+        let track = (8..<16).contains { image.color(at: 320, $0).isTrack }
+        check(elapsed && !rest && track, "the fill must cover the elapsed part only, over a visible track")
     }
 
     static func beadEchoDoesNotTintTheFront() {
@@ -145,29 +148,77 @@ struct LayerTests {
               "the bead echo must remain visible outside the front without tinting overlaps")
     }
 
-    static func waveRecentersAfterHeightOnlyResize() {
-        let resized = WavyProgressView()
+    static func progressRecentersAfterHeightOnlyResize() {
+        let resized = ProgressTrackView()
         _ = render(resized, size: CGSize(width: 400, height: 24)) {
-            resized.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+            resized.update(progress: 0.5, fill: .systemGreen, glide: false)
         }
         let size = CGSize(width: 400, height: 40)
         let actual = render(resized, size: size) {
-            resized.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+            resized.update(progress: 0.5, fill: .systemGreen, glide: false)
         }
-        let fresh = WavyProgressView()
+        let fresh = ProgressTrackView()
         let expected = render(fresh, size: size) {
-            fresh.update(progress: 0.5, color: .systemGreen, moving: false, glide: false)
+            fresh.update(progress: 0.5, fill: .systemGreen, glide: false)
         }
-        // A fixed width used to leave the sine path at the old midpoint while
-        // the knob and remaining line moved to the new one. Compare real pixels
-        // with a fresh view at the final size, at several points on the wave.
-        let columns = [50, 100, 150]
-        func greenRows(_ image: Image) -> [[Int]] {
-            columns.map { x in (0..<image.height).filter { image.color(at: x, $0).isGreenish } }
+        // Compare real pixels with a fresh view at the final size: the fill,
+        // the track and the playhead must all follow the new centre line.
+        let columns = [50, 150, 300]
+        func rows(_ image: Image) -> [[Int]] {
+            columns.map { x in (0..<image.height).filter { image.color(at: x, $0).isTrack } }
         }
-        let wanted = greenRows(expected)
-        check(wanted.allSatisfy { !$0.isEmpty } && greenRows(actual) == wanted,
-              "a height-only resize must recenter the elapsed wave")
+        let wanted = rows(expected)
+        check(wanted.allSatisfy { !$0.isEmpty } && rows(actual) == wanted,
+              "a height-only resize must recenter the progress track")
+    }
+
+    /// At rest: a slim track and no thumb. Under the pointer, once the springs
+    /// settle, the track is thicker and a white thumb sits on the playhead.
+    /// With Reduce Motion the track keeps its size and the thumb still shows.
+    static func progressThickensAndShowsThumbOnlyUnderPointer() {
+        func look(_ emphasis: ProgressTrackView.Emphasis, still: Bool = false) -> (track: Int, thumb: Int) {
+            let view = ProgressTrackView(metrics: .regular)
+            let image = render(view, size: CGSize(width: 400, height: 24)) {
+                view.update(progress: 0.5, fill: .systemGreen, glide: false, still: still)
+                CATransaction.flush()
+                view.update(progress: 0.5, fill: .systemGreen, glide: false, emphasis: emphasis, still: still)
+                CATransaction.flush()
+                // Let the springs settle; CARenderer draws at the current media time.
+                RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+            }
+            let track = (0..<24).filter { image.color(at: 320, $0).isTrack }.count
+            let thumb = (0..<24).filter { image.color(at: 200, $0).paleness > 0.8 }.count
+            return (track, thumb)
+        }
+        let rest = look(.rest), hover = look(.hover), grab = look(.grab), still = look(.hover, still: true)
+        print("progress rows: rest \(rest), hover \(hover), grab \(grab), still \(still)")
+        check(rest.thumb == 0 && (4...6).contains(rest.track), "at rest the track is slim with no thumb (\(rest))")
+        check((7...9).contains(hover.track) && (12...15).contains(hover.thumb),
+              "under the pointer the track thickens and the thumb shows (\(hover))")
+        check(grab.thumb > hover.thumb, "a held thumb swells (\(grab.thumb) vs \(hover.thumb))")
+        check((4...6).contains(still.track) && (12...15).contains(still.thumb),
+              "with Reduce Motion the track keeps its size and the thumb still shows (\(still))")
+    }
+
+    /// Playing, the playhead glides toward the next tick over a second;
+    /// paused (or scrubbing), it lands at once. Half a second into a glide the
+    /// fill's end sits between the two playheads.
+    static func progressGlidesOnlyWhilePlaying() {
+        func fillEnd(glide: Bool) -> Int {
+            let view = ProgressTrackView()
+            let image = render(view, size: CGSize(width: 400, height: 24)) {
+                view.update(progress: 0.5, fill: .systemGreen, glide: false)
+                CATransaction.flush()
+                // 7.6 pt: under the 8 pt that counts as a seek.
+                view.update(progress: 0.519, fill: .systemGreen, glide: glide)
+                CATransaction.flush()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            }
+            return (0..<400).last { image.color(at: $0, 12).isGreenish } ?? 0
+        }
+        let gliding = fillEnd(glide: true), landed = fillEnd(glide: false)
+        check(landed >= 206 && (201...205).contains(gliding),
+              "the playhead must glide while playing and land at once otherwise (\(gliding), \(landed))")
     }
 
     /// Optimized builds drop `precondition` messages, so say what failed.
@@ -182,6 +233,8 @@ struct LayerTests {
     struct Pixel {
         let r: Double, g: Double, b: Double
         var isLit: Bool { max(r, g, b) > 0.35 }
+        /// The faint track on black, or anything brighter.
+        var isTrack: Bool { max(r, g, b) > 0.08 }
         var isRed: Bool { r > 0.6 && g < 0.4 && b < 0.4 }
         var isBlue: Bool { b > 0.6 && r < 0.4 && g < 0.4 }
         var isGreen: Bool { g > 0.6 && r < 0.4 && b < 0.4 }

@@ -212,12 +212,14 @@ private struct MiniAction: View {
     }
 }
 
-/// Thin seekable progress line with elapsed and total times. Under the pointer
-/// the line thickens, the knob grows out of the playhead and the time under
-/// the pointer follows it; a drag scrubs, previewing the time before release.
+/// A slim seekable track with elapsed and remaining times, like the system's
+/// media scrubbers. Under the pointer the track thickens, a thumb grows out of
+/// the playhead and the time under the pointer follows it; a drag scrubs,
+/// previewing the time before release. Now Playing (`large`) glides its
+/// playhead and sets the times beneath the track's ends.
 struct ProgressBar: View {
     @Environment(\.coverPalette) private var palette
-    var wavy = false
+    var large = false
     @ReducedMotion private var still
     @Environment(\.scenePhase) private var scenePhase
     @Environment(PlayerModel.self) private var player
@@ -227,54 +229,41 @@ struct ProgressBar: View {
     var body: some View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
         let enabled = player.displayTrack != nil && !player.isLoading
-        // Both bars tick once a second; Core Animation scrolls the Now Playing wave
-        // and glides its playhead in between, and moves the pointer readout.
+        // Both bars tick once a second; Core Animation glides the Now Playing
+        // playhead in between and moves the pointer readout.
         TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil || scenePhase != .active)) { context in
             let fraction = dragFraction ?? min(player.positionMs(at: context.date) / duration, 1)
             // Aim the glide at where playback will be on the next tick.
             let ahead = dragFraction ?? min(player.positionMs(at: context.date.addingTimeInterval(1)) / duration, 1)
             let scrubbing = dragFraction != nil
-            HStack(spacing: 8) {
-                Text(Format.duration(ms: fraction * duration))
-                    .foregroundStyle(scrubbing ? .white : Theme.tertiary)
-                    .frame(width: 36, alignment: .trailing)
-                GeometryReader { geometry in
-                    Group {
-                        if wavy {
-                            let playing = player.isPlaying && !scrubbing && scenePhase == .active
-                            let animate = playing && !still
-                            WavyProgress(progress: animate ? ahead : fraction, color: palette.highlight,
-                                         moving: animate, glide: animate,
-                                         knob: still ? .rest : (scrubbing ? .grab : (hovering ? .hover : .rest)))
-                        } else {
-                            SliderTrack(fraction: fraction, active: hovering || scrubbing, grabbed: scrubbing,
-                                        tint: scrubbing ? palette.accent : .white.opacity(0.85))
-                        }
+            let glide = large && player.isPlaying && !scrubbing && scenePhase == .active && !still
+            let track = self.track(progress: glide ? ahead : fraction, glide: glide, scrubbing: scrubbing,
+                                   duration: duration, enabled: enabled)
+            let elapsed = Text(Format.duration(ms: fraction * duration))
+                .foregroundStyle(scrubbing ? .white : (large ? Theme.secondary : Theme.tertiary))
+            // Whole seconds on both sides, so elapsed and remaining always add up to the length.
+            let remaining = Text("\u{2212}" + Format.duration(ms: Double(Int(duration / 1000) - Int(fraction * duration / 1000)) * 1000))
+            if large {
+                // The times sit about 6 pt under the track, inside its generous hit area.
+                VStack(spacing: -3) {
+                    track.frame(height: 22)
+                    HStack {
+                        elapsed
+                        Spacer(minLength: 8)
+                        remaining
                     }
-                    .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .onHover { hovering = $0 }
-                    .floeHover(hovering || scrubbing)
-                    .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { dragFraction = min(max($0.location.x / max(geometry.size.width, 1), 0), 1) }
-                        .onEnded { _ in
-                            if let target = dragFraction { player.seek(toMs: target * duration) }
-                            dragFraction = nil
-                        })
-                    .overlay(alignment: .bottom) {
-                        ScrubReadout(durationMs: duration, scrub: dragFraction, trackHeight: geometry.size.height,
-                                     clearance: wavy ? 15 : 10, still: still, enabled: enabled)
-                            .frame(height: geometry.size.height + 34)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.secondary)
                 }
-                .frame(height: wavy ? 24 : 12)
-                Text(Format.duration(ms: duration))
-                    .frame(width: 36, alignment: .leading)
+            } else {
+                HStack(spacing: 8) {
+                    elapsed.frame(width: 36, alignment: .trailing)
+                    track.frame(height: 12)
+                    remaining.frame(width: 40, alignment: .trailing)
+                }
+                .font(.system(size: 10.5).monospacedDigit())
+                .foregroundStyle(Theme.tertiary)
             }
-            .font(.system(size: 10.5).monospacedDigit())
-            .foregroundStyle(Theme.tertiary)
         }
         .onChange(of: player.displayTrack?.uri) { dragFraction = nil }
         .accessibilityElement(children: .ignore)
@@ -284,6 +273,34 @@ struct ProgressBar: View {
             player.seek(toMs: player.positionMs(at: Date()) + (direction == .increment ? 5000 : -5000))
         }
         .disabled(!enabled)
+    }
+
+    /// The fill stays a calm white; while scrubbing it takes the cover's colour.
+    private func track(progress: Double, glide: Bool, scrubbing: Bool, duration: Double, enabled: Bool) -> some View {
+        let metrics = large ? ProgressTrackView.Metrics.regular : .compact
+        return GeometryReader { geometry in
+            ProgressTrack(progress: progress, fill: scrubbing ? palette.highlight : .white.opacity(hovering ? 0.95 : 0.85),
+                          metrics: metrics, glide: glide,
+                          emphasis: scrubbing ? .grab : (hovering && enabled ? .hover : .rest), still: still)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 }
+                .floeHover(hovering || scrubbing)
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { dragFraction = min(max($0.location.x / max(geometry.size.width, 1), 0), 1) }
+                    .onEnded { _ in
+                        if let target = dragFraction { player.seek(toMs: target * duration) }
+                        dragFraction = nil
+                    })
+                .overlay(alignment: .bottom) {
+                    // Clear of the grabbed thumb, which is 15% larger than at rest.
+                    ScrubReadout(durationMs: duration, scrub: dragFraction, trackHeight: geometry.size.height,
+                                 clearance: (metrics.thumb * 1.15 / 2).rounded(.up) + 6, still: still, enabled: enabled)
+                        .frame(height: geometry.size.height + 34)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+        }
     }
 }
 

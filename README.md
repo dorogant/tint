@@ -43,7 +43,7 @@ in a visible window. Each figure is Tint's own CPU over 10–30 s, from the
 Most of the saving comes from moving continuous motion out of SwiftUI. Each SwiftUI
 update re-lays out the whole window (~1.5 ms on the main thread), so animating the
 cover and progress wave through SwiftUI cost ~15% of a core. The crawling cover rim,
-the progress wave and the visualizer now run on Core Animation layers, and the live
+the progress playhead's glide and the visualizer now run on Core Animation layers, and the live
 background reads analysis frames itself. Lyric line changes still animate through
 SwiftUI with a short spring; in a dense section they add a few percent while they run.
 The live background defaults off.
@@ -249,18 +249,19 @@ real-audio effect checks; add `-FloeVisualTest YES -FloeSnapshotDir <dir>` for
 synthetic-only snapshots of every visualizer style and the lyrics view.
 `-FloeSelfTest YES -FloeSelfTestPerf YES` holds each visual scenario for 10 s and
 logs CPU, analysis and background frame rates, and footprint. It also checks that
-the cover rim and progress wave move while playing and stop on pause, and compares
+the cover rim and progress playhead move while playing and stop on pause, and compares
 raw and adaptive equalizer shapes on two of your liked songs.
 `-FloeSelfTestPerfOnly <name>` holds matching scenarios instead, for 30 s when only
 one matches (useful with `sample`). It restores every preference afterwards.
 
 Window snapshots can't show Core Animation masks or motion, so `scripts/test-layers.sh`
-renders the real cover, visualizer and progress-wave layers offscreen with
+renders the real cover, visualizer and progress-track layers offscreen with
 `CARenderer`, inside a top-down parent as SwiftUI hosts them. It checks pixels: the
 cover is upright and shows a new image even while paused, bass sits at the top of the
-ring, bottom bars stand on the floor, the halo is pale on top, and the wave fills only
-the elapsed part. Additional checks cover height-only progress resizing and the
-bead ribbon's overlap. Its dim rear ribbon is now clipped by Core Animation rather
+ring, bottom bars stand on the floor, the halo is pale on top, and the progress fill covers only
+the elapsed part. Additional checks cover height-only progress resizing, the track
+thickening with a thumb only under the pointer (and with Reduce Motion), the playhead
+gliding only while playing, and the bead ribbon's overlap. Its dim rear ribbon is now clipped by Core Animation rather
 than a polygon subtraction on every frame. Synthetic path-generation time fell
 from 0.411–0.433 ms to 0.051 ms/frame (~88%); this excludes compositor/GPU work and
 is not a new whole-app CPU measurement.

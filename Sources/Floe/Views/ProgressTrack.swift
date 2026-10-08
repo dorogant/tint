@@ -33,7 +33,7 @@ final class ProgressTrackView: NSView {
         var thumb: CGFloat
 
         /// Now Playing.
-        static let regular = Metrics(track: 5, activeTrack: 8, thumb: 14)
+        static let regular = Metrics(track: 5, activeTrack: 7, thumb: 14)
         /// The mini player; matches the volume slider beside it.
         static let compact = Metrics(track: 4, activeTrack: 6, thumb: 12)
     }

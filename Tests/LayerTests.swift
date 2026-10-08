@@ -191,7 +191,6 @@ struct LayerTests {
             return (track, thumb)
         }
         let rest = look(.rest), hover = look(.hover), grab = look(.grab), still = look(.hover, still: true)
-        print("progress rows: rest \(rest), hover \(hover), grab \(grab), still \(still)")
         check(rest.thumb == 0 && (4...6).contains(rest.track), "at rest the track is slim with no thumb (\(rest))")
         check((7...9).contains(hover.track) && (12...15).contains(hover.thumb),
               "under the pointer the track thickens and the thumb shows (\(hover))")

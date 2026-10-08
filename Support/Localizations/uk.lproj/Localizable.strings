@@ -218,7 +218,9 @@
 "Speed" = "Швидкість";
 "Glow" = "Сяйво";
 "Vividness" = "Насиченість";
-"Shake" = "Тремтіння";
 "Beam count" = "Кількість променів";
 "Strobe on the beat" = "Стробоскоп у такт";
-"Fluid swirls the cover's colors like ink, shakes on the beat and glows with the music. Beams sweep stage lights through haze and punch on every kick. The strobe never flashes more than three times a second." = "Рідина розливає кольори обкладинки, наче чорнило, тремтить у такт і сяє разом із музикою. Промені водять сценічним світлом крізь дим і спалахують на кожному ударі. Стробоскоп блимає не частіше ніж тричі на секунду.";
+
+/* Live backgrounds */
+"Bass punch" = "Удар басу";
+"Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Обидва розкладають музику на шари. Промені: бочка штовхає крайні промені, хай-хети запалюють середні, вокал наповнює дим кольором, а рухи повертають у такт. Рідина розливає кольори обкладинки, наче чорнило, і дихає разом із басом. Удар басу задає, наскільки сильно бочка рухає світло. Стробоскоп блимає не частіше ніж тричі на секунду.";

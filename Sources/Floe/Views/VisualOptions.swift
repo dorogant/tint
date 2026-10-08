@@ -42,9 +42,8 @@ struct BackgroundOptions: View {
                            displayedValue: percent(settings.glow))
             SettingsSlider("Vividness", value: $settings.vividness, range: VisualSettings.vividnessRange,
                            displayedValue: percent(settings.vividness))
-            SettingsSlider("Shake", value: $settings.shake, range: VisualSettings.shakeRange,
-                           displayedValue: percent(settings.shake))
-                .disabled(settings.backgroundKind != .fluid)
+            SettingsSlider("Bass punch", value: $settings.punch, range: VisualSettings.punchRange,
+                           displayedValue: percent(settings.punch))
             Group {
                 SettingsStepper("Beam count", value: $settings.beamCount, range: VisualSettings.beamCountRange)
                 Toggle("Strobe on the beat", isOn: $settings.strobe)

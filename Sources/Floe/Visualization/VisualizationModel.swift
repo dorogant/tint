@@ -16,6 +16,17 @@ final class VisualizationModel {
     private(set) var flow: Double = 0
     @ObservationIgnored private let worker = AnalysisWorker()
     @ObservationIgnored private var generation: UInt64 = 0
+    /// The newest frame the live background hasn't taken yet, carrying the hits
+    /// of any frame it missed. Not observed: nothing in SwiftUI may read it.
+    @ObservationIgnored private var unread: SpectrumFrame?
+    @ObservationIgnored private var unreadCount = 0
+
+    /// For the live background's display link: each analysis frame once, or nil
+    /// when nothing new has arrived since the last draw.
+    func takeFrame() -> SpectrumFrame? {
+        defer { unread = nil; unreadCount = 0 }
+        return unread
+    }
 
     func setRunning(_ running: Bool) {
         guard isRunning != running else { return }
@@ -26,10 +37,18 @@ final class VisualizationModel {
             worker.start { [weak self] frame in
                 guard let self, self.isRunning, self.generation == generation else { return }
                 self.frame = frame
+                // A few missed frames are a busy main thread; more means nobody is
+                // drawing (the background is off), so old hits don't pile up.
+                self.unreadCount += 1
+                self.unread = self.unreadCount <= 4 ? self.unread.map { frame.folding(onsetsOf: $0) } ?? frame : frame
                 self.framesAnalyzed += 1
                 self.flow += (0.5 + min(1.5, Double(frame.rms) * 5)) / 30
             }
-        } else { worker.stop() }
+        } else {
+            worker.stop()
+            unread = nil
+            unreadCount = 0
+        }
     }
 }
 

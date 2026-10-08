@@ -24,10 +24,14 @@ struct BackgroundTests {
         pausedSwiftUIResize()
         paletteChecks()
         settingsChecks()
+        layerChecks()
         detectorChecks()
         fluidChecks(device: device)
         beamChecks(device: device)
-        print("PASS: \(checks) background checks (renderer, palette, settings, beats, Fluid, Beams, flash rate)")
+        mappingChecks(device: device)
+        crispnessChecks(device: device)
+        performanceReport(device: device)
+        print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
     }
 
@@ -124,7 +128,9 @@ struct BackgroundTests {
             status.backgroundFramesDrawn > beforeResize
         }
         guard let view = metalView(in: host) else { fail("the SwiftUI host must contain its production Metal view") }
-        check(view.drawableSize == CGSize(width: 512, height: 512), "the paused resize must use the new aspect ratio")
+        check(view.drawableSize == BackgroundRenderer.drawableSize(points: CGSize(width: 512, height: 512), scale: window.backingScaleFactor)
+              && view.drawableSize.width >= 512 && view.drawableSize.width == view.drawableSize.height,
+              "the paused resize must use the new aspect ratio, at least a pixel per point (\(view.drawableSize))")
         settle()
         let settledFrames = status.backgroundFramesDrawn
         settle()
@@ -178,26 +184,103 @@ struct BackgroundTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let fresh = VisualSettings(defaults: defaults)
-        check(fresh.backgroundKind == .fluid && fresh.motionSpeed == 1 && fresh.glow == 1 && fresh.shake == 1
+        check(fresh.backgroundKind == .fluid && fresh.motionSpeed == 1 && fresh.glow == 1 && fresh.punch == 1
               && fresh.vividness == 1 && fresh.beamCount == 6 && !fresh.strobe,
               "new background settings must start at their defaults, with the strobe off")
-        for (key, value) in [("backgroundSpeed", 9.0), ("backgroundGlow", -3.0), ("backgroundShake", 40.0),
+        for (key, value) in [("backgroundSpeed", 9.0), ("backgroundGlow", -3.0), ("backgroundPunch", 40.0),
                              ("backgroundVividness", 0.0), ("backgroundReactivity", 7.0)] { defaults.set(value, forKey: key) }
         defaults.set(99, forKey: "backgroundBeamCount")
         defaults.set("lasers", forKey: "backgroundKind")
         var clamped = VisualSettings(defaults: defaults)
         check(clamped.motionSpeed == VisualSettings.speedRange.upperBound && clamped.glow == VisualSettings.glowRange.lowerBound
-              && clamped.shake == VisualSettings.shakeRange.upperBound && clamped.vividness == VisualSettings.vividnessRange.lowerBound
+              && clamped.punch == VisualSettings.punchRange.upperBound && clamped.vividness == VisualSettings.vividnessRange.lowerBound
               && clamped.reactivity == 2 && clamped.beamCount == VisualSettings.beamCountRange.upperBound
               && clamped.backgroundKind == .fluid,
               "out-of-range stored settings must clamp, and an unknown kind must fall back")
         defaults.set(1, forKey: "backgroundBeamCount")
         clamped = VisualSettings(defaults: defaults)
         check(clamped.beamCount == VisualSettings.beamCountRange.lowerBound, "too few beams must clamp up")
-        clamped.backgroundKind = .beams; clamped.motionSpeed = 1.5; clamped.strobe = true
+        clamped.backgroundKind = .beams; clamped.motionSpeed = 1.5; clamped.strobe = true; clamped.punch = 0.4
         let reloaded = VisualSettings(defaults: defaults)
-        check(reloaded.backgroundKind == .beams && reloaded.motionSpeed == 1.5 && reloaded.strobe,
+        check(reloaded.backgroundKind == .beams && reloaded.motionSpeed == 1.5 && reloaded.strobe && reloaded.punch == 0.4,
               "background settings must persist")
+
+        // The old Shake scaled Fluid's random jolt, which is gone: it's dropped, not carried into Punch.
+        let old = UserDefaults(suiteName: suite + "-old")!
+        defer { old.removePersistentDomain(forName: suite + "-old") }
+        old.set(0.26, forKey: "backgroundShake")
+        old.set(0.54, forKey: "backgroundSpeed")
+        let migrated = VisualSettings(defaults: old)
+        check(migrated.punch == 1 && old.object(forKey: "backgroundShake") == nil && migrated.motionSpeed == 0.54,
+              "the retired Shake value must be removed and the other knobs kept")
+    }
+
+    // MARK: - Layers
+
+    static func layers(_ sections: [(SyntheticTrack, Float)]) -> [MusicLayers] {
+        SyntheticTrack.frames(sections).map(\.layers)
+    }
+
+    static func hits(_ layers: [MusicLayers], _ key: KeyPath<MusicLayers, Float>, after second: Float = 0) -> [Int] {
+        layers.indices.filter { Float($0) >= second * 30 && layers[$0][keyPath: key] > 0 }
+    }
+
+    static func mean(_ layers: [MusicLayers], _ key: KeyPath<MusicLayers, Float>, after second: Float = 1) -> Float {
+        let slice = layers.dropFirst(Int(second * 30))
+        return slice.map { $0[keyPath: key] }.reduce(0, +) / Float(max(1, slice.count))
+    }
+
+    /// Each instrument has to land in its own layer, hits have to be found at
+    /// any loudness, and the tempo has to lock onto a steady groove.
+    static func layerChecks() {
+        check(layers([(SyntheticTrack(), 3)]).allSatisfy { $0 == MusicLayers() }, "silence must leave every layer at rest")
+
+        let kicks = layers([(SyntheticTrack(kick: 0.9), 6)])
+        let hats = layers([(SyntheticTrack(pad: 0.05, hats: 0.12), 6)])
+        let vocal = layers([(SyntheticTrack(vocal: 0.3), 6)])
+        let snares = layers([(SyntheticTrack(snare: 0.4), 6)])
+        let kickHits = hits(kicks, \.kick).count, hatHits = hits(hats, \.hat).count
+        let snareHits = hits(snares, \.snare).count
+        print(String(format: "Layers: kicks %d kick / %d hat hits; hats %d hat / %d kick; snares %d snare / %d kick; vocal %d hits",
+                     kickHits, hits(kicks, \.hat).count, hatHits, hits(hats, \.kick).count, snareHits, hits(snares, \.kick).count,
+                     hits(vocal, \.kick).count + hits(vocal, \.hat).count + hits(vocal, \.snare).count))
+        print(String(format: "Layers: envelopes (bass, low-mid, mid, high) kicks %.2f %.2f %.2f %.2f; hats %.2f %.2f %.2f %.2f; vocal %.2f %.2f %.2f %.2f",
+                     mean(kicks, \.bass), mean(kicks, \.lowMid), mean(kicks, \.mid), mean(kicks, \.high),
+                     mean(hats, \.bass), mean(hats, \.lowMid), mean(hats, \.mid), mean(hats, \.high),
+                     mean(vocal, \.bass), mean(vocal, \.lowMid), mean(vocal, \.mid), mean(vocal, \.high)))
+        check((11...13).contains(kickHits), "12 kicks in 6 s must give about 12 kick hits (\(kickHits))")
+        check(hits(kicks, \.hat).isEmpty && hits(kicks, \.snare).count <= 1, "kicks must not read as hats or snares")
+        check(hatHits >= 40, "hats on the eighths must be found nearly every time (\(hatHits) of 48)")
+        check(hits(hats, \.kick).isEmpty, "hats must not read as kicks")
+        check((5...7).contains(snareHits), "a snare every second must be found (\(snareHits) in 6 s)")
+        check(hits(vocal, \.kick).isEmpty && hits(vocal, \.hat).isEmpty, "a sung vowel must not read as drums")
+        check(mean(kicks, \.bass) > mean(kicks, \.high) + 0.2, "kicks must live in the bass layer")
+        check(mean(hats, \.high) > mean(hats, \.bass) + 0.2, "hats must live in the high layer")
+        check(mean(vocal, \.mid) > mean(vocal, \.bass) + 0.15 && mean(vocal, \.mid) > mean(vocal, \.high) + 0.15,
+              "a vocal must live in the mid layer")
+
+        // The bass envelope pumps with the kicks instead of sitting flat.
+        let pump = kicks.dropFirst(60).prefix(30).map(\.bass)
+        check(pump.max()! - pump.min()! > 0.4, "the bass envelope must pump with the kicks (\(pump.min()!)…\(pump.max()!))")
+
+        // Quiet songs still register their hits; loud, clipped masters don't fire on everything.
+        let groove = SyntheticTrack(kick: 0.8, bass: 0.15, pad: 0.1, hats: 0.08, snare: 0.3)
+        let quiet = layers([(groove.scaled(0.05), 6)])
+        let loud = layers([(groove.scaled(2.5, clip: true), 6)])
+        let quietKicks = hits(quiet, \.kick).count, loudKicks = hits(loud, \.kick).count
+        check((10...14).contains(quietKicks), "kicks 26 dB down must still be found (\(quietKicks))")
+        check((10...15).contains(loudKicks) && hits(loud, \.hat).count < 60, "a clipped master must not fire on every frame (\(loudKicks) kicks)")
+
+        // A steady groove locks the tempo, and its beats line up with the kicks.
+        let song = layers([(SyntheticTrack(kick: 0.8, bass: 0.15, pad: 0.1, hats: 0.08, snare: 0.3, vocal: 0.1), 12)])
+        let last = song.last!
+        let onBeat = hits(song, \.kick, after: 6).map { abs(song[$0].beats - song[$0].beats.rounded()) }
+        print(String(format: "Layers: tempo %.1f BPM, confidence %.2f, kicks off the beat clock by at most %.2f beats",
+                     last.tempo, last.confidence, onBeat.max() ?? -1))
+        check(abs(last.tempo - 120) < 2 && last.confidence > 0.5, "a 120 BPM groove must lock (\(last.tempo) BPM, \(last.confidence))")
+        check(onBeat.filter { $0 < 0.15 }.count >= onBeat.count - 1, "kicks must land on the beat clock (\(onBeat))")
+        let fading = layers([(SyntheticTrack(kick: 0.8, bass: 0.15, pad: 0.1, hats: 0.08, snare: 0.3), 8), (SyntheticTrack(pad: 0.08), 6)])
+        check(fading.last!.confidence < 0.3, "the beat clock must lose confidence when the drums stop (\(fading.last!.confidence))")
     }
 
     // MARK: - Beats
@@ -240,17 +323,35 @@ struct BackgroundTests {
         check(peakLift > 0.8, "a drop after a quiet passage must lift (\(peakLift))")
     }
 
+    // MARK: - Driving the animator like the app
+
+    /// Analysis at 30 Hz, the display at 60: each analysis frame is received once
+    /// and the motion steps twice. `each` sees every display frame.
+    static func play(_ animator: inout BackgroundAnimator, _ frames: [SpectrumFrame],
+                     each: (inout BackgroundAnimator, _ analysis: Int, _ display: Int) -> Void = { _, _, _ in }) {
+        for (i, frame) in frames.enumerated() {
+            animator.receive(frame)
+            for half in 0..<2 {
+                animator.step(by: 1 / 60)
+                each(&animator, i, i * 2 + half)
+            }
+        }
+    }
+
+    static let neutral = [RGB(r: 0.86, g: 0.87, b: 0.9), RGB(r: 0.62, g: 0.63, b: 0.66), RGB(r: 0.95, g: 0.93, b: 0.88),
+                          RGB(r: 0.5, g: 0.52, b: 0.56), RGB(r: 0.78, g: 0.78, b: 0.8)]
+
     // MARK: - Fluid
 
     static func fluidChecks(device: MTLDevice) {
         guard let renderer = try? OffscreenRenderer(device: device) else { fail("cannot build the offscreen renderer") }
         let palettes: [(String, [RGB])] = [("sunset", Covers.palette(Covers.sunset)), ("ocean", Covers.palette(Covers.ocean)),
-                                          ("navy", Covers.palette(Covers.navy))]
+                                          ("navy", Covers.palette(Covers.navy)), ("neutral", neutral)]
         let quietTrack = SyntheticTrack(pad: 0.05)
-        let groove = SyntheticTrack(kicksPerSecond: 2, kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.08)
+        let groove = SyntheticTrack(kicksPerSecond: 2, kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.08, snare: 0.25, vocal: 0.1)
         let quietFrames = SyntheticTrack.frames([(quietTrack, 3)])
         // One kick after a quiet stretch: the twin keeps the quiet frames.
-        let hitFrames = SyntheticTrack.frames([(quietTrack, 3), (SyntheticTrack(kicksPerSecond: 0.25, kick: 1, pad: 0.05, kickOffset: 3.0), 1)])
+        let hitFrames = SyntheticTrack.frames([(quietTrack, 3), (SyntheticTrack(kicksPerSecond: 0.25, kick: 1, pad: 0.05, kickOffset: 3.0), 1.5)])
         let loudFrames = SyntheticTrack.frames([(groove, 6)])
         var rows: [[RenderedFrame]] = []
 
@@ -258,40 +359,54 @@ struct BackgroundTests {
             let settings = BackgroundConfiguration(kind: .fluid, colors: colors)
             var quiet = BackgroundAnimator()
             quiet.configure(settings, animated: false)
-            for frame in quietFrames { quiet.advance(by: 1 / 30, frame: frame) }
+            play(&quiet, quietFrames)
             let quietFrame = renderer.render(quiet)
 
             var hit = BackgroundAnimator()
             hit.configure(settings, animated: false)
             var twin = hit
-            var hitFrame: RenderedFrame?, twinFrame: RenderedFrame?, afterHit: RenderedFrame?
             var hitIndex = -1
+            var swell: (frame: RenderedFrame, twin: RenderedFrame)?
+            var settled: (frame: RenderedFrame, twin: RenderedFrame)?
+            var peakBreath: Float = 0
             for (i, frame) in hitFrames.enumerated() {
                 hit.advance(by: 1 / 30, frame: frame)
                 twin.advance(by: 1 / 30, frame: i < quietFrames.count ? frame : quietFrames[quietFrames.count - 1])
-                if hitIndex < 0, hit.pulse.beat > 0 {
-                    hitIndex = i
-                    hitFrame = renderer.render(hit)
-                    twinFrame = renderer.render(twin)
-                }
-                if hitIndex >= 0, i == hitIndex + 3 { afterHit = renderer.render(hit) }
-                if hitIndex >= 0, i == hitIndex + 12 {
-                    let settled = renderer.render(hit), still = renderer.render(twin)
-                    check(settled.difference(from: still) < hitFrame!.difference(from: twinFrame!) * 0.6,
-                          "\(name): the shake must die out within 0.4 s")
-                }
+                if hitIndex < 0, hit.pulse.kick > 0, i >= quietFrames.count { hitIndex = i }
+                peakBreath = max(peakBreath, hit.fluid.breath.position)
+                // The breath peaks a few frames after the kick, then lets go.
+                if hitIndex >= 0, i == hitIndex + 6 { swell = (renderer.render(hit), renderer.render(twin)) }
+                if hitIndex >= 0, i == hitIndex + 36 { settled = (renderer.render(hit), renderer.render(twin)) }
             }
-            guard let hitFrame, let twinFrame, let afterHit else { fail("\(name): the kick after a quiet stretch must beat") }
-            let moved = hitFrame.difference(from: twinFrame)
-            check(moved > 0.012, "\(name): a bass hit must visibly displace the ink (\(moved))")
-            check(hitFrame.meanLuma > twinFrame.meanLuma * 1.08, "\(name): a bass hit must glow (\(twinFrame.meanLuma) → \(hitFrame.meanLuma))")
+            guard let swell, let settled else { fail("\(name): the kick after a quiet stretch must register") }
+            let moved = swell.frame.difference(from: swell.twin)
+            check(peakBreath > 0.3, "\(name): a kick must make the field breathe (\(peakBreath))")
+            check(moved > 0.004, "\(name): the breath must visibly move the ink (\(moved))")
+            check(settled.frame.difference(from: settled.twin) < moved * 0.5, "\(name): the breath must settle within a second")
+            check(swell.frame.meanLuma > swell.twin.meanLuma * 1.04,
+                  "\(name): a kick must swell the glow (\(swell.twin.meanLuma) → \(swell.frame.meanLuma))")
+            // A breath, not a shove: with the glow off, the frame after a kick is
+            // mostly the frame without it zoomed in about the centre (the kick's
+            // click also fills the ink a little through the mids).
+            var still = BackgroundAnimator(), breathing = BackgroundAnimator()
+            let dark = BackgroundConfiguration(kind: .fluid, colors: colors, glow: 0, punch: 2)
+            still.configure(dark, animated: false)
+            breathing.configure(dark, animated: false)
+            for (i, frame) in hitFrames.prefix(hitIndex + 7).enumerated() {
+                breathing.advance(by: 1 / 30, frame: frame)
+                still.advance(by: 1 / 30, frame: i < quietFrames.count ? frame : quietFrames[quietFrames.count - 1])
+            }
+            let breathed = renderer.render(breathing), unbreathed = renderer.render(still)
+            let factor = 1 / (1 - 0.035 * breathing.fluid.breath.position)
+            let asZoom = breathed.difference(from: unbreathed.zoomed(factor))
+            check(asZoom < breathed.difference(from: unbreathed) * 0.7 && factor > 1.02,
+                  "\(name): the breath must be a zoom about the centre (\(breathed.difference(from: unbreathed)) → \(asZoom) once zoomed)")
 
             var loud = BackgroundAnimator()
             loud.configure(settings, animated: false)
             var loudFrame: RenderedFrame?
-            for (i, frame) in loudFrames.enumerated() {
-                loud.advance(by: 1 / 30, frame: frame)
-                if i == loudFrames.count - 8 { loudFrame = renderer.render(loud) }
+            play(&loud, loudFrames) { animator, i, display in
+                if display == loudFrames.count * 2 - 16 { loudFrame = renderer.render(animator) }
             }
             check(loudFrame!.meanLuma > quietFrame.meanLuma, "\(name): a loud passage must glow more than a quiet one")
 
@@ -316,32 +431,46 @@ struct BackgroundTests {
             check(distances[distances.count / 2] > 0.1 * simd_distance(start, end) && distances[distances.count / 2] < simd_distance(start, end),
                   "\(name): halfway through the crossfade, both palettes must show")
 
-            for frame in [quietFrame, hitFrame, afterHit, loudFrame!] + steps {
+            for frame in [quietFrame, swell.frame, loudFrame!] + steps {
                 check(frame.maxLuma <= legibleLuma, "\(name): Fluid must stay under the legibility limit (\(frame.maxLuma))")
             }
             Previews.write(quietFrame, "fluid-\(name)-1-quiet")
-            Previews.write(hitFrame, "fluid-\(name)-2-bass-hit")
-            Previews.write(afterHit, "fluid-\(name)-3-after-hit")
-            Previews.write(loudFrame!, "fluid-\(name)-4-loud")
-            Previews.write(steps[steps.count / 2], "fluid-\(name)-5-crossfade")
-            rows.append([quietFrame, hitFrame, afterHit, loudFrame!, steps[steps.count / 2]])
+            Previews.write(swell.frame, "fluid-\(name)-2-bass-breath")
+            Previews.write(loudFrame!, "fluid-\(name)-3-loud")
+            rows.append([quietFrame, swell.twin, swell.frame, settled.frame, loudFrame!, steps[steps.count / 2]])
         }
+        Previews.sheet(rows, "fluid-sheet", scale: 0.4)
+
+        // Calm: with the glow off, the picture moves as smoothly on a kick as
+        // between kicks. The old random jolt spiked several times the median here.
+        var calm = BackgroundAnimator()
+        calm.configure(BackgroundConfiguration(kind: .fluid, colors: Covers.palette(Covers.sunset), glow: 0), animated: false)
+        var last: RenderedFrame?
+        var changes: [Float] = []
+        play(&calm, Array(loudFrames.prefix(120))) { animator, i, _ in
+            guard i >= 45 else { return }
+            let frame = renderer.render(animator)
+            if let last { changes.append(frame.difference(from: last)) }
+            last = frame
+        }
+        let median = changes.sorted()[changes.count / 2]
+        print(String(format: "Fluid motion per 60 Hz frame through a groove: median %.4f, largest %.4f (%.1f×)",
+                     median, changes.max()!, changes.max()! / median))
+        check(changes.max()! < median * 2.5, "Fluid must not jolt on the beat (largest step \(changes.max()!) vs median \(median))")
 
         // The brightest settings with the loudest music still keep text readable.
         var extreme = BackgroundAnimator()
         extreme.configure(BackgroundConfiguration(kind: .fluid, colors: [RGB(r: 1, g: 0.95, b: 0.6), RGB(r: 0.9, g: 1, b: 0.9)],
-                                                  reactivity: 2, speed: 2, glow: 2, shake: 2, vividness: 1.5), animated: false)
+                                                  reactivity: 2, speed: 2, glow: 2, punch: 2, vividness: 1.5), animated: false)
         var brightest: Float = 0, meanest: Float = 0
         for (i, frame) in loudFrames.enumerated() {
             extreme.advance(by: 1 / 30, frame: frame)
             if i % 3 == 0 || extreme.pulse.beat > 0 {
                 let rendered = renderer.render(extreme)
-                if rendered.meanLuma > meanest { Previews.write(rendered, "fluid-pale-maximum") }
                 brightest = max(brightest, rendered.maxLuma)
                 meanest = max(meanest, rendered.meanLuma)
             }
         }
-        Previews.sheet(rows, "fluid-sheet")
         check(brightest <= legibleLuma && meanest < 0.32,
               "Fluid at full glow on a pale cover must stay dark enough for white text (peak \(brightest), mean \(meanest))")
     }
@@ -352,16 +481,16 @@ struct BackgroundTests {
         guard let renderer = try? OffscreenRenderer(device: device) else { fail("cannot build the offscreen renderer") }
         let quietTrack = SyntheticTrack(pad: 0.05)
         let breakdown = SyntheticTrack(pad: 0.12, hats: 0.02)
-        let drop = SyntheticTrack(kicksPerSecond: 2, kick: 0.95, bass: 0.3, pad: 0.25, hats: 0.12, kickOffset: 4.25)
+        let drop = SyntheticTrack(kicksPerSecond: 2, kick: 0.95, bass: 0.3, pad: 0.25, hats: 0.12, snare: 0.3, kickOffset: 4.25)
         let quietFrames = SyntheticTrack.frames([(quietTrack, 3)])
         let dropFrames = SyntheticTrack.frames([(breakdown, 4), (drop, 5)])
         var rows: [[RenderedFrame]] = []
 
-        for (name, cover) in [("sunset", Covers.sunset), ("ocean", Covers.ocean)] {
-            let settings = BackgroundConfiguration(kind: .beams, colors: Covers.palette(cover))
+        for (name, colors) in [("sunset", Covers.palette(Covers.sunset)), ("ocean", Covers.palette(Covers.ocean)), ("neutral", neutral)] {
+            let settings = BackgroundConfiguration(kind: .beams, colors: colors, neutral: name == "neutral")
             var quiet = BackgroundAnimator()
             quiet.configure(settings, animated: false)
-            for frame in quietFrames { quiet.advance(by: 1 / 30, frame: frame) }
+            play(&quiet, quietFrames)
             let quietFrame = renderer.render(quiet)
             check(quietFrame.meanLuma < 0.05, "\(name): Beams must stay dim in a quiet passage (\(quietFrame.meanLuma))")
 
@@ -370,30 +499,38 @@ struct BackgroundTests {
             var beforeKick: RenderedFrame?, kick: RenderedFrame?, sustained: RenderedFrame?, change: RenderedFrame?
             var breakdownFrame: RenderedFrame?
             var changedAt = -1
-            for (i, frame) in dropFrames.enumerated() {
-                let pattern = animator.beams.pattern
-                animator.advance(by: 1 / 30, frame: frame)
-                if i == 119 { breakdownFrame = renderer.render(animator) }
+            var pattern = animator.beams.pattern
+            play(&animator, dropFrames) { animator, i, display in
+                if display == 239 { breakdownFrame = renderer.render(animator) }
                 if i >= 120, changedAt < 0, animator.beams.pattern != pattern { changedAt = i }
-                if i == changedAt + 5, changedAt >= 0 { change = renderer.render(animator) }
-                // The third kick of the drop, against the frame just before it.
-                if i >= 120 + 30, kick == nil {
-                    let next = dropFrames.indices.contains(i + 1) ? dropFrames[i + 1] : frame
-                    var peek = animator
-                    peek.advance(by: 1 / 30, frame: next)
+                pattern = animator.beams.pattern
+                if changedAt >= 0, i == changedAt + 15, display % 2 == 1 { change = renderer.render(animator) }
+                if i == 120 + 75, display % 2 == 1 { sustained = renderer.render(animator) }
+            }
+            // The third kick of the drop, against the frame just before it.
+            var replay = BackgroundAnimator()
+            replay.configure(settings, animated: false)
+            for (i, frame) in dropFrames.enumerated() {
+                if i >= 150, kick == nil {
+                    var peek = replay
+                    peek.receive(frame)
                     if peek.pulse.beat > 0 {
-                        beforeKick = renderer.render(animator)
+                        beforeKick = renderer.render(replay)
+                        peek.step(by: 1 / 60)
+                        peek.step(by: 1 / 60)
                         kick = renderer.render(peek)
                     }
                 }
-                if i == 120 + 75 { sustained = renderer.render(animator) }
+                replay.receive(frame)
+                replay.step(by: 1 / 60)
+                replay.step(by: 1 / 60)
             }
             guard let beforeKick, let kick, let sustained, let change, let breakdownFrame else {
-                fail("\(name): the drop must beat and change the pattern (changed at \(changedAt))")
+                fail("\(name): the drop must beat and change the look (changed at \(changedAt))")
             }
-            check(changedAt <= 120 + 36, "\(name): the drop must switch the pattern within its first beats (frame \(changedAt))")
+            check(changedAt <= 120 + 45, "\(name): the drop must change the look within its first beats (frame \(changedAt))")
             check(kick.meanLuma > quietFrame.meanLuma * 3, "\(name): a kick on the drop must blow the beams up (\(quietFrame.meanLuma) → \(kick.meanLuma))")
-            check(kick.meanLuma > beforeKick.meanLuma * 1.2, "\(name): each kick must punch the beams (\(beforeKick.meanLuma) → \(kick.meanLuma))")
+            check(kick.meanLuma > beforeKick.meanLuma * 1.12, "\(name): each kick must punch the beams (\(beforeKick.meanLuma) → \(kick.meanLuma))")
             check(sustained.meanLuma > breakdownFrame.meanLuma * 1.5, "\(name): the drop must outshine the breakdown before it")
             for frame in [quietFrame, breakdownFrame, beforeKick, kick, sustained, change] {
                 check(frame.meanLuma < 0.2 && frame.share(above: legibleLuma) < 0.1,
@@ -403,30 +540,28 @@ struct BackgroundTests {
             var strobe = BackgroundAnimator()
             strobe.configure(BackgroundConfiguration(kind: .beams, colors: settings.colors, strobe: true), animated: false)
             var flashFrame: RenderedFrame?
-            for frame in dropFrames {
-                strobe.advance(by: 1 / 30, frame: frame)
-                if flashFrame == nil, strobe.beams.flash == 1 { flashFrame = renderer.render(strobe) }
+            play(&strobe, dropFrames) { animator, _, _ in
+                if flashFrame == nil, animator.beams.flashes > 0 { flashFrame = renderer.render(animator) }
             }
             guard let flashFrame else { fail("\(name): the opt-in strobe must flash on the drop") }
             Previews.write(quietFrame, "beams-\(name)-1-quiet")
             Previews.write(breakdownFrame, "beams-\(name)-2-breakdown")
             Previews.write(kick, "beams-\(name)-3-kick")
             Previews.write(sustained, "beams-\(name)-4-drop")
-            Previews.write(change, "beams-\(name)-5-pattern-change")
+            Previews.write(change, "beams-\(name)-5-new-look")
             Previews.write(flashFrame, "beams-\(name)-6-strobe")
             rows.append([quietFrame, breakdownFrame, beforeKick, kick, sustained, change, flashFrame])
         }
         Previews.sheet(rows, "beams-sheet", scale: 0.4)
 
-        // A steady groove changes the look every few bars, not just on drops.
+        // A steady groove changes the look every eight bars, not just on drops.
         var steady = BackgroundAnimator()
         steady.configure(BackgroundConfiguration(kind: .beams), animated: false)
         var patterns: Set<Int> = []
-        for frame in SyntheticTrack.frames([(SyntheticTrack(kicksPerSecond: 2, kick: 0.8, bass: 0.2, pad: 0.15, hats: 0.08), 20)]) {
-            steady.advance(by: 1 / 30, frame: frame)
-            patterns.insert(steady.beams.pattern.rawValue)
+        play(&steady, SyntheticTrack.frames([(SyntheticTrack(kicksPerSecond: 2, kick: 0.8, bass: 0.2, pad: 0.15, hats: 0.08), 40)])) { animator, _, _ in
+            patterns.insert(animator.beams.pattern.rawValue)
         }
-        check(patterns.count >= 3, "a steady groove must move through patterns every few bars (\(patterns.count))")
+        check(patterns.count >= 3, "a steady groove must move through looks every eight bars (\(patterns.count) in 40 s)")
         let four = BackgroundConfiguration(kind: .beams, beamCount: 4)
         var counted = BackgroundAnimator()
         counted.configure(four, animated: false)
@@ -434,6 +569,238 @@ struct BackgroundTests {
         check(heads.size.z == 4 && heads.heads.4 == .zero, "the beam count must limit the heads drawn")
 
         flashRateChecks(renderer: renderer)
+    }
+
+    // MARK: - Beams: what plays what
+
+    /// Per-head values from the uniforms the shader gets.
+    static func headValues(_ animator: BackgroundAnimator) -> [SIMD4<Float>] {
+        let u = animator.beamUniforms(width: 1600, height: 1000)
+        return [u.heads.0, u.heads.1, u.heads.2, u.heads.3, u.heads.4, u.heads.5, u.heads.6, u.heads.7]
+    }
+
+    /// The mapping, pinned: kicks move the outer beams, snares the inner ones,
+    /// hats and highs brighten the inner beams and the bass the outer ones,
+    /// vocals fill the haze, sweeps turn on the beat, nothing jumps, and silence settles.
+    static func mappingChecks(device: MTLDevice) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 800, height: 500) else { fail("cannot build the offscreen renderer") }
+        let colors = Covers.palette(Covers.sunset)
+        let eight = BackgroundConfiguration(kind: .beams, colors: colors, beamCount: 8)
+        let outer = [0, 7], inner = [3, 4]
+
+        struct Run { var swing = [Float](repeating: 0, count: 8); var intensity = [Float](repeating: 0, count: 8); var frames = 0; var haze: Float = 0 }
+        func run(_ track: SyntheticTrack, seconds: Float = 6, configuration: BackgroundConfiguration = eight) -> Run {
+            var animator = BackgroundAnimator()
+            animator.configure(configuration, animated: false)
+            var result = Run()
+            play(&animator, SyntheticTrack.frames([(track, seconds)])) { animator, i, _ in
+                guard i >= 60 else { return }
+                let heads = headValues(animator)
+                for h in 0..<8 {
+                    result.swing[h] = max(result.swing[h], abs(animator.beams.swing[h].position))
+                    result.intensity[h] += heads[h].y
+                }
+                result.haze += animator.beamUniforms(width: 1600, height: 1000).floor.z
+                result.frames += 1
+            }
+            result.intensity = result.intensity.map { $0 / Float(result.frames) }
+            result.haze /= Float(result.frames)
+            return result
+        }
+        func average(_ values: [Float], _ heads: [Int]) -> Float { heads.map { values[$0] }.reduce(0, +) / Float(heads.count) }
+
+        let kicks = run(SyntheticTrack(kick: 0.9, bass: 0.15, pad: 0.1))
+        let snares = run(SyntheticTrack(pad: 0.1, snare: 0.45))
+        let hats = run(SyntheticTrack(pad: 0.1, hats: 0.12))
+        let vocal = run(SyntheticTrack(pad: 0.05, vocal: 0.3))
+        print(String(format: "Mapping: kicks swing outer %.3f / inner %.3f rad, light outer %.2f / inner %.2f",
+                     average(kicks.swing, outer), average(kicks.swing, inner), average(kicks.intensity, outer), average(kicks.intensity, inner)))
+        print(String(format: "Mapping: snares swing outer %.3f / inner %.3f rad; hats light outer %.2f / inner %.2f",
+                     average(snares.swing, outer), average(snares.swing, inner), average(hats.intensity, outer), average(hats.intensity, inner)))
+        print(String(format: "Mapping: haze fill with a vocal %.2f, with hats %.2f, with kicks %.2f", vocal.haze, hats.haze, kicks.haze))
+        check(average(kicks.swing, outer) > 3 * average(kicks.swing, inner) && average(kicks.swing, outer) > 0.03,
+              "kicks must swing the outer beams, not the inner ones")
+        check(average(snares.swing, inner) > 2 * average(snares.swing, outer) && average(snares.swing, inner) > 0.015,
+              "snares must flick the inner beams, not the outer ones")
+        check(average(kicks.intensity, outer) > 1.4 * average(kicks.intensity, inner), "the bass must light the outer beams")
+        check(average(hats.intensity, inner) > 1.4 * average(hats.intensity, outer), "the hats must light the inner beams")
+        check(vocal.haze > 0.15 && vocal.haze > 2 * hats.haze && vocal.haze > 2 * kicks.haze, "a vocal must fill the haze")
+        let calm = run(SyntheticTrack(kick: 0.9, bass: 0.15, pad: 0.1), configuration: BackgroundConfiguration(kind: .beams, colors: colors, punch: 0, beamCount: 8))
+        check(calm.swing.max()! < 0.002, "Bass punch at 0 must keep the beams from swinging (\(calm.swing.max()!))")
+
+        // A whole song: nothing jumps, the sweeps follow the beat, and silence settles.
+        let song: [(SyntheticTrack, Float)] = [
+            (SyntheticTrack(pad: 0.08, vocal: 0.15), 4),                                        // intro
+            (SyntheticTrack(pad: 0.12, hats: 0.1, vocal: 0.15), 4),                             // build
+            (SyntheticTrack(kick: 0.9, bass: 0.25, pad: 0.2, hats: 0.1, snare: 0.3, vocal: 0.15), 10), // drop
+            (SyntheticTrack(pad: 0.1, vocal: 0.2), 4),                                          // breakdown
+            (SyntheticTrack(kick: 0.9, bass: 0.25, pad: 0.2, hats: 0.1, snare: 0.3, vocal: 0.15), 6),  // drop
+            (SyntheticTrack(), 5),                                                              // silence
+        ]
+        let frames = SyntheticTrack.frames(song)
+        var animator = BackgroundAnimator()
+        animator.configure(eight, animated: false)
+        var previous: [SIMD4<Float>]?
+        var largestStep: Float = 0, lastSecondStep: Float = 0
+        var onBeat: [Float] = []
+        var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        let sections = ["intro", "build", "drop", "breakdown", "drop", "silence"]
+        var sectionStarts: [Int] = []
+        var t: Float = 0
+        for (_, seconds) in song { sectionStarts.append(Int(t * 30)); t += seconds }
+        play(&animator, frames) { animator, i, display in
+            let heads = headValues(animator)
+            if let previous {
+                let step = zip(heads, previous).map { abs($0.x - $1.x) }.max()!
+                largestStep = max(largestStep, step)
+                if i >= frames.count - 30 { lastSecondStep = max(lastSecondStep, step) }
+            }
+            previous = heads
+            if display % 2 == 0, animator.pulse.kick > 0.3, i > 30 * 10, i < 30 * 18 {
+                onBeat.append(abs(animator.beams.clock - animator.beams.clock.rounded()))
+            }
+            // Two frames from the middle of each section, half a second apart.
+            if let s = sectionStarts.firstIndex(where: { i == $0 + 75 || i == $0 + 90 }), display % 2 == 0 {
+                cells.append((renderer.render(animator), "\(sections[s]) +\(i - sectionStarts[s] == 75 ? "2.5" : "3.0") s", nil))
+            }
+        }
+        let settled = headValues(animator)
+        print(String(format: "Mapping: largest head turn per 60 Hz frame %.3f rad; in the last second of silence %.4f; kicks %.2f beats off the sweep clock at most",
+                     largestStep, lastSecondStep, onBeat.max() ?? -1))
+        check(largestStep < 0.09, "no beam may jump between frames (\(largestStep) rad)")
+        check(lastSecondStep < 0.002 && animator.beams.swing.allSatisfy { abs($0.position) < 0.003 },
+              "silence must let every beam settle (\(lastSecondStep))")
+        check(settled.allSatisfy { $0.y < 0.15 }, "silence must dim the rig")
+        check(onBeat.count >= 10 && onBeat.filter { $0 < 0.15 }.count >= onBeat.count * 8 / 10,
+              "the sweeps must turn on the beat once the tempo locks (\(onBeat))")
+        Previews.strip(cells, "beams-song-sections", columns: 4, scale: 0.4)
+
+        mappingStrips(renderer: renderer, colors: colors)
+    }
+
+    /// Frame strips that make the mapping visible: a kick (outer beams punch and
+    /// wobble), hats (the inner beams glint), a vocal (the haze fills).
+    static func mappingStrips(renderer: OffscreenRenderer, colors: [RGB]) {
+        guard Previews.directory != nil else { return }
+        let configuration = BackgroundConfiguration(kind: .beams, colors: colors, beamCount: 8)
+        let red = CGColor(srgbRed: 1, green: 0.3, blue: 0.25, alpha: 1), cyan = CGColor(srgbRed: 0.3, green: 0.85, blue: 1, alpha: 1)
+        let yellow = CGColor(srgbRed: 1, green: 0.85, blue: 0.2, alpha: 1)
+        let groove = SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.1, snare: 0.3, vocal: 0.12)
+        for (name, track, palette) in [("groove", groove, colors), ("groove-neutral", groove, neutral)] {
+            var animator = BackgroundAnimator()
+            animator.configure(BackgroundConfiguration(kind: .beams, colors: palette, neutral: palette == neutral, beamCount: 8), animated: false)
+            var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+            play(&animator, SyntheticTrack.frames([(track, 9)])) { animator, i, display in
+                // One beat and a half at 60 Hz, every other display frame (a 30 Hz strip).
+                guard i >= 30 * 8 - 1, i < 30 * 8 + 23, display % 2 == 1 else { return }
+                let p = animator.pulse
+                let label = String(format: "%.2fs", Float(display) / 60) + (p.kick > 0 ? " KICK" : "") + (p.snare > 0 ? " SNARE" : "") + (p.hat > 0 ? " hat" : "")
+                cells.append((renderer.render(animator), label, p.kick > 0 ? red : (p.snare > 0 ? yellow : (p.hat > 0 ? cyan : nil))))
+            }
+            Previews.strip(cells, "beams-mapping-\(name)", columns: 6, scale: 0.36)
+        }
+        for (name, track) in [("kicks-only", SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.1)),
+                              ("hats-only", SyntheticTrack(pad: 0.1, hats: 0.12)),
+                              ("vocal-only", SyntheticTrack(pad: 0.05, vocal: 0.3))] {
+            var animator = BackgroundAnimator()
+            animator.configure(configuration, animated: false)
+            var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+            play(&animator, SyntheticTrack.frames([(track, 6)])) { animator, i, display in
+                guard i >= 30 * 5 - 1, i < 30 * 5 + 17, display % 2 == 1 else { return }
+                let p = animator.pulse
+                let label = String(format: "%.2fs", Float(display) / 60) + (p.kick > 0 ? " KICK" : "") + (p.snare > 0 ? " SNARE" : "") + (p.hat > 0 ? " hat" : "")
+                cells.append((renderer.render(animator), label, p.kick > 0 ? red : (p.snare > 0 ? yellow : (p.hat > 0 ? cyan : nil))))
+            }
+            Previews.strip(cells, "beams-mapping-\(name)", columns: 6, scale: 0.36)
+        }
+    }
+
+    // MARK: - Crispness
+
+    /// The beams have to stay smooth at whatever resolution they're drawn. At
+    /// 512 px the unfiltered core beaded by 14% row to row; pre-filtered, 7%;
+    /// at the new drawable size about 2%.
+    static func crispnessChecks(device: MTLDevice) {
+        let colors = Covers.palette(Covers.ocean)
+        var animator = BackgroundAnimator()
+        animator.configure(BackgroundConfiguration(kind: .beams, colors: colors, beamCount: 4), animated: false)
+        play(&animator, SyntheticTrack.frames([(SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.1), 3)]))
+        let points = CGSize(width: 1500, height: 950)
+        let budget = BackgroundRenderer.drawableSize(points: points, scale: 2)
+        let old = CGSize(width: 512, height: 324)
+        for (name, size) in [("512px", old), ("budget", budget)] {
+            guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { fail("renderer") }
+            let frame = renderer.render(animator)
+            // Head 0's beam, from just under its lens down a third of the frame.
+            let u = animator.beamUniforms(width: Float(size.width), height: Float(size.height))
+            let angle = u.heads.0.x
+            let aspect = Float(size.width / size.height)
+            let sourceX = 0.5 / 4 * aspect, sourceY: Float = 0.985
+            // Down the narrow first stretch of the beam, its brightest pixel per row.
+            // A core thinner than a pixel that isn't pre-filtered beads: it's caught
+            // by a pixel centre on one row and missed on the next.
+            var peaks: [Float] = []
+            for row in Int(size.height * 0.04)..<Int(size.height * 0.22) {
+                let y = 1 - (Float(row) + 0.5) / Float(size.height)   // uv, up from the bottom
+                let along = (sourceY - y) / cos(angle)
+                let x = (sourceX + sin(angle) * along) / aspect * Float(size.width)
+                let half = max(3, Int(Float(size.height) * (0.006 + along * u.heads.0.z) * 0.8))
+                var peak: Float = 0
+                for column in max(0, Int(x) - half)..<min(Int(size.width), Int(x) + half + 1) { peak = max(peak, frame.luma(column, row)) }
+                peaks.append(peak)
+            }
+            let bends = zip(zip(peaks.dropFirst(2), peaks.dropFirst()), peaks).map { abs($0.0 - 2 * $0.1 + $1) }
+            let beading = bends.reduce(0, +) / Float(max(1, bends.count)) / (peaks.reduce(0, +) / Float(peaks.count))
+            print(String(format: "Crispness at %@ (%dx%d): the beam's core flickers %.1f%% row to row", name, Int(size.width), Int(size.height), beading * 100))
+            check(peaks.count > 12 && beading < 0.1, "\(name): a thin beam must not bead into pixels (\(beading))")
+            // 100% crops near the lens of head 0, and what the window shows on a 2x display.
+            let cropW = Int(size.width) / 5, cropH = Int(size.height) / 4
+            let crop = frame.crop(x: max(0, Int(sourceX / aspect * Float(size.width)) - cropW / 2), y: 0, width: cropW, height: cropH)
+            Previews.zoom(crop, "crisp-\(name)-100pct", scale: 1, smooth: false)
+            Previews.zoom(crop, "crisp-\(name)-as-on-retina", scale: 2 * points.width / size.width, smooth: true)
+        }
+    }
+
+    // MARK: - Cost
+
+    /// GPU time per frame at the sizes the app can draw, and the CPU cost of a
+    /// display frame (analysis receive, motion step and uniforms).
+    static func performanceReport(device: MTLDevice) {
+        let frames = SyntheticTrack.frames([(SyntheticTrack(kick: 0.95, bass: 0.3, pad: 0.25, hats: 0.12, snare: 0.3, vocal: 0.1), 8)])
+        var beams = BackgroundAnimator()
+        beams.configure(BackgroundConfiguration(kind: .beams, colors: Covers.palette(Covers.sunset), beamCount: 8), animated: false)
+        var fluid = BackgroundAnimator()
+        fluid.configure(BackgroundConfiguration(kind: .fluid, colors: Covers.palette(Covers.sunset)), animated: false)
+        var floorOn = beams
+        play(&beams, frames) { animator, _, _ in if animator.beams.floorLevel > floorOn.beams.floorLevel { floorOn = animator } }
+        play(&fluid, frames)
+        let sizes: [(String, CGSize)] = [
+            ("old 512 px", CGSize(width: 512, height: 324)),
+            ("1200x750 pt window", BackgroundRenderer.drawableSize(points: CGSize(width: 1200, height: 750), scale: 2)),
+            ("1500x950 pt window", BackgroundRenderer.drawableSize(points: CGSize(width: 1500, height: 950), scale: 2)),
+            ("1728x1117 pt full screen", BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2)),
+            ("full Retina 3456x2234", CGSize(width: 3456, height: 2234)),
+        ]
+        for (name, size) in sizes {
+            guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
+            let beamTime = renderer.gpuMilliseconds(floorOn), fluidTime = renderer.gpuMilliseconds(fluid)
+            print(String(format: "GPU per frame, %@ (%dx%d): Beams %.2f ms, Fluid %.2f ms", name, Int(size.width), Int(size.height), beamTime, fluidTime))
+        }
+        var animator = BackgroundAnimator()
+        animator.configure(BackgroundConfiguration(kind: .beams, colors: Covers.palette(Covers.sunset), beamCount: 8), animated: false)
+        let start = Date()
+        var sink: Float = 0
+        for _ in 0..<5 {
+            for frame in frames {
+                animator.receive(frame)
+                for _ in 0..<2 {
+                    animator.step(by: 1 / 60)
+                    sink += animator.beamUniforms(width: 1600, height: 1000).heads.0.x
+                }
+            }
+        }
+        let perFrame = Date().timeIntervalSince(start) / Double(frames.count * 2 * 5) * 1_000_000
+        print(String(format: "CPU per display frame (motion step + uniforms, Beams with 8 heads): %.1f µs%@", perFrame, sink.isNaN ? "!" : ""))
     }
 
     /// WCAG 2.3.1: no more than three flashes in any second, over the whole frame
@@ -454,8 +821,9 @@ struct BackgroundTests {
             var cells: [[Float]] = Array(repeating: [], count: 17)
             var strobes: [Int] = []
             for (i, frame) in frames.enumerated() {
+                let before = animator.beams.flashes
                 animator.advance(by: 1 / 30, frame: frame)
-                if animator.beams.flash == 1 { strobes.append(i) }
+                if animator.beams.flashes > before { strobes.append(i) }
                 guard i >= 50 else { continue }
                 let rendered = renderer.render(animator)
                 let grid = rendered.relativeLuminance(columns: 4, rows: 4)

@@ -9,7 +9,7 @@ final class VisualSettings {
     enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams; var id: Self { self } }
     static let speedRange = 0.25...2.0
     static let glowRange = 0.0...2.0
-    static let shakeRange = 0.0...2.0
+    static let punchRange = 0.0...2.0
     static let vividnessRange = 0.5...1.5
     static let beamCountRange = 4...8
     var showVisualizer: Bool { didSet { defaults.set(showVisualizer, forKey: "showVisualizer") } }
@@ -21,7 +21,8 @@ final class VisualSettings {
     var reactivity: Double { didSet { defaults.set(reactivity, forKey: "backgroundReactivity") } }
     var motionSpeed: Double { didSet { defaults.set(motionSpeed, forKey: "backgroundSpeed") } }
     var glow: Double { didSet { defaults.set(glow, forKey: "backgroundGlow") } }
-    var shake: Double { didSet { defaults.set(shake, forKey: "backgroundShake") } }
+    /// How hard kicks move the light: Beams' outer beams, Fluid's breath.
+    var punch: Double { didSet { defaults.set(punch, forKey: "backgroundPunch") } }
     var vividness: Double { didSet { defaults.set(vividness, forKey: "backgroundVividness") } }
     var beamCount: Int { didSet { defaults.set(beamCount, forKey: "backgroundBeamCount") } }
     /// Opt-in: beat-synced full-frame flashes, never more than three a second.
@@ -44,7 +45,10 @@ final class VisualSettings {
         reactivity = min(2, max(0, defaults.object(forKey: "backgroundReactivity") as? Double ?? 1))
         motionSpeed = clamped("backgroundSpeed", Self.speedRange, 1)
         glow = clamped("backgroundGlow", Self.glowRange, 1)
-        shake = clamped("backgroundShake", Self.shakeRange, 1)
+        punch = clamped("backgroundPunch", Self.punchRange, 1)
+        // "Shake" scaled Fluid's random jolt, which is gone; Punch is a new,
+        // gentler effect on both kinds, so it starts fresh rather than inheriting it.
+        defaults.removeObject(forKey: "backgroundShake")
         vividness = clamped("backgroundVividness", Self.vividnessRange, 1)
         beamCount = clamped("backgroundBeamCount", Self.beamCountRange, 6)
         strobe = defaults.bool(forKey: "backgroundStrobe")

@@ -12,10 +12,11 @@ struct LayerTests {
         _ = NSApplication.shared
         coverIsUprightAndSwapsWhilePaused()
         visualizerIsUpright()
+        haloBackLayerFollowsBass()
         beadEchoDoesNotTintTheFront()
         waveFillsOnlyTheElapsedPart()
         waveRecentersAfterHeightOnlyResize()
-        print("PASS: 8 layer checks (cover orientation, paused swap, ring and bar orientation, halo gradient, bead overlap, wave clip and resize)")
+        print("PASS: 8 layer checks (cover orientation, paused swap, ring and bar orientation, halo bass layer, bead overlap, wave clip and resize)")
     }
 
     // MARK: - Checks
@@ -62,12 +63,28 @@ struct LayerTests {
         let ceiling = (0...20).contains { bars.color(at: $0, 4).isLit }
         check(floor && !ceiling, "bars must stand on the bottom")
 
-        let halo = VisualizerLayerView(model: model)
-        let filled = render(halo, size: CGSize(width: 300, height: 300)) {
-            halo.configure(style: .halo, sensitivity: 1, color: blue, pale: .white, running: false)
+    }
+
+    /// The halo's back layer follows the bass: a bass hit reaches far past the
+    /// cover, while an equally loud treble hit stays close to it.
+    static func haloBackLayerFollowsBass() {
+        func farPixels(bass: Float, treble: Float) -> Int {
+            let model = VisualizationModel()
+            let levels = (0..<48).map { $0 < 12 ? bass : $0 >= 32 ? treble : 0.1 }
+            model.frame = SpectrumFrame(bands: levels, levels: levels, rms: 0.3)
+            let view = VisualizerLayerView(model: model)
+            let image = render(view, size: CGSize(width: 300, height: 300)) {
+                view.configure(style: .halo, sensitivity: 1, color: NSColor(red: 0.2, green: 0.5, blue: 1, alpha: 1),
+                               pale: .white, running: false)
+            }
+            // The cover's radius is 100 here; sample a circle three quarters of the way out.
+            return (0..<360).filter { degree in
+                let angle = Double(degree) * .pi / 180
+                return image.color(at: 150 + Int(cos(angle) * 134), 150 + Int(sin(angle) * 134)).isLit
+            }.count
         }
-        let upper = filled.color(at: 150, 60), lower = filled.color(at: 150, 240)
-        check(upper.isLit && lower.isLit && upper.paleness > lower.paleness + 0.1, "halo must be pale on top")
+        let bassHit = farPixels(bass: 0.95, treble: 0.1), trebleHit = farPixels(bass: 0.1, treble: 0.95)
+        check(bassHit > 40 && trebleHit == 0, "the halo's outer layer must follow the bass (\(bassHit), \(trebleHit))")
     }
 
     static func waveFillsOnlyTheElapsedPart() {

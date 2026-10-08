@@ -40,7 +40,7 @@ struct NowPlayingView: View {
                             .animation(still ? FloeMotion.fade : FloeMotion.enter, value: track.uri)
                             .padding(.top, compact ? 14 : 26)
                             VStack(spacing: compact ? 4 : 8) {
-                                ProgressBar(wavy: true).frame(maxWidth: 480)
+                                ProgressBar(large: true).frame(maxWidth: 480)
                                 TransportControls(playSize: 58)
                                 VolumeControl().padding(.top, compact ? 2 : 4)
                             }

@@ -560,7 +560,7 @@ enum SelfTest {
             }
             try? await Task.sleep(for: .seconds(4))
             if scenario.surface == .nowPlaying && !scenario.still {
-                ok = check(ok, await coverAndWaveMove(), "cover rim and progress wave move while playing")
+                ok = check(ok, await coverAndProgressMove(), "cover rim and progress playhead move while playing")
             }
             say("perf-begin \(Int(Date().timeIntervalSince1970)) \(scenario.name)")
             let sample = await usage(over: only == nil || scenarios.filter({ $0.name.contains(only!) }).count > 1 ? 10 : 30,
@@ -572,7 +572,7 @@ enum SelfTest {
         navigator.surface = .nowPlaying
         visuals.showVisualizer = true; visuals.style = .circular; visuals.liveBackground = true
         try? await Task.sleep(for: .seconds(4))
-        ok = check(ok, !(await coverAndWaveMove()), "cover rim and progress wave hold still while paused")
+        ok = check(ok, !(await coverAndProgressMove()), "cover rim and progress playhead hold still while paused")
         say("perf-begin \(Int(Date().timeIntervalSince1970)) paused")
         let paused = await usage(over: 10, visualization: visualization)
         say(String(format: "perf paused, effects on: %.1f%% CPU, %.0f analysis/s, %.0f background/s, %.0f MiB footprint",
@@ -597,7 +597,7 @@ enum SelfTest {
             guard let view else { return }
             counts["all", default: 0] += 1
             let name = "\(type(of: view))"
-            if ["VisualizerLayerView", "BackgroundMetalView", "CrawlingCoverView", "WavyProgressView",
+            if ["VisualizerLayerView", "BackgroundMetalView", "CrawlingCoverView", "ProgressTrackView",
                 "ScrubReadoutView"].contains(name) { counts[name, default: 0] += 1 }
             for child in view.subviews { views(child, &counts) }
         }
@@ -639,20 +639,20 @@ enum SelfTest {
     }
 
     /// Core Animation runs these, so snapshots can't show motion; compare the
-    /// on-screen state half a second apart instead.
-    private static func coverAndWaveMove() async -> Bool {
-        func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
-            guard let view else { return nil }
-            if let match = view as? T { return match }
-            for child in view.subviews { if let match = find(type, in: child) { return match } }
-            return nil
+    /// on-screen state half a second apart instead. The Now Playing playhead
+    /// glides between ticks, so it moves within any half second of playback.
+    private static func coverAndProgressMove() async -> Bool {
+        func find<T: NSView>(_ type: T.Type, in view: NSView?) -> [T] {
+            guard let view else { return [] }
+            if let match = view as? T { return [match] }
+            return view.subviews.flatMap { find(type, in: $0) }
         }
         let root = NSApp.windows.first { $0.canBecomeMain }?.contentView
-        guard let cover = find(CrawlingCoverView.self, in: root), let wave = find(WavyProgressView.self, in: root)
-        else { return false }
-        let before = (cover.crawlAngle, wave.scrollOffset)
+        let tracks = find(ProgressTrackView.self, in: root)
+        guard let cover = find(CrawlingCoverView.self, in: root).first, !tracks.isEmpty else { return false }
+        let before = (cover.crawlAngle, tracks.map(\.playheadOffset))
         try? await Task.sleep(for: .milliseconds(500))
-        return cover.crawlAngle != before.0 && wave.scrollOffset != before.1
+        return cover.crawlAngle != before.0 && tracks.map(\.playheadOffset) != before.1
     }
 
     private static func usage(over seconds: Double, visualization: VisualizationModel) async

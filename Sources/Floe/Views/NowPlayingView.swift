@@ -5,6 +5,10 @@ struct NowPlayingView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(VisualSettings.self) private var settings
     @Environment(CoverAppearance.self) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @AppStorage("reduceMotion") private var reduceMotion = false
+    @AppStorage("nowPlayingLyrics") private var showLyrics = true
+    @ViewState private var ringShown = false
 
     var body: some View {
         if let track = player.displayTrack {
@@ -16,25 +20,28 @@ struct NowPlayingView: View {
                 // the circular ring scales with the cover, as in the reference.
                 let controlsHeight: CGFloat = compact ? 310 : 390
                 let ring = circular ? VisualizerView.ringScale : 1
-                let coverSize = min(330, max(100, (geometry.size.height - controlsHeight - (normal ? 96 : 0)) / ring))
+                let available = (geometry.size.height - controlsHeight - (normal ? 96 : 0)) / ring
+                let coverSize = min(showLyrics ? 330 : 420, max(100, available))
                 VStack(spacing: 12) {
                     HStack(spacing: 20) {
                         VStack(spacing: compact ? 8 : 14) {
                             Spacer(minLength: 0)
                             ZStack {
-                                if circular { VisualizerView(circular: true) }
+                                if circular { VisualizerView(circular: true).opacity(ringShown ? 1 : 0) }
                                 FlowerCoverView(size: coverSize)
                             }.frame(width: coverSize * ring, height: coverSize * ring)
-                            VStack(spacing: 6) {
-                                Text(track.name).font(.system(size: 28, weight: .bold))
-                                    .lineLimit(2).multilineTextAlignment(.center)
-                                    .contentTransition(.opacity)
-                                    .floeAnimation(value: track.name)
-                                Text([track.artistLine, track.album].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.system(size: 13)).foregroundStyle(Theme.secondary).lineLimit(2)
-                                    .contentTransition(.opacity)
-                                    .floeAnimation(value: track.artistLine)
+                            // A new song's title rolls up into place.
+                            ZStack {
+                                VStack(spacing: 6) {
+                                    Text(track.name).font(.system(size: 28, weight: .bold))
+                                        .lineLimit(2).multilineTextAlignment(.center)
+                                    Text([track.artistLine, track.album].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.system(size: 13)).foregroundStyle(Theme.secondary).lineLimit(2)
+                                }
+                                .id(track.uri)
+                                .transition(.push(from: .bottom))
                             }
+                            .clipped()
                             ProgressBar(wavy: true).frame(maxWidth: 480)
                             TransportControls(playSize: 58)
                             VolumeControl()
@@ -42,13 +49,25 @@ struct NowPlayingView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(compact ? 12 : 20)
-                        LyricsView().frame(width: max(330, geometry.size.width * 0.42))
-                            .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                        .floeAnimation(value: track.uri, duration: 0.45, bounce: 0.1)
+                        if showLyrics {
+                            LyricsView().frame(width: max(330, geometry.size.width * 0.42))
+                                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                                .transition(.opacity.combined(with: .offset(x: 60)))
+                        }
                     }
                     .frame(maxHeight: .infinity)
                     if normal { VisualizerView().frame(height: 84).padding(.horizontal, 24) }
                 }
                 .padding(12)
+                .floeAnimation(value: showLyrics, duration: 0.55, bounce: 0.12)
+            }
+            .overlay(alignment: .topTrailing) { lyricsToggle }
+            .onAppear {
+                // The ring fades in once the cover has flown into place.
+                withAnimation(reduceMotion || systemReduceMotion ? nil : .easeOut(duration: 0.4).delay(0.35)) {
+                    ringShown = true
+                }
             }
         } else {
             MessageView(systemImage: "music.note", message: L10n.string("Pick something to play"))
@@ -56,6 +75,20 @@ struct NowPlayingView: View {
         }
     }
 
+    /// Leaves just the cover and visualizer on screen.
+    private var lyricsToggle: some View {
+        Button { showLyrics.toggle() } label: {
+            Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
+                .font(.system(size: 13, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 34, height: 34)
+                .glassControl(in: .circle)
+        }
+        .buttonStyle(.floe)
+        .keyboardShortcut("l", modifiers: [.command, .shift])
+        .help(showLyrics ? "Hide lyrics" : "Show lyrics")
+        .padding(18)
+    }
 }
 
 /// The clock counts active playback, so pause/resume never jumps to wall time.
@@ -80,10 +113,12 @@ private struct FlowerCoverView: View {
             let time = elapsed + (started.map { max(0, context.date.timeIntervalSince($0)) } ?? 0)
             let phase = time * 0.65
             let energy = running && visualization.isRunning ? min(1, Double(visualization.frame.rms) * 3.2) : 0
+            // Flexible inside, so the hero flight can draw it at the mini player's size.
             ZStack {
                 if let image = appearance.image {
                     Image(decorative: image, scale: 2).resizable().scaledToFill()
-                        .frame(width: size, height: size).clipShape(BlobShape(phase: phase))
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                        .clipShape(BlobShape(phase: phase))
                         .id(appearance.imageURL)
                         .transition(.opacity)
                 } else {
@@ -95,11 +130,21 @@ private struct FlowerCoverView: View {
                     .stroke(palette.highlight.mix(with: .black, by: 0.45).opacity(0.9),
                             lineWidth: max(2, size * 0.014))
             }
-            .frame(width: size, height: size)
             .rotationEffect(.degrees(time * 18))
             .scaleEffect(1 + energy * 0.018)
             .floeAnimation(value: appearance.imageURL, duration: 0.35)
         }
+        // A new cover dips and springs back as it arrives.
+        .keyframeAnimator(initialValue: 1.0, trigger: reduceMotion || systemReduceMotion ? nil : appearance.imageURL) {
+            content, scale in content.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                CubicKeyframe(0.93, duration: 0.14)
+                SpringKeyframe(1, duration: 0.6, spring: .bouncy)
+            }
+        }
+        .heroCover()
+        .frame(width: size, height: size)
         .onChange(of: running, initial: true) {
             let now = Date()
             if let started { elapsed += max(0, now.timeIntervalSince(started)) }

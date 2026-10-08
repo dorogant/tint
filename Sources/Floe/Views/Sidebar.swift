@@ -72,6 +72,7 @@ private struct NavRow: View {
 
 private struct PlaylistRow: View {
     @Environment(\.coverPalette) private var palette
+    @AppStorage("reduceMotion") private var reduceMotion = false
     let playlist: PlaylistRef
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -90,7 +91,9 @@ private struct PlaylistRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if playing {
-                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 10)).foregroundStyle(palette.highlight)
+                    Image(systemName: "speaker.wave.3.fill").font(.system(size: 10)).foregroundStyle(palette.highlight)
+                        .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 8)
@@ -103,6 +106,7 @@ private struct PlaylistRow: View {
         .onHover { hovering = $0 }
         .floeAnimation(value: hovering, duration: 0.16)
         .floeAnimation(value: selected, duration: 0.2)
+        .floeAnimation(value: playing, duration: 0.3, bounce: 0.2)
         .contextMenu {
             Button("Play") { player.play(PlayRequest(contextURI: playlist.uri)) }
             Button(library.isPinned(playlist.id) ? "Unpin" : "Pin to Sidebar") {

@@ -22,35 +22,46 @@ struct MiniPlayerView: View {
         if let track = player.displayTrack {
             HStack(spacing: 12) {
                 ArtworkView(url: track.coverURL, size: 48, cornerRadius: 7)
-                    .onTapGesture { openAlbum(track) }
+                    .heroCover()
+                    .onTapGesture { navigator.surface = .nowPlaying }
+                    .help("Now Playing")
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        LinkText(track.name) { openAlbum(track) }
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Text("·").foregroundStyle(Theme.tertiary)
-                        HStack(spacing: 0) {
-                            ForEach(Array(track.artists.enumerated()), id: \.offset) { index, artist in
-                                if index > 0 { Text(", ").foregroundStyle(Theme.secondary) }
-                                LinkText(artist.name) {
-                                    if let uri = artist.uri { navigator.open(uri: uri) }
-                                }
-                            }
-                        }
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                        Spacer(minLength: 0)
-                        LikeButton(uri: track.uri)
+                    // A new song's details roll up into place.
+                    ZStack {
+                        details(track).id(track.uri).transition(.push(from: .bottom))
                     }
+                    .clipped()
                     ProgressBar()
                 }
             }
+            .floeAnimation(value: track.uri, duration: 0.45, bounce: 0.1)
             .onAppear { library.requestLikedState(track.uri) }
             .onChange(of: track.uri) { library.requestLikedState(track.uri) }
         } else {
             Text("Pick something to play")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.tertiary)
+        }
+    }
+
+    private func details(_ track: TrackInfo) -> some View {
+        HStack(spacing: 8) {
+            LinkText(track.name) { openAlbum(track) }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+            Text("·").foregroundStyle(Theme.tertiary)
+            HStack(spacing: 0) {
+                ForEach(Array(track.artists.enumerated()), id: \.offset) { index, artist in
+                    if index > 0 { Text(", ").foregroundStyle(Theme.secondary) }
+                    LinkText(artist.name) {
+                        if let uri = artist.uri { navigator.open(uri: uri) }
+                    }
+                }
+            }
+            .font(.system(size: 12))
+            .lineLimit(1)
+            Spacer(minLength: 0)
+            LikeButton(uri: track.uri)
         }
     }
 
@@ -73,6 +84,7 @@ struct ProgressBar: View {
     @AppStorage("reduceMotion") private var reduceMotion = false
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragFraction: Double?
+    @ViewState private var hovering = false
 
     var body: some View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
@@ -90,15 +102,14 @@ struct ProgressBar: View {
                                          phase: reduceMotion || systemReduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate * 1.2,
                                          color: palette.highlight)
                         } else {
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(.white.opacity(0.14))
-                                Capsule().fill(dragFraction == nil ? .white.opacity(0.85) : palette.accent)
-                                    .frame(width: geometry.size.width * fraction)
-                            }.frame(height: 4)
+                            SliderTrack(fraction: fraction, active: hovering || dragFraction != nil,
+                                        tint: dragFraction == nil ? .white.opacity(0.85) : palette.accent)
                         }
                     }
                     .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
+                    .onHover { hovering = $0 }
+                    .floeAnimation(value: hovering || dragFraction != nil, duration: 0.2)
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { dragFraction = min(max($0.location.x / max(geometry.size.width, 1), 0), 1) }
                         .onEnded { _ in
@@ -128,6 +139,7 @@ struct VolumeControl: View {
     @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
     @ViewState private var dragging = false
+    @ViewState private var hovering = false
     @ViewState private var audibleVolume = 0.6
 
     var body: some View {
@@ -142,26 +154,24 @@ struct VolumeControl: View {
                     .font(.system(size: 13)).foregroundStyle(Theme.secondary).frame(width: 22)
             }.buttonStyle(.plain).help(player.volume > 0 ? "Mute" : "Unmute")
             GeometryReader { geometry in
-                Canvas { context, size in
-                    let count = 27, step = size.width / 27
-                    for i in 0..<count {
-                        let h = 3 + 7 * (0.5 + 0.5 * sin(Double(i) * 1.4))
-                        let bar = Path(roundedRect: CGRect(x: CGFloat(i) * step, y: (size.height - h) / 2,
-                                                          width: max(1, step - 2), height: h), cornerRadius: 1)
-                        let filled = Double(i) / Double(count) < player.volume
-                        context.fill(bar, with: .color(filled ? (dragging ? palette.accent : .white.opacity(0.85)) : .white.opacity(0.14)))
-                    }
-                }
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged {
-                        dragging = true
-                        player.setVolume($0.location.x / max(geometry.size.width, 1))
-                    }
-                    .onEnded { _ in dragging = false })
+                SliderTrack(fraction: player.volume, active: hovering || dragging,
+                            tint: dragging ? palette.highlight : .white.opacity(0.88))
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            dragging = true
+                            // Follow the pointer exactly; keys and mute still glide.
+                            var immediate = Transaction()
+                            immediate.disablesAnimations = true
+                            withTransaction(immediate) { player.setVolume(value.location.x / max(geometry.size.width, 1)) }
+                        }
+                        .onEnded { _ in dragging = false })
             }
-            .frame(width: 110, height: 12)
+            .frame(width: 110, height: 14)
+            .onHover { hovering = $0 }
+            .floeAnimation(value: hovering || dragging, duration: 0.2)
+            .floeAnimation(value: player.volume, duration: 0.2)
         }
         .help("Volume")
         .accessibilityElement(children: .contain)
@@ -170,5 +180,23 @@ struct VolumeControl: View {
         .accessibilityAdjustableAction { direction in
             player.setVolume(player.volume + (direction == .increment ? 0.05 : -0.05))
         }
+    }
+}
+
+/// A soft capsule like the system's sliders; it thickens while the pointer is on it.
+private struct SliderTrack: View {
+    var fraction: Double
+    var active: Bool
+    var tint: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            Capsule().fill(.white.opacity(0.16))
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(tint).frame(width: geometry.size.width * min(max(fraction, 0), 1))
+                }
+                .clipShape(Capsule())
+        }
+        .frame(height: active ? 8 : 4)
     }
 }

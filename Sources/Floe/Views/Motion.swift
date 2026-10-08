@@ -4,17 +4,55 @@ import SwiftUI
 private struct FloeAnimation<Value: Equatable>: ViewModifier {
     let value: Value
     var duration: Double
+    var bounce: Double
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
 
     func body(content: Content) -> some View {
-        content.animation(reduceMotion || systemReduceMotion ? nil : .smooth(duration: duration), value: value)
+        content.animation(reduceMotion || systemReduceMotion ? nil : .spring(duration: duration, bounce: bounce),
+                          value: value)
     }
 }
 
 extension View {
-    func floeAnimation<Value: Equatable>(value: Value, duration: Double = 0.24) -> some View {
-        modifier(FloeAnimation(value: value, duration: duration))
+    /// A spring that settles in `duration`; a little `bounce` suits larger moves.
+    func floeAnimation<Value: Equatable>(value: Value, duration: Double = 0.24, bounce: Double = 0) -> some View {
+        modifier(FloeAnimation(value: value, duration: duration, bounce: bounce))
+    }
+
+    /// The playing cover flies between the mini player and Now Playing.
+    func heroCover() -> some View { modifier(HeroCover()) }
+}
+
+private struct HeroNamespaceKey: EnvironmentKey {
+    static var defaultValue: Namespace.ID? { nil }
+}
+
+extension EnvironmentValues {
+    var heroNamespace: Namespace.ID? {
+        get { self[HeroNamespaceKey.self] }
+        set { self[HeroNamespaceKey.self] = newValue }
+    }
+}
+
+private struct HeroCover: ViewModifier {
+    @Environment(\.heroNamespace) private var namespace
+    @ViewBuilder func body(content: Content) -> some View {
+        if let namespace { content.matchedGeometryEffect(id: "cover", in: namespace) } else { content }
+    }
+}
+
+/// Library sits underneath: Now Playing and Lyrics rise over it like a sheet,
+/// and the library recedes and softens while they're up.
+struct SurfaceTransition: Transition {
+    var raised: Bool
+
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        content
+            .opacity(phase.isIdentity ? 1 : 0)
+            .scaleEffect(phase.isIdentity ? 1 : (raised ? 0.97 : 0.95))
+            .offset(y: phase.isIdentity || !raised ? 0 : 40)
+            .blur(radius: phase.isIdentity || raised ? 0 : 10)
     }
 }
 

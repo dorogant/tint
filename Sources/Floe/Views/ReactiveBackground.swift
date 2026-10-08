@@ -1,7 +1,7 @@
 import MetalKit
 import SwiftUI
 
-/// A low-resolution Metal layer stretched behind the glass, drawing at 15 Hz.
+/// A low-resolution Metal layer stretched behind the glass, drawing at 30 Hz.
 /// Its own clock freezes on pause and never recompiles the shader per frame.
 struct ReactiveBackground: NSViewRepresentable {
     @Environment(VisualizationModel.self) private var visualization
@@ -31,7 +31,7 @@ struct ReactiveBackground: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         context.coordinator.renderer?.update(running: visualization.isRunning, color: palette.rgb,
-                                            energy: visualization.frame.rms, reactivity: Float(settings.reactivity))
+                                            frame: visualization.frame, reactivity: Float(settings.reactivity))
     }
 
     static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
@@ -50,13 +50,19 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         var color = SIMD4<Float>(0, 0, 0, 1)
         var motion = SIMD4<Float>(0, 0, 1, 0)
         var size = SIMD4<Float>(512, 320, 0, 0)
+        var beams = (SIMD4<Float>(), SIMD4<Float>(), SIMD4<Float>())
     }
+    private static let beamCount = 12
     private weak var view: MTKView?
     private weak var status: VisualizationModel?
     private let commandQueue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
     private var timer: DispatchSourceTimer?
     private var uniforms = Uniforms()
+    /// Beam targets from the newest analysis frame; each tick eases toward them.
+    private var targets = [Float](repeating: 0, count: beamCount)
+    private var levels = [Float](repeating: 0, count: beamCount)
+    private var bass: Float = 0
     private var time: Float = 0
     private var previous: Date?
     private var busy = false
@@ -76,10 +82,21 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         DispatchQueue.main.async { status.backgroundFailure = nil }
     }
 
-    func update(running: Bool, color: RGB, energy: Float, reactivity: Float) {
+    func update(running: Bool, color: RGB, frame: SpectrumFrame, reactivity: Float) {
         uniforms.color = SIMD4(Float(color.r), Float(color.g), Float(color.b), 1)
-        uniforms.motion.y = min(1, max(0, energy * 6))
+        uniforms.motion.y = min(1, max(0, frame.rms * 6))
         uniforms.motion.z = reactivity
+        // Six band groups per side, mirrored so bass lights the middle beams. The
+        // knee drops the quiet floor so beams rise and fall with the music.
+        let half = Self.beamCount / 2
+        let group = max(1, frame.bands.count / half)
+        for g in 0..<half {
+            let slice = frame.bands.dropFirst(g * group).prefix(group)
+            let mean = slice.reduce(0, +) / Float(max(1, slice.count))
+            let level = min(1, max(0, (mean - 0.3) / 0.6))
+            targets[half - 1 - g] = level
+            targets[half + g] = level
+        }
         guard running else {
             stop()
             if time == 0 { view?.draw() } // one static frame for Reduce Motion / paused startup
@@ -88,17 +105,31 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         guard timer == nil else { return }
         previous = Date()
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now(), repeating: .nanoseconds(66_666_667), leeway: .milliseconds(6))
+        timer.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333), leeway: .milliseconds(4))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let now = Date()
             if let previous = self.previous { self.time += Float(now.timeIntervalSince(previous)) }
             self.previous = now
             self.uniforms.motion.x = self.time
+            self.ease()
             self.view?.draw()
         }
         self.timer = timer
         timer.resume()
+    }
+
+    /// Quick attack, slower release: beams flare on hits and fall back smoothly.
+    private func ease() {
+        for i in levels.indices {
+            levels[i] += (targets[i] - levels[i]) * (targets[i] > levels[i] ? 0.55 : 0.14)
+        }
+        let low = (targets[Self.beamCount / 2 - 1] + targets[Self.beamCount / 2]) / 2
+        bass += (low - bass) * (low > bass ? 0.6 : 0.12)
+        uniforms.motion.w = bass
+        uniforms.beams = (SIMD4(levels[0], levels[1], levels[2], levels[3]),
+                          SIMD4(levels[4], levels[5], levels[6], levels[7]),
+                          SIMD4(levels[8], levels[9], levels[10], levels[11]))
     }
 
     func stop() {

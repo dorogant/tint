@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MediaPlayer
 
@@ -45,6 +46,7 @@ enum SelfTest {
                 navigator.surface = .lyrics
                 try? await Task.sleep(for: .seconds(2))
                 Snapshot.capture("8-lyrics-synthetic")
+                await transitions(navigator: navigator)
             }
             navigator.surface = .nowPlaying
             return finish(passed, "design and real-audio effects checks")
@@ -354,6 +356,33 @@ enum SelfTest {
         ok = check(ok, !visualization.isRunning, "disabled effects stop analysis")
         player.pause()
         return ok
+    }
+
+    /// Mid-flight frames of the surface transitions and the lyrics-free layout.
+    /// Restores the lyrics preference afterwards.
+    private static func transitions(navigator: Navigator) async {
+        // Hidden windows get few display updates, so animations crawl there.
+        let visible = NSApp.windows.contains { $0.canBecomeMain && $0.occlusionState.contains(.visible) }
+        say("transitions: window \(visible ? "visible" : "occluded")")
+        navigator.surface = .library
+        try? await Task.sleep(for: .seconds(1.5))
+        navigator.surface = .nowPlaying
+        try? await Task.sleep(for: .milliseconds(150))
+        Snapshot.capture("14-to-now-playing-mid")
+        try? await Task.sleep(for: .seconds(1.5))
+        Snapshot.capture("15-now-playing-settled")
+        let defaults = UserDefaults.standard
+        let lyricsShown = defaults.object(forKey: "nowPlayingLyrics")
+        defaults.set(false, forKey: "nowPlayingLyrics")
+        try? await Task.sleep(for: .seconds(1.5))
+        Snapshot.capture("16-now-playing-no-lyrics")
+        if let lyricsShown { defaults.set(lyricsShown, forKey: "nowPlayingLyrics") }
+        else { defaults.removeObject(forKey: "nowPlayingLyrics") }
+        try? await Task.sleep(for: .seconds(1))
+        navigator.surface = .library
+        try? await Task.sleep(for: .milliseconds(150))
+        Snapshot.capture("17-to-library-mid")
+        try? await Task.sleep(for: .seconds(1.5))
     }
 
     /// Visits each page (and snapshots it when enabled).

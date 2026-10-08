@@ -33,6 +33,7 @@ struct MainView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
 
+    @Namespace private var hero
     @ViewState private var showingConnect: ConnectSection?
     @ViewState private var showingVisuals = false
     @AppStorage("accentFromCover") private var accentFromCover = false
@@ -68,14 +69,15 @@ struct MainView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .id(navigator.surface)
-            .transition(.opacity.combined(with: .offset(y: 8)))
+            .transition(SurfaceTransition(raised: navigator.surface != .library))
             if navigator.surface != .nowPlaying {
                 MiniPlayerView().frame(height: 76).glassPanel()
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .padding([.horizontal, .bottom], 10)
-        .floeAnimation(value: navigator.surface, duration: 0.28)
+        .environment(\.heroNamespace, hero)
+        .floeAnimation(value: navigator.surface, duration: 0.55, bounce: 0.12)
         .toolbar { toolbarContent }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }

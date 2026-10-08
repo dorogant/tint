@@ -94,6 +94,7 @@ struct TrackRow: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
+    @AppStorage("reduceMotion") private var reduceMotion = false
     @ViewState private var hovering = false
 
     var body: some View {
@@ -178,9 +179,10 @@ struct TrackRow: View {
             }
             .buttonStyle(.plain)
         } else if isCurrent && player.isPlaying {
-            Image(systemName: "speaker.wave.2.fill")
+            Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 11))
                 .foregroundStyle(palette.highlight)
+                .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
         } else {
             Text("\(number)")
                 .font(.system(size: 12).monospacedDigit())

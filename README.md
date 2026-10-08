@@ -129,11 +129,13 @@ Tools; XCTest is unavailable in the CLT-only installation.
 Open **Visuals** using the waveform icon in the top toolbar. The default is a
 circular bar visualizer around the cover; **Normal** places it across the bottom.
 Both styles support **Bars** and **Wave**. Sensitivity changes only the visual
-response. The optional **Live background** adds slow, audio-reactive color clouds
-behind the cover backdrop; **Reactivity** controls their response.
+response. The optional **Live background** turns the backdrop into a light show:
+twelve beams rise from the bottom edge, bass in the middle. Each reaches higher and
+glows brighter with its part of the spectrum as the beams sway, a bass bloom pulses
+from below, and colour clouds drift behind. **Reactivity** scales the response.
 
 Analysis runs at about 30 Hz only while an effect is visible and Floe is active.
-The Metal background draws at 15 Hz into a small surface stretched behind the
+The Metal background draws at 30 Hz into a small surface stretched behind the
 glass. Both clocks stop on pause, when effects are disabled, or with app/system
 Reduce Motion. Hidden visualizers stop analysis unless the live background needs
 it. Self-tests temporarily bypass the foreground requirement.
@@ -160,8 +162,18 @@ The Play buttons and the search field use interactive glass, and SF Symbols morp
 or bounce for play/pause, like, repeat, transport presses and the volume level.
 Large panels stay tinted rather than live-blurred, which keeps GPU and memory use down.
 
-Motion is short and event-driven. Navigation, selections, covers and backgrounds
-crossfade, and app or system Reduce Motion turns it off.
+Motion is short and event-driven, and app or system Reduce Motion turns it off.
+Going from Library to Now Playing, the cover flies out of the mini player into place
+(and back again). Library recedes and softens while Now Playing and Lyrics rise
+over it, and the visualizer ring fades in once the cover lands. Clicking the mini
+player's cover also opens Now Playing. On a new song the title and mini-player
+details roll up into place and the cover dips and springs back. Shelves ease cards
+in at their edges as they scroll, artwork lifts on hover, and the playing indicators
+in the sidebar and track lists animate. Volume and the mini player's progress are
+soft capsules that thicken under the pointer.
+
+The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics; the
+cover and visualizer slide to the centre and grow.
 
 On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. It
 turns slowly and breathes with the music while playing, and stops on pause. The

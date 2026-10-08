@@ -185,8 +185,10 @@ struct Card: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: circle ? .center : .leading, spacing: 8) {
+                // The artwork lifts toward the pointer.
                 ArtworkView(images: images, size: size, cornerRadius: 10, circle: circle)
-                    .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
+                    .shadow(color: .black.opacity(hovering ? 0.5 : 0.35), radius: hovering ? 16 : 10, y: hovering ? 10 : 6)
+                    .scaleEffect(hovering ? 1.04 : 1)
                 VStack(alignment: circle ? .center : .leading, spacing: 2) {
                     Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
@@ -215,7 +217,12 @@ struct Shelf<Item: Identifiable, Content: View>: View {
                 SectionHeader(title).padding(.horizontal, 10)
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 0) {
-                        ForEach(items) { content($0) }
+                        ForEach(items) { item in
+                            // Cards ease in and out at the shelf's edges as it scrolls.
+                            content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
+                                card.scaleEffect(phase.isIdentity ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
+                            }
+                        }
                     }
                 }
             }

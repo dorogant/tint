@@ -105,6 +105,18 @@ impl Core {
         }
     }
 
+    /// A ready preload can emit TrackChanged without Loading. Mark a real skip
+    /// so its buffered tail is discarded only when the engine confirms it.
+    fn skip_command(&self, f: impl FnOnce(&Spirc) -> Result<(), Error>) {
+        if let Some(spirc) = self.spirc() {
+            self.pcm.prepare_skip();
+            if let Err(e) = f(&spirc) {
+                self.pcm.finish_skip();
+                warn!("Spirc skip command failed: {e}");
+            }
+        }
+    }
+
     /// Disconnects the Connect device and drops the session. Returns the new generation.
     fn teardown(&self) -> u64 {
         let (old, generation) = {
@@ -113,6 +125,7 @@ impl Core {
             let fresh = State { generation, ..State::default() };
             (std::mem::replace(&mut *state, fresh), generation)
         };
+        self.pcm.finish_skip();
         self.pcm.set_gate(false);
         self.pcm.flush();
 
@@ -265,6 +278,7 @@ fn connect_config(volume: u16) -> ConnectConfig {
         name: "Floe".to_string(),
         device_type: DeviceType::Computer,
         initial_volume: volume,
+        emit_set_queue_events: true,
         ..ConnectConfig::default()
     }
 }
@@ -272,21 +286,36 @@ fn connect_config(volume: u16) -> ConnectConfig {
 async fn forward_events(core: &'static Core, mut events: PlayerEventChannel, generation: u64) {
     while let Some(event) = events.recv().await {
         if core.state().generation != generation { break; }
-        // Keep the gate in step with remote (phone) play/pause too.
-        match event {
-            PlayerEvent::Playing { .. } => core.pcm.set_gate(true),
-            PlayerEvent::Paused { .. } => core.pcm.set_gate(false),
-            PlayerEvent::Loading { .. } => core.pcm.begin_switch(),
-            PlayerEvent::TrackChanged { .. } => core.pcm.track_changed(),
-            PlayerEvent::Stopped { .. } => {
-                core.pcm.set_gate(false);
-                core.pcm.flush();
-            }
-            _ => {}
-        }
+        update_pcm(&core.pcm, &event);
         if let Some(json) = events::player_event(&event) {
             core.emit(json);
         }
+    }
+}
+
+/// Keep local audio in step with the engine, including remote play/pause.
+/// Skip commands can seek, stop, or be ignored; only an actual load starts a
+/// switch that needs a later TrackChanged to reopen output.
+fn update_pcm(pcm: &Pcm, event: &PlayerEvent) {
+    match event {
+        PlayerEvent::Playing { .. } => pcm.set_gate(true),
+        PlayerEvent::Paused { .. } => {
+            pcm.finish_skip();
+            pcm.set_gate(false);
+        }
+        PlayerEvent::Loading { .. } => pcm.begin_switch(),
+        PlayerEvent::TrackChanged { .. } => pcm.track_changed(),
+        PlayerEvent::Seeked { .. } => {
+            pcm.finish_skip();
+            pcm.flush();
+        }
+        PlayerEvent::SessionDisconnected { .. } => pcm.finish_skip(),
+        PlayerEvent::Stopped { .. } => {
+            pcm.finish_skip();
+            pcm.set_gate(false);
+            pcm.flush();
+        }
+        _ => {}
     }
 }
 
@@ -506,22 +535,21 @@ pub extern "C" fn floe_pause() {
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_next() {
     if let Some(core) = CORE.get() {
-        core.pcm.begin_switch();
-        core.command(Spirc::next);
+        core.skip_command(Spirc::next);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_previous() {
     if let Some(core) = CORE.get() {
-        core.pcm.begin_switch();
-        core.command(Spirc::prev);
+        core.skip_command(Spirc::prev);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_seek(position_ms: u32) {
     if let Some(core) = CORE.get() {
+        core.pcm.finish_skip();
         core.pcm.flush();
         core.command(|spirc| spirc.set_position_ms(position_ms));
     }
@@ -722,5 +750,127 @@ mod configuration_tests {
         assert_eq!(default.bitrate, Bitrate::Bitrate320);
         assert!(!default.normalisation);
         assert!(default.gapless);
+        assert!(connect_config(u16::MAX / 2).emit_set_queue_events);
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use librespot_metadata::audio::{AudioItem, UniqueFields};
+    use librespot_playback::{audio_backend::Sink, convert::Converter, decoder::AudioPacket};
+
+    extern "C" fn ignore_event(_: *mut c_void, _: *const c_char) {}
+
+    fn feed(pcm: &Arc<Pcm>, sample: f64) {
+        FloeSink::new(pcm.clone())
+            .write(AudioPacket::Samples(vec![sample; 8]), &mut Converter::new(None))
+            .unwrap();
+    }
+
+    fn track_id() -> SpotifyUri {
+        SpotifyUri::from_uri("spotify:track:0000000000000000000000").unwrap()
+    }
+
+    fn track_changed() -> PlayerEvent {
+        let track_id = track_id();
+        PlayerEvent::TrackChanged {
+            audio_item: Box::new(AudioItem {
+                uri: track_id.to_uri(),
+                track_id,
+                files: Default::default(),
+                name: "Synthetic track".to_owned(),
+                covers: vec![],
+                language: vec![],
+                duration_ms: 30_000,
+                is_explicit: false,
+                availability: Ok(()),
+                alternatives: None,
+                unique_fields: UniqueFields::Local {
+                    artists: None, album: None, album_artists: None,
+                    number: None, disc_number: None, path: Default::default(),
+                },
+            }),
+        }
+    }
+
+    #[test]
+    fn skipped_or_seek_only_transport_commands_do_not_latch_audio_closed() {
+        // No Spotify session is created. Ignored skip commands must leave PCM
+        // alone, just as a previous command resolved to a seek must stay audible.
+        unsafe { floe_init(ignore_event, std::ptr::null_mut()); }
+        let pcm = &CORE.get().unwrap().pcm;
+        for command in [floe_previous as extern "C" fn(), floe_next] {
+            pcm.track_changed();
+            pcm.set_gate(true);
+            feed(pcm, 0.25);
+            command();
+            let mut left = [0.0; 4];
+            let mut right = [0.0; 4];
+            assert_eq!(pcm.render(&mut left, &mut right), 4);
+            assert_eq!(left, [0.25; 4]);
+            assert_eq!(right, [0.25; 4]);
+
+            pcm.prepare_skip();
+            feed(pcm, 0.25);
+            update_pcm(pcm, &PlayerEvent::Seeked {
+                track_id: track_id(), play_request_id: 1, position_ms: 0,
+            });
+            assert_eq!(pcm.render(&mut left, &mut right), 0);
+            feed(pcm, 0.75);
+            update_pcm(pcm, &track_changed()); // the seek must have cleared the skip marker
+            assert_eq!(pcm.render(&mut left, &mut right), 4);
+            assert_eq!(left, [0.75; 4]);
+        }
+        pcm.set_gate(false);
+    }
+
+    #[test]
+    fn confirmed_loading_still_discards_old_audio_and_stop_settles_output() {
+        let pcm = Pcm::new();
+        pcm.set_gate(true);
+        feed(&pcm, 0.25);
+        update_pcm(&pcm, &PlayerEvent::Loading {
+            track_id: track_id(), play_request_id: 1, position_ms: 0,
+        });
+        feed(&pcm, 0.25);
+        update_pcm(&pcm, &PlayerEvent::Playing {
+            track_id: track_id(), play_request_id: 1, position_ms: 0,
+        });
+        let mut left = [0.0; 4];
+        let mut right = [0.0; 4];
+        assert_eq!(pcm.render(&mut left, &mut right), 0);
+        update_pcm(&pcm, &track_changed());
+        feed(&pcm, 0.75);
+        update_pcm(&pcm, &PlayerEvent::Playing {
+            track_id: track_id(), play_request_id: 1, position_ms: 0,
+        });
+        assert_eq!(pcm.render(&mut left, &mut right), 4);
+        assert_eq!(left, [0.75; 4]);
+        feed(&pcm, 0.75);
+        update_pcm(&pcm, &PlayerEvent::Stopped {
+            track_id: track_id(), play_request_id: 1,
+        });
+        assert_eq!(pcm.render(&mut left, &mut right), 0);
+        assert_eq!(pcm.take_stats().buffered_ms, 0);
+    }
+
+    #[test]
+    fn ready_manual_skip_flushes_the_old_tail_without_a_loading_event() {
+        let pcm = Pcm::new();
+        pcm.set_gate(true);
+        feed(&pcm, 0.25);
+        pcm.prepare_skip();
+        // The ready preload emits TrackChanged then Playing, without Loading.
+        update_pcm(&pcm, &track_changed());
+        feed(&pcm, 0.75);
+        update_pcm(&pcm, &PlayerEvent::Playing {
+            track_id: track_id(), play_request_id: 2, position_ms: 0,
+        });
+        let mut left = [0.0; 4];
+        let mut right = [0.0; 4];
+        assert_eq!(pcm.render(&mut left, &mut right), 4);
+        assert_eq!(left, [0.75; 4]);
+        assert_eq!(right, [0.75; 4]);
     }
 }

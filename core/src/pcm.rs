@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::analysis::AnalysisTap;
@@ -35,6 +35,10 @@ const RING_SAMPLES: usize = SAMPLE_RATE / 2 * CHANNELS;
 /// player thread stays free to receive the pause command. This caps the parking.
 const MAX_PARKED_SAMPLES: usize = SAMPLE_RATE * CHANNELS * 2;
 
+/// An ignored skip must not make a later automatic transition discard its tail.
+/// Slower loads are covered by `switching` after the engine emits Loading.
+const SKIP_CONFIRMATION_WINDOW: Duration = Duration::from_secs(2);
+
 pub struct Pcm {
     pub analysis: AnalysisTap,
     // Each half is only ever touched by one thread at a time (player thread /
@@ -44,6 +48,8 @@ pub struct Pcm {
     buffered: AtomicUsize,
     gate_open: AtomicBool,
     switching: AtomicBool,
+    /// Only command/event threads touch this marker; never the render callback.
+    skip_requested: Mutex<Option<Instant>>,
     epoch: AtomicU64,
     frames_rendered: AtomicU64,
     /// Times playback ran dry after having audio (render thread only).
@@ -74,6 +80,7 @@ impl Pcm {
             buffered: AtomicUsize::new(0),
             gate_open: AtomicBool::new(false),
             switching: AtomicBool::new(false),
+            skip_requested: Mutex::new(None),
             epoch: AtomicU64::new(0),
             frames_rendered: AtomicU64::new(0),
             underruns: AtomicU64::new(0),
@@ -90,8 +97,18 @@ impl Pcm {
         }
     }
 
+    /// Remember a manual skip without silencing a seek or ignored command.
+    pub fn prepare_skip(&self) {
+        *lock(&self.skip_requested) = Some(Instant::now());
+    }
+
+    pub fn finish_skip(&self) {
+        lock(&self.skip_requested).take();
+    }
+
     /// A deliberate selection should silence the old track immediately.
     pub fn begin_switch(&self) {
+        self.finish_skip();
         self.switching.store(true, Ordering::Release);
         self.set_gate(false);
         self.flush();
@@ -100,7 +117,9 @@ impl Pcm {
     /// Drop any old packets decoded while the new context was resolving.
     /// Automatic, preloaded gapless transitions keep their buffered tail.
     pub fn track_changed(&self) {
-        if self.switching.swap(false, Ordering::AcqRel) {
+        let skipped = lock(&self.skip_requested).take()
+            .is_some_and(|requested| requested.elapsed() <= SKIP_CONFIRMATION_WINDOW);
+        if self.switching.swap(false, Ordering::AcqRel) || skipped {
             self.flush();
         }
     }
@@ -314,5 +333,22 @@ mod tests {
         let mut right = [0.0; 4];
         assert_eq!(pcm.render(&mut left, &mut right), 4);
         assert_eq!(left, [0.25; 4]);
+    }
+
+    #[test]
+    fn skip_marker_does_not_silence_audio_and_expires_without_harming_gapless() {
+        let pcm = Pcm::new();
+        pcm.set_gate(true);
+        pcm.prepare_skip();
+        pcm.push(&[0.25; 8]);
+        let mut left = [0.0; 4];
+        let mut right = [0.0; 4];
+        assert_eq!(pcm.render(&mut left, &mut right), 4);
+        assert_eq!(left, [0.25; 4]);
+        *lock(&pcm.skip_requested) = Some(Instant::now() - SKIP_CONFIRMATION_WINDOW - Duration::from_millis(1));
+        pcm.push(&[0.5; 8]);
+        pcm.track_changed();
+        assert_eq!(pcm.render(&mut left, &mut right), 4);
+        assert_eq!(left, [0.5; 4]);
     }
 }

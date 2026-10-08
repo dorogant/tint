@@ -27,6 +27,11 @@ enum SelfTest {
         guard await wait(timeout: 600, {
             player.isConnected && library.connection == .connected && library.profile != nil
         }) else { return finish(false, "not connected") }
+        if UserDefaults.standard.bool(forKey: "FloeSelfTestTransport") {
+            let passed = await transport(player: player, library: library, navigator: navigator)
+            player.pause()
+            return finish(passed, "Previous boundary and rapid transport checks")
+        }
         if UserDefaults.standard.bool(forKey: "FloeSelfTestSwitching") {
             let passed = await switching(player: player, library: library, navigator: navigator)
             player.pause()
@@ -230,6 +235,75 @@ enum SelfTest {
                        "no new audio underruns during steady playback")
         }
         say(String(format: "Switching footprint: %.1f MiB", MemoryFootprint.currentMB))
+        return ok
+    }
+
+    /// Uses a real playlist context, with no library edits or lyric capture.
+    private static func transport(player: PlayerModel, library: LibraryModel, navigator: Navigator) async -> Bool {
+        navigator.surface = .library
+        var fixture: (uri: String, songs: [Track])?
+        for playlist in library.playlists where library.canListItems(of: playlist) {
+            guard let page = try? await library.api.playlistItems(playlist.id, offset: 0) else { continue }
+            let songs = page.items.compactMap(\.track).filter { $0.isCatalogTrack && $0.isPlayable != false }
+            if songs.count >= 2 { fixture = (playlist.uri, Array(songs.prefix(2))); break }
+        }
+        guard let fixture else { return check(true, false, "needs a playlist with two playable songs") }
+        if player.shuffle { player.toggleShuffle() }
+        while player.repeatMode != .off { player.cycleRepeat() }
+        let first = fixture.songs[0], second = fixture.songs[1]
+        player.play(PlayRequest(contextURI: fixture.uri, startURI: first.uri), selectedTrack: first)
+        guard await wait(timeout: 25, {
+            player.isPlaying && !player.isLoading && player.track?.uri == first.uri && player.hasPreviousTrack == false
+        }) else { return check(true, false, "first playlist song and engine history arrive") }
+        var ok = true
+        player.previous()
+        player.previous()
+        ok = check(ok, player.isPlaying && !player.isLoading, "rapid Previous at first song never enters speculative loading")
+        try? await Task.sleep(for: .seconds(1))
+        let before = player.core.takeStats().frames_rendered
+        try? await Task.sleep(for: .seconds(2))
+        ok = check(ok, player.isPlaying && !player.isLoading && player.track?.uri == first.uri
+                   && player.core.takeStats().frames_rendered > before + 44_100,
+                   "first song keeps producing audio after double Previous")
+        guard ok else { return false }
+
+        player.seek(toMs: 6000)
+        try? await Task.sleep(for: .milliseconds(300))
+        player.previous()
+        player.previous()
+        ok = check(ok, await wait(timeout: 10) {
+            player.isPlaying && !player.isLoading && player.track?.uri == first.uri && player.positionMs(at: Date()) < 3000
+        }, "seek restart followed immediately by Previous returns to zero")
+        let afterRestart = player.core.takeStats().frames_rendered
+        try? await Task.sleep(for: .seconds(1))
+        ok = check(ok, player.core.takeStats().frames_rendered > afterRestart + 22_050, "restart leaves the audio gate open")
+
+        player.pause()
+        guard await wait(timeout: 5, { !player.isPlaying && !player.isLoading }) else { return false }
+        player.previous()
+        player.previous()
+        try? await Task.sleep(for: .milliseconds(300))
+        ok = check(ok, !player.isPlaying && !player.isLoading && player.track?.uri == first.uri,
+                   "paused first-song Previous preserves pause")
+        player.resume()
+        guard await wait(timeout: 10, { player.isPlaying }) else { return false }
+        player.next()
+        guard await wait(timeout: 20, { player.isPlaying && !player.isLoading && player.track?.uri == second.uri })
+        else { return check(ok, false, "Next reaches the second playlist song") }
+        player.previous()
+        ok = check(ok, await wait(timeout: 20) { player.isPlaying && !player.isLoading && player.track?.uri == first.uri },
+                   "Previous from the second song still goes back")
+        // This engine doesn't publish a fresh queue snapshot for every local
+        // skip. Returning to the first track must still restart at the boundary.
+        player.previous()
+        player.previous()
+        ok = check(ok, await wait(timeout: 20) { player.isPlaying && !player.isLoading && player.track?.uri == first.uri },
+                   "double Previous after returning to the first song recovers its boundary")
+        let returningFrames = player.core.takeStats().frames_rendered
+        try? await Task.sleep(for: .seconds(2))
+        ok = check(ok, player.isPlaying && !player.isLoading && player.core.takeStats().frames_rendered > returningFrames + 44_100,
+                   "returning first-song boundary remains audible")
+        say(String(format: "Transport footprint: %.1f MiB", MemoryFootprint.currentMB))
         return ok
     }
 

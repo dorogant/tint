@@ -323,6 +323,25 @@ stopped until the engine confirms playback. The core prepares a known selected
 track while Spirc resolves its context, silences old audio on manual switches,
 and preserves buffered audio for automatic gapless transitions.
 
+Previous and Next wait for actual engine events before showing loading or stopping
+the clock. A seek-only or ignored command therefore cannot leave a permanent
+spinner or close audio output. Manual skips flush the old audio at the confirmed
+track change, including ready preloads which omit a loading event. At the first
+song, Previous restarts at zero and preserves play/pause. If history is temporarily
+unknown and the engine stops at that boundary, Floe reloads the same song once;
+an intervening Connect takeover cancels that recovery.
+
+```sh
+scripts/test-transport.sh
+build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestTransport YES
+```
+
+The offline suite exercises the production playback model using synthetic events,
+including rapid Previous, paused boundaries, stale history, duplicate song URIs
+and takeover-safe recovery. The opt-in live check uses the first two songs of a
+playable playlist, verifies audio after double Previous and a forward/back round
+trip, then leaves playback paused. It does not edit the library or capture lyrics.
+
 ```sh
 build/Floe.app/Contents/MacOS/Floe -FloeSelfTest YES -FloeSelfTestSwitching YES
 ```
@@ -351,7 +370,7 @@ Artwork sizes now share one in-flight HTTP download per URL; decoded variants
 remain in the existing bounded cache, and raw bytes are not kept after processing.
 Control Center retains a pending artwork task across metadata updates. Synthetic
 tests verify concurrent sizes, memory hits, failed-request recovery and cancelled
-callers. Ten Rust tests cover configuration, analysis and switch/gapless buffering;
+callers. Sixteen Rust tests cover configuration, analysis, transport events and switch/gapless buffering;
 offline API checks and all 12 synthetic lyric regressions pass.
 
 ## Layout

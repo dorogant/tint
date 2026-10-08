@@ -56,9 +56,13 @@ enum CoreEvent: Sendable {
     case playing(positionMs: Double)
     case paused(positionMs: Double)
     case position(positionMs: Double)
-    case stopped
+    case stopped(uri: String?)
+    /// Another Spotify Connect device took over; distinct from a queue boundary.
+    case deviceInactive
     case endOfTrack
     case unavailable(uri: String)
+    /// Playback history from the engine, scoped to its current track.
+    case navigation(uri: String, hasPrevious: Bool)
     case shuffle(Bool)
     case repeatMode(RepeatMode)
     /// Spotify volume, 0…65535 (local or remote change).
@@ -103,9 +107,14 @@ enum CoreEvent: Sendable {
         case "playing": self = .playing(positionMs: position)
         case "paused": self = .paused(positionMs: position)
         case "position": self = .position(positionMs: position)
-        case "stopped": self = .stopped
+        case "stopped": self = .stopped(uri: object["uri"] as? String)
+        case "device_inactive": self = .deviceInactive
         case "end_of_track": self = .endOfTrack
         case "unavailable": self = .unavailable(uri: object["uri"] as? String ?? "")
+        case "navigation":
+            guard let uri = object["uri"] as? String,
+                  let hasPrevious = object["has_previous"] as? Bool else { return nil }
+            self = .navigation(uri: uri, hasPrevious: hasPrevious)
         case "shuffle": self = .shuffle(object["shuffle"] as? Bool ?? false)
         case "repeat": self = .repeatMode(RepeatMode(rawValue: object["mode"] as? Int ?? 0) ?? .off)
         case "volume": self = .volume(UInt16(clamping: object["volume"] as? Int ?? 0))

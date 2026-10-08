@@ -42,6 +42,10 @@ pub fn player_event(event: &PlayerEvent) -> Option<Value> {
             json!({ "type": "unavailable", "uri": track_id.to_uri() })
         }
         PlayerEvent::TrackChanged { audio_item } => track(audio_item),
+        PlayerEvent::SetQueue { current_track: Some(current), prev_tracks, .. } => {
+            json!({ "type": "navigation", "uri": current.uri, "has_previous": !prev_tracks.is_empty() })
+        }
+        PlayerEvent::SessionDisconnected { .. } => json!({ "type": "device_inactive" }),
         PlayerEvent::ShuffleChanged { shuffle } => json!({ "type": "shuffle", "shuffle": shuffle }),
         PlayerEvent::RepeatChanged { context, track } => {
             let mode = if *track { 2 } else if *context { 1 } else { 0 };
@@ -49,6 +53,49 @@ pub fn player_event(event: &PlayerEvent) -> Option<Value> {
         }
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use librespot_playback::player::QueueTrack;
+
+    #[test]
+    fn navigation_reports_only_current_track_and_previous_availability() {
+        let current = QueueTrack {
+            uri: "spotify:track:0000000000000000000000".to_owned(),
+            provider: "context".to_owned(),
+        };
+        for has_previous in [false, true] {
+            let event = PlayerEvent::SetQueue {
+                context_uri: "spotify:playlist:test".to_owned(),
+                current_track: Some(current.clone()),
+                next_tracks: vec![current.clone()],
+                prev_tracks: if has_previous { vec![current.clone()] } else { vec![] },
+            };
+            assert_eq!(player_event(&event), Some(json!({
+                "type": "navigation",
+                "uri": current.uri,
+                "has_previous": has_previous,
+            })));
+        }
+        let empty = PlayerEvent::SetQueue {
+            context_uri: String::new(),
+            current_track: None,
+            next_tracks: vec![],
+            prev_tracks: vec![],
+        };
+        assert!(player_event(&empty).is_none());
+    }
+
+    #[test]
+    fn device_takeover_is_identifiable_before_the_player_stops() {
+        let event = PlayerEvent::SessionDisconnected {
+            connection_id: "synthetic-connection".to_owned(),
+            user_name: "synthetic-user".to_owned(),
+        };
+        assert_eq!(player_event(&event), Some(json!({ "type": "device_inactive" })));
+    }
 }
 
 fn track(item: &AudioItem) -> Value {

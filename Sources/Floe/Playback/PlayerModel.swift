@@ -36,6 +36,10 @@ final class PlayerModel {
     @ObservationIgnored private var connectingConfiguration: PlaybackConfiguration?
     @ObservationIgnored private var pendingPlayback: PlayRequest?
     @ObservationIgnored private var lastRequest: PlayRequest?
+    @ObservationIgnored private var navigation: (uri: String, hasPrevious: Bool)?
+    /// Spirc stops at an empty history. Recover only the just-issued local
+    /// Previous for this exact track, without restarting after a Connect takeover.
+    @ObservationIgnored private var previousRestart: (uri: String, request: PlayRequest, date: Date)?
     @ObservationIgnored private var reconnectTask: Task<Void, Never>?
 
     var isConnected: Bool {
@@ -44,6 +48,12 @@ final class PlayerModel {
 
     var username: String? {
         if case let .connected(name) = session { name } else { nil }
+    }
+
+    /// Unknown until the engine reports history for the loaded track.
+    var hasPreviousTrack: Bool? {
+        guard let navigation, navigation.uri == track?.uri else { return nil }
+        return navigation.hasPrevious
     }
 
     /// Position is interpolated between core events instead of polled.
@@ -87,6 +97,7 @@ final class PlayerModel {
 
     func logIn() {
         guard session != .authorizing else { return }
+        previousRestart = nil
         reconnectTask?.cancel()
         rememberPlayback()
         Task {
@@ -104,6 +115,8 @@ final class PlayerModel {
     }
 
     func logOut() {
+        previousRestart = nil
+        navigation = nil
         reconnectTask?.cancel()
         pendingPlayback = nil
         storedCredentials = nil
@@ -116,6 +129,7 @@ final class PlayerModel {
     /// Plays a context (playlist, album, artist, Liked Songs) or a track list,
     /// keeping the current shuffle and repeat settings.
     func play(_ request: PlayRequest, selectedTrack: Track? = nil) {
+        previousRestart = nil
         var request = request
         request.shuffle = shuffle
         request.repeatMode = repeatMode.rawValue
@@ -125,6 +139,7 @@ final class PlayerModel {
             return
         }
         lastRequest = request
+        navigation = nil
         contextURI = request.contextURI
         pendingTrack = selectedTrack.map(TrackInfo.init)
         isActiveDevice = true
@@ -142,12 +157,14 @@ final class PlayerModel {
     }
 
     func pause() {
+        previousRestart = nil
         if isLoading { lastRequest?.startPlaying = false }
         core.pause()
         setAnchor(positionMs(at: Date()), playing: false)
     }
 
     func resume() {
+        previousRestart = nil
         audio.start()
         if isActiveDevice && track != nil {
             core.play()
@@ -160,23 +177,36 @@ final class PlayerModel {
     func next() {
         guard isConnected else { return }
         pendingTrack = nil
+        navigation = nil
+        previousRestart = nil
         core.next()
-        beginLoading(at: 0)
+        // A skip can be ignored at a context boundary or on an inactive device.
+        // Only engine events establish loading and stop the playback clock.
     }
 
-    /// Like other players: restart the track if past 3 s, else go back.
+    /// Restart after 3 s or at the start of the playback history; otherwise go back.
     func previous() {
-        if positionMs(at: Date()) > 3000 {
+        guard isConnected else { return }
+        if positionMs(at: Date()) >= 3000 || hasPreviousTrack == false {
             seek(toMs: 0)
         } else {
-            guard isConnected else { return }
             pendingTrack = nil
+            navigation = nil
+            previousRestart = nil
+            if isActiveDevice, !isLoading, let track {
+                var request = lastRequest ?? PlayRequest(tracks: [track.uri])
+                request.startURI = track.uri
+                request.startIndex = nil
+                request.positionMs = 0
+                request.startPlaying = isPlaying
+                previousRestart = (track.uri, request, Date())
+            }
             core.previous()
-            beginLoading(at: 0)
         }
     }
 
     func seek(toMs ms: Double) {
+        previousRestart = nil
         let clamped = min(max(ms, 0), track?.durationMs ?? ms)
         core.seek(toMs: UInt32(clamped))
         setAnchor(clamped, playing: isPlaying)
@@ -210,6 +240,8 @@ final class PlayerModel {
 
     /// Rebuild the playback session to apply codec settings, preserving context and position.
     func reconnectPlayback() {
+        previousRestart = nil
+        navigation = nil
         guard let credentials = storedCredentials else { logIn(); return }
         reconnectTask?.cancel()
         rememberPlayback()
@@ -299,6 +331,8 @@ final class PlayerModel {
             rememberPlayback()
             log.notice("Session dropped; reconnecting")
             isActiveDevice = false
+            navigation = nil
+            previousRestart = nil
             session = .connecting
             isLoading = false
             setAnchor(positionMs(at: Date()), playing: false)
@@ -309,38 +343,64 @@ final class PlayerModel {
             track = nil
             pendingTrack = nil
             contextURI = nil
+            navigation = nil
+            previousRestart = nil
+            isLoading = false
             setAnchor(0, playing: false)
         case let .track(info):
+            previousRestart = nil
             track = info
             if pendingTrack?.uri == info.uri { pendingTrack = nil }
             nowPlaying.update()
         case let .loading(ms):
+            previousRestart = nil
             isLoading = true
             setAnchor(ms, playing: false)
         case let .playing(ms):
+            previousRestart = nil
             isLoading = false
             pendingTrack = nil
             isActiveDevice = true
             lastError = nil
             setAnchor(ms, playing: true)
         case let .paused(ms):
+            previousRestart = nil
             isLoading = false
             pendingTrack = nil
             setAnchor(ms, playing: false)
         case let .position(ms):
+            // A late correction can belong to a seek before a second Previous.
+            // Explicit local seeks cancel intent when dispatched instead.
             setAnchor(ms, playing: isPlaying)
-        case .stopped:
-            // Spirc stops the player when another device takes over.
+        case let .stopped(uri):
+            let restart = previousRestart
+            previousRestart = nil
+            if let restart, isActiveDevice, restart.uri == uri, track?.uri == uri,
+               Date().timeIntervalSince(restart.date) < 2 {
+                isLoading = false
+                isActiveDevice = false
+                setAnchor(0, playing: false)
+                play(restart.request)
+                break
+            }
             isLoading = false
             isActiveDevice = false
+            navigation = nil
             pendingTrack = nil
             setAnchor(positionMs(at: Date()), playing: false)
+        case .deviceInactive:
+            previousRestart = nil
+            navigation = nil
+            isActiveDevice = false
         case .endOfTrack:
             break // Spirc moves on to the next track itself
         case .unavailable:
+            previousRestart = nil
             isLoading = false
             pendingTrack = nil
             lastError = L10n.string("This track is unavailable. Try another song.")
+        case let .navigation(uri, hasPrevious):
+            navigation = (uri, hasPrevious)
         case let .shuffle(on):
             shuffle = on
         case let .repeatMode(mode):

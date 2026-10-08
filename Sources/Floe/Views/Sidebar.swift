@@ -68,7 +68,7 @@ private struct SelectionIndicator: View {
             .overlay(shape.fill(LinearGradient(colors: [palette.accent.opacity(0.2), palette.accent.opacity(0.03)],
                                                startPoint: .leading, endPoint: .trailing)))
             .overlay(shape.strokeBorder(.white.opacity(0.06)))
-            .matchedGeometryEffect(id: "selection", in: namespace)
+            .floeMatched("selection", in: namespace)
     }
 }
 

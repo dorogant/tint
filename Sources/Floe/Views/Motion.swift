@@ -76,7 +76,24 @@ private struct FloeTimed<Value: Equatable>: ViewModifier {
     }
 }
 
+/// Shares one indicator between rows so it glides; with Reduce Motion each row
+/// keeps its own, which simply fades.
+private struct FloeMatched: ViewModifier {
+    let id: String
+    let namespace: Namespace.ID
+    @ReducedMotion private var reduceMotion
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if reduceMotion { content } else { content.matchedGeometryEffect(id: id, in: namespace) }
+    }
+}
+
 extension View {
+    /// A selection or active-item indicator that glides between rows.
+    func floeMatched(_ id: String, in namespace: Namespace.ID) -> some View {
+        modifier(FloeMatched(id: id, namespace: namespace))
+    }
+
     /// Hover in fast, out a little slower; a plain fade with Reduce Motion.
     func floeHover(_ hovering: Bool) -> some View {
         modifier(FloeHover(hovering: hovering))

@@ -260,12 +260,7 @@ struct Card: View {
         .onHover { hovering = $0 }
         .floeHover(hovering)
         .animation(reduceMotion ? FloeMotion.fade : FloeMotion.press(pressed), value: pressed)
-        .contextMenu {
-            if let play { Button("Play", action: play) }
-        }
-        .accessibilityActions {
-            if let play { Button("Play", action: play) }
-        }
+        .modifier(PlayMenu(play: play))
     }
 
     private func playButton(_ play: @escaping () -> Void) -> some View {
@@ -293,6 +288,21 @@ struct Card: View {
     }
 }
 
+/// Play without the pointer: in the context menu and as a VoiceOver action.
+private struct PlayMenu: ViewModifier {
+    let play: (() -> Void)?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let play {
+            content
+                .contextMenu { Button("Play", action: play) }
+                .accessibilityAction(named: Text("Play"), play)
+        } else {
+            content
+        }
+    }
+}
+
 /// Hands the press to the card, so the artwork, text and Play button dip together.
 private struct CardPressStyle: ButtonStyle {
     @Binding var pressed: Bool
@@ -310,62 +320,65 @@ struct Shelf<Item: Identifiable, Content: View>: View {
     let items: [Item]
     @ViewBuilder let content: (Item) -> Content
     @ReducedMotion private var reduceMotion
-    @ViewState private var position = ScrollPosition(edge: .leading)
     @ViewState private var edges = ShelfEdges()
     @ViewState private var metrics = ShelfMetrics()
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionHeader(title: title) {
-                    if edges.back || edges.forward {
-                        HStack(spacing: 2) {
-                            IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1) }
-                                .disabled(!edges.back)
-                            IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1) }
-                                .disabled(!edges.forward)
+            ScrollViewReader { proxy in
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionHeader(title: title) {
+                        if edges.back || edges.forward {
+                            HStack(spacing: 2) {
+                                IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1, proxy) }
+                                    .disabled(!edges.back)
+                                IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1, proxy) }
+                                    .disabled(!edges.forward)
+                            }
+                            .transition(.opacity)
                         }
-                        .transition(.opacity)
                     }
-                }
-                .padding(.horizontal, 10)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 0) {
-                        ForEach(items) { item in
-                            // Cards ease in and out at the shelf's edges as it scrolls.
-                            content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
-                                card.scaleEffect(phase.isIdentity ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
+                    .padding(.horizontal, 10)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(items) { item in
+                                // Cards ease in and out at the shelf's edges as it scrolls.
+                                content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
+                                    card.scaleEffect(phase.isIdentity ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
+                                }
                             }
                         }
                     }
-                }
-                .scrollPosition($position)
-                // Only the arrows' enabled state is view state; it changes at the ends.
-                .onScrollGeometryChange(for: ShelfEdges.self) { geometry in
-                    ShelfEdges(back: geometry.contentOffset.x > 1,
-                               forward: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
-                } action: { _, new in
-                    edges = new
-                }
-                .onScrollGeometryChange(for: ShelfMetrics.Snapshot.self) { geometry in
-                    ShelfMetrics.Snapshot(offset: geometry.contentOffset.x, width: geometry.containerSize.width,
-                                          contentWidth: geometry.contentSize.width)
-                } action: { _, new in
-                    metrics.latest = new
+                    // Only the arrows' enabled state is view state; it changes at the ends.
+                    .onScrollGeometryChange(for: ShelfEdges.self) { geometry in
+                        ShelfEdges(back: geometry.contentOffset.x > 1,
+                                   forward: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
+                    } action: { _, new in
+                        edges = new
+                    }
+                    .onScrollGeometryChange(for: ShelfMetrics.Snapshot.self) { geometry in
+                        ShelfMetrics.Snapshot(offset: geometry.contentOffset.x, width: geometry.containerSize.width,
+                                              contentWidth: geometry.contentSize.width)
+                    } action: { _, new in
+                        metrics.latest = new
+                    }
                 }
                 .floeState(value: edges, duration: 0.2)
             }
         }
     }
 
-    /// Pages by most of a screenful, keeping a card's width of context.
-    private func page(_ direction: CGFloat) {
+    /// Pages by a screenful less one card, so the card at the edge stays in view.
+    /// Cards in a shelf share a width, so positions follow from the content width.
+    private func page(_ direction: Int, _ proxy: ScrollViewProxy) {
         let latest = metrics.latest
-        let step = max(latest.width - 160, 160)
-        let limit = max(latest.contentWidth - latest.width, 0)
-        let target = min(max(latest.offset + direction * step, 0), limit)
+        guard latest.contentWidth > 0 else { return }
+        let card = latest.contentWidth / CGFloat(items.count)
+        let first = Int((latest.offset / card).rounded())
+        let step = max(Int(latest.width / card) - 1, 1)
+        let target = min(max(first + direction * step, 0), items.count - 1)
         withAnimation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0)) {
-            position.scrollTo(x: target)
+            proxy.scrollTo(items[target].id, anchor: .leading)
         }
     }
 }

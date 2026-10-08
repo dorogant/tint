@@ -243,6 +243,7 @@ struct RenderedFrame {
     let height: Int
     private let queue: MTLCommandQueue
     private let pipelines: BackgroundRenderer.Pipelines
+    private let targets: BackgroundRenderer.Targets
     private let texture: MTLTexture
     private let buffer: MTLBuffer
 
@@ -251,6 +252,7 @@ struct RenderedFrame {
         self.height = height
         queue = device.makeCommandQueue()!
         pipelines = try BackgroundRenderer.makePipelines(device: device, pixelFormat: .bgra8Unorm)
+        targets = BackgroundRenderer.Targets(device: device)
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         descriptor.usage = [.renderTarget, .shaderRead]
         descriptor.storageMode = .private
@@ -265,9 +267,8 @@ struct RenderedFrame {
         pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
         pass.colorAttachments[0].storeAction = .store
         let command = queue.makeCommandBuffer()!
-        let encoder = command.makeRenderCommandEncoder(descriptor: pass)!
-        BackgroundRenderer.encode(encoder, pipelines: pipelines, animator: animator, width: Float(width), height: Float(height))
-        encoder.endEncoding()
+        BackgroundRenderer.encode(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator,
+                                  width: Float(width), height: Float(height))
         let blit = command.makeBlitCommandEncoder()!
         blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
                   sourceSize: MTLSize(width: width, height: height, depth: 1), to: buffer, destinationOffset: 0,
@@ -280,24 +281,28 @@ struct RenderedFrame {
         return RenderedFrame(width: width, height: height, bytes: Array(UnsafeBufferPointer(start: pointer, count: width * height * 4)))
     }
 
-    /// Median GPU time per frame in milliseconds, from the command buffers' own
-    /// timestamps, drawing the same state `frames` times.
-    func gpuMilliseconds(_ animator: BackgroundAnimator, frames: Int = 40) -> Double {
-        var times: [Double] = []
-        for _ in 0..<frames {
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = texture
-            pass.colorAttachments[0].loadAction = .dontCare
-            pass.colorAttachments[0].storeAction = .store
-            let command = queue.makeCommandBuffer()!
-            let encoder = command.makeRenderCommandEncoder(descriptor: pass)!
-            BackgroundRenderer.encode(encoder, pipelines: pipelines, animator: animator, width: Float(width), height: Float(height))
-            encoder.endEncoding()
-            command.commit()
-            command.waitUntilCompleted()
-            times.append((command.gpuEndTime - command.gpuStartTime) * 1000)
+    /// GPU time per frame in milliseconds while drawing continuously: frames
+    /// submitted back to back (as a running display does, so the GPU is at its
+    /// working clock), from the first one's start to the last one's end.
+    func gpuMilliseconds(_ animator: BackgroundAnimator, frames: Int = 120) -> Double {
+        func run(_ count: Int) -> Double {
+            var buffers: [MTLCommandBuffer] = []
+            for _ in 0..<count {
+                let pass = MTLRenderPassDescriptor()
+                pass.colorAttachments[0].texture = texture
+                pass.colorAttachments[0].loadAction = .dontCare
+                pass.colorAttachments[0].storeAction = .store
+                let command = queue.makeCommandBuffer()!
+                BackgroundRenderer.encode(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator,
+                                          width: Float(width), height: Float(height))
+                command.commit()
+                buffers.append(command)
+            }
+            buffers.last!.waitUntilCompleted()
+            return (buffers.last!.gpuEndTime - buffers.first!.gpuStartTime) * 1000 / Double(count)
         }
-        return times.sorted()[times.count / 2]
+        _ = run(30)
+        return run(frames)
     }
 }
 

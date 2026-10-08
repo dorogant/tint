@@ -39,7 +39,7 @@ struct BeamUniforms {
     var motion: SIMD4<Float>
     /// Drawable width and height, head count, floor beams' intensity.
     var size: SIMD4<Float>
-    /// The floor beams' angle and spread, the haze fill (the mids), a spare.
+    /// The floor beams' angle and spread, the haze fill (the mids), the angle's sine.
     var floor: SIMD4<Float>
     /// The haze's colour, then 1 for a neutral cover.
     var haze: SIMD4<Float>
@@ -47,7 +47,7 @@ struct BeamUniforms {
     var floorColors: (SIMD4<Float>, SIMD4<Float>)
     /// Per head: angle from straight down, intensity, spread, glint.
     var heads: Heads
-    /// Per head: colour.
+    /// Per head: colour, then the sine of its angle.
     var tints: Heads
 }
 
@@ -143,7 +143,7 @@ struct BackgroundAnimator {
         return BeamUniforms(colors: Self.palette(palette),
                             motion: SIMD4(beams.haze, min(1.5, beams.high * configuration.reactivity), beams.flash, configuration.glow),
                             size: SIMD4(width, height, Float(count), beams.floorLevel * (0.75 + 0.5 * beams.kickGlow)),
-                            floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, 0),
+                            floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, sin(beams.floorAngle)),
                             haze: SIMD4(haze, configuration.neutral ? 1 : 0),
                             floorColors: (SIMD4(palette[pair.bass], 0), SIMD4(palette[pair.treble], 0)),
                             heads: (h[0].0, h[1].0, h[2].0, h[3].0, h[4].0, h[5].0, h[6].0, h[7].0),

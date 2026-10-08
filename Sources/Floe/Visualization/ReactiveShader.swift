@@ -124,8 +124,10 @@ enum ReactiveShader {
     /// else stays dark, so only the beams and flares are bright.
     private static let beams = #"""
     // motion: haze clock, glitter (highs), strobe flash, glow. size: width, height, heads, floor level.
-    // floor: floor angle, floor spread, haze fill (mids). haze: haze colour, neutral cover.
-    // heads: angle, intensity, spread, glint. tints: head colours.
+    // floor: floor angle, floor spread, haze fill (mids), sin(floor angle). haze: haze colour, neutral cover.
+    // heads: angle, intensity, spread, glint. tints: head colour, sin(angle). Beams point downward
+    // (|angle| < pi/2), so the cosine is the positive root and nothing takes a sine per pixel.
+    static float2 downward(float s) { return float2(s, -sqrt(max(0.0f, 1 - s * s))); }
     struct BeamUniforms {
         float4 colors[5]; float4 motion; float4 size; float4 floor; float4 haze;
         float4 floorColors[2]; float4 heads[8]; float4 tints[8];
@@ -139,7 +141,7 @@ enum ReactiveShader {
         if (along <= 0 || intensity <= 0.001) return 0;
         float across = dot(v, float2(-dir.y, dir.x));
         float width = 0.006 + along * spread;
-        if (abs(across) > width * 9 + 3 * pixel) return 0; // nothing visible this far out
+        if (abs(across) > width * 6 + 3 * pixel) return 0; // under a thousandth this far out
         float cone = line(across, width * 0.58, pixel) * (0.12 + 0.88 * density) * 0.75;
         float spill = exp(-0.08 * across * across / (width * width)) * 0.05 * glow * density;
         float core = line(across, width * 0.17, pixel) * exp(-along * 1.6) * (1 + 1.2 * glint);
@@ -151,25 +153,38 @@ enum ReactiveShader {
     static float3 flare(float2 p, float2 source, float intensity, float3 color, float glow) {
         float2 d = p - source;
         float r2 = dot(d, d);
+        if (r2 > 0.12) return 0; // the halo is under a thousandth this far out
         float disk = exp(-r2 * 1400);
         float streak = exp(-d.y * d.y * 3500 - abs(d.x) * 9) * 0.3;
         float halo = exp(-r2 * 45) * 0.16;
         return (mix(color, float3(1), 0.75) * (disk * 1.6 + streak) + color * halo) * intensity * (0.6 + 0.4 * glow);
     }
-    fragment float4 floeBeamsFragment(Vertex in [[stage_in]], constant BeamUniforms& u [[buffer(0)]]) {
+    /// Smoke drifting across the stage, and finer wisps in it. It's all soft, so
+    /// it's drawn at a quarter of the resolution and filtered up by the beams pass.
+    fragment float2 floeHazeFragment(Vertex in [[stage_in]], constant BeamUniforms& u [[buffer(0)]]) {
+        float aspect = u.size.x / max(u.size.y, 1.0f);
+        float2 p = float2(in.uv.x * aspect, in.uv.y);
+        float haze = u.motion.x;
+        return float2(fbm(p * float2(1.6, 2.4) + float2(haze * 0.08, -haze * 0.03)),
+                      fbm(p * float2(4.5, 6.5) + float2(-haze * 0.2, haze * 0.07)));
+    }
+    fragment float4 floeBeamsFragment(Vertex in [[stage_in]], constant BeamUniforms& u [[buffer(0)]],
+                                      texture2d<float> hazeMap [[texture(0)]]) {
+        constexpr sampler filtered(filter::linear, address::clamp_to_edge);
         float aspect = u.size.x / max(u.size.y, 1.0f);
         float pixel = 1 / max(u.size.y, 1.0f);
         float2 p = float2(in.uv.x * aspect, in.uv.y);
         float haze = u.motion.x;
         float glow = u.motion.w;
 
-        // Smoke drifts across the stage.
-        float smoke = fbm(p * float2(1.6, 2.4) + float2(haze * 0.08, -haze * 0.03));
-        float wisps = fbm(p * float2(4.5, 6.5) + float2(-haze * 0.2, haze * 0.07));
-        float density = 0.08 + 1.9 * smoke * smoke + 0.45 * wisps * smoke;
+        float2 smokeAndWisps = hazeMap.sample(filtered, float2(in.uv.x, 1 - in.uv.y)).rg; // textures run top-down
+        float smoke = smokeAndWisps.x, wisps = smokeAndWisps.y;
+        float fill = u.floor.z;
+        // Vocals and leads thicken the smoke, so every beam glows fuller through it.
+        float density = (0.08 + 1.9 * smoke * smoke + 0.45 * wisps * smoke) * (1 + 0.5 * fill);
         // Specks of haze that catch the light: the highs make them glitter
         // wherever an inner beam passes.
-        float specks = smoothstep(0.7, 0.95, noise(p * 70 + float2(haze * 0.9, -haze * 1.7))) * u.motion.y;
+        float specks = smoothstep(0.78, 0.97, noise(p * 40 + float2(haze * 0.6, -haze * 1.2))) * u.motion.y;
 
         float3 light = 0;
         int count = int(u.size.z);
@@ -178,16 +193,16 @@ enum ReactiveShader {
             float4 h = u.heads[i];
             float3 color = u.tints[i].rgb;
             float2 source = float2((float(i) + 0.5) / float(count) * aspect, 0.985);
-            float lit = density * (1 + 2.5 * specks * h.w);
-            light += beam(p, source, float2(sin(h.x), -cos(h.x)), h.z, h.y, color, lit, glow, h.w, pixel);
+            float lit = density * (1 + 1.4 * specks * h.w);
+            light += beam(p, source, downward(u.tints[i].w), h.z, h.y, color, lit, glow, h.w, pixel);
             light += flare(p, source, h.y, color, glow);
         }
         float floorLevel = u.size.w;
         if (floorLevel > 0.005) {
-            float a = u.floor.x;
+            float2 rise = -downward(-u.floor.w); // up and in from the left corner
             float3 left = u.floorColors[0].rgb, right = u.floorColors[1].rgb;
-            light += beam(p, float2(0, 0.015), float2(sin(a), cos(a)), u.floor.y, floorLevel, left, density, glow, 0, pixel);
-            light += beam(p, float2(aspect, 0.015), float2(-sin(a), cos(a)), u.floor.y, floorLevel, right, density, glow, 0, pixel);
+            light += beam(p, float2(0, 0.015), rise, u.floor.y, floorLevel, left, density, glow, 0, pixel);
+            light += beam(p, float2(aspect, 0.015), float2(-rise.x, rise.y), u.floor.y, floorLevel, right, density, glow, 0, pixel);
             light += flare(p, float2(0.01, 0.015), floorLevel, left, glow);
             light += flare(p, float2(aspect - 0.01, 0.015), floorLevel, right, glow);
         }
@@ -197,8 +212,8 @@ enum ReactiveShader {
         float neutral = u.haze.w;
         light *= 1 + 0.12 * neutral;
         float3 color = float3(0.01, 0.011, 0.016) + average * smoke * 0.035 * (1 - 0.5 * neutral) + light;
-        // Vocals and leads fill the smoke with the cover's colour.
-        color += u.haze.rgb * (smoke * smoke + 0.15 * wisps) * u.floor.z * 0.07;
+        // Vocals and leads tint the smoke with the cover's colour.
+        color += u.haze.rgb * (smoke * smoke + 0.15 * wisps) * fill * 0.8;
         // The opt-in strobe lights the whole haze, never more than three times a second.
         color += mix(average, float3(1), 0.7) * u.motion.z * (0.25 + 0.2 * density);
         color = 1 - exp(-color * 1.15); // highlights roll off toward white instead of clipping

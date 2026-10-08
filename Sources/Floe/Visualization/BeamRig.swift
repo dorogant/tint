@@ -132,12 +132,12 @@ struct BeamRig {
         follow(&energy, latest.energy, attack: 0.15, release: 0.4)
         // Slow to rise, quick to fall: a held vocal or lead fills the haze, while
         // the brief click of a kick in the mids barely registers.
-        follow(&hazeFill, latest.mid * (0.4 + 0.6 * latest.energy), attack: 0.7, release: 0.25)
+        follow(&hazeFill, latest.mid * (0.6 + 0.4 * latest.energy), attack: 0.7, release: 0.25)
         kickGlow *= expf(-dt / 0.16)
         sparkle *= expf(-dt / 0.07)
         if flashHeld { flashHeld = false } else { flash *= expf(-dt / 0.045) }
 
-        let target = min(1.3, 0.06 + react * (0.12 + 0.55 * latest.energy) * (0.3 + 1.1 * latest.lift))
+        let target = min(1.3, 0.06 + react * (0.15 + 0.55 * latest.energy) * (0.35 + 1.05 * latest.lift))
         follow(&level, target, attack: 0.1, release: 0.5)
         let calm = BeatDetector.smoothstep(0.08, 0.55, latest.energy) * (0.45 + 0.55 * latest.lift)
         follow(&reach, 0.3 + 0.7 * min(1, calm * 1.4), attack: 0.6, release: 1.2)
@@ -167,19 +167,22 @@ struct BeamRig {
         return (first, second)
     }
 
-    /// Each head's angle, intensity, spread and glint, and its colour; unused heads are zero.
+    /// Each head's angle, intensity, spread and glint, and its colour and the
+    /// angle's sine; unused heads are zero.
     func heads(count: Int, palette: [SIMD3<Float>], pair: (bass: Int, treble: Int)) -> [(SIMD4<Float>, SIMD4<Float>)] {
         (0..<Self.maximumHeads).map { i in
             guard i < count else { return (.zero, .zero) }
             let s = Self.position(i, count: count)
             let outer = Self.outer(s), inner = 1 - outer
-            let low = 0.3 + 0.7 * bass + 0.9 * kickGlow
-            let top = 0.3 + 0.7 * high + 0.6 * sparkle
+            let low = 0.4 + 0.7 * bass + 1.3 * kickGlow
+            let top = 0.4 + 0.7 * high + 0.9 * sparkle
             let intensity = level * (outer * low + inner * top)
             let spread = 0.042 * (0.8 + 0.2 * outer) * (1 + outer * (0.35 * bass + 0.5 * kickGlow))
             let glint = inner * min(1.2, 0.4 * high + sparkle)
             let color = palette[pair.treble] + (palette[pair.bass] - palette[pair.treble]) * outer
-            return (SIMD4(aim[i].position + swing[i].position, intensity, spread, glint), SIMD4(color, 0))
+            let angle = aim[i].position + swing[i].position
+            // The sine rides along, so the shader needn't take one per pixel per beam.
+            return (SIMD4(angle, intensity, spread, glint), SIMD4(color, sin(angle)))
         }
     }
 

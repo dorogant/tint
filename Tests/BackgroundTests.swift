@@ -128,7 +128,8 @@ struct BackgroundTests {
             status.backgroundFramesDrawn > beforeResize
         }
         guard let view = metalView(in: host) else { fail("the SwiftUI host must contain its production Metal view") }
-        check(view.drawableSize == BackgroundRenderer.drawableSize(points: CGSize(width: 512, height: 512), scale: window.backingScaleFactor)
+        check(view.drawableSize == BackgroundRenderer.drawableSize(points: CGSize(width: 512, height: 512), scale: window.backingScaleFactor,
+                                                                   kind: settings.backgroundKind)
               && view.drawableSize.width >= 512 && view.drawableSize.width == view.drawableSize.height,
               "the paused resize must use the new aspect ratio, at least a pixel per point (\(view.drawableSize))")
         settle()
@@ -492,6 +493,7 @@ struct BackgroundTests {
             quiet.configure(settings, animated: false)
             play(&quiet, quietFrames)
             let quietFrame = renderer.render(quiet)
+            print(String(format: "Beams %@: quiet passage mean luma %.3f", name, quietFrame.meanLuma))
             check(quietFrame.meanLuma < 0.05, "\(name): Beams must stay dim in a quiet passage (\(quietFrame.meanLuma))")
 
             var animator = BackgroundAnimator()
@@ -763,6 +765,42 @@ struct BackgroundTests {
 
     // MARK: - Cost
 
+    /// The production renderer's own CPU cost while running, over a window-sized
+    /// view: its clock, the motion, encoding and presenting each frame (it's off
+    /// screen, so a 60 Hz timer stands in for the display link). Analysis frames
+    /// arrive at 30 Hz as they do from the worker.
+    static func rendererCost(device: MTLDevice, frames: [SpectrumFrame]) {
+        func cpuSeconds() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        for kind in [VisualSettings.BackgroundKind.beams, .fluid] {
+            let fixture = Fixture(device: device, bounds: CGRect(x: 0, y: 0, width: 1500, height: 950))
+            fixture.view.framebufferOnly = true
+            let configuration = BackgroundConfiguration(kind: kind, colors: Covers.palette(Covers.sunset), beamCount: 8)
+            fixture.renderer.update(running: true, configuration: configuration)
+            pump(for: 0.5)
+            let feed = DispatchSource.makeTimerSource(queue: .main)
+            var next = 0
+            feed.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333))
+            feed.setEventHandler { MainActor.assumeIsolated { fixture.status.frame = frames[next % frames.count]; next += 1 } }
+            feed.resume()
+            let drawn = fixture.status.backgroundFramesDrawn, cpu = cpuSeconds(), start = Date()
+            pump(for: 4)
+            let wall = Date().timeIntervalSince(start)
+            let rate = Double(fixture.status.backgroundFramesDrawn - drawn) / wall
+            print(String(format: "Renderer CPU while running %@ (%dx%d drawable): %.1f%% of a core at %.0f frames/s (%.0f µs a frame, including this test's 30 Hz frame feed)",
+                         kind.rawValue, Int(fixture.view.drawableSize.width), Int(fixture.view.drawableSize.height),
+                         (cpuSeconds() - cpu) / wall * 100, rate, (cpuSeconds() - cpu) / max(1, rate * wall) * 1_000_000))
+            feed.cancel()
+            fixture.renderer.update(running: false, configuration: configuration)
+            fixture.renderer.stop()
+            fixture.window.close()
+            check(fixture.status.backgroundFailure == nil, "the running renderer must not fail")
+        }
+    }
+
     /// GPU time per frame at the sizes the app can draw, and the CPU cost of a
     /// display frame (analysis receive, motion step and uniforms).
     static func performanceReport(device: MTLDevice) {
@@ -774,17 +812,24 @@ struct BackgroundTests {
         var floorOn = beams
         play(&beams, frames) { animator, _, _ in if animator.beams.floorLevel > floorOn.beams.floorLevel { floorOn = animator } }
         play(&fluid, frames)
-        let sizes: [(String, CGSize)] = [
-            ("old 512 px", CGSize(width: 512, height: 324)),
-            ("1200x750 pt window", BackgroundRenderer.drawableSize(points: CGSize(width: 1200, height: 750), scale: 2)),
-            ("1500x950 pt window", BackgroundRenderer.drawableSize(points: CGSize(width: 1500, height: 950), scale: 2)),
-            ("1728x1117 pt full screen", BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2)),
-            ("full Retina 3456x2234", CGSize(width: 3456, height: 2234)),
-        ]
-        for (name, size) in sizes {
+        print("GPU: \(device.name)")
+        rendererCost(device: device, frames: frames)
+        let windows: [(String, CGSize)] = [("1200x750 pt window", CGSize(width: 1200, height: 750)),
+                                           ("1500x950 pt window", CGSize(width: 1500, height: 950)),
+                                           ("1728x1117 pt full screen", CGSize(width: 1728, height: 1117))]
+        var sizes: [(String, CGSize, BackgroundAnimator)] = [("old 512 px, Beams", CGSize(width: 512, height: 324), floorOn),
+                                                             ("old 512 px, Fluid", CGSize(width: 512, height: 324), fluid)]
+        for (name, points) in windows {
+            sizes.append(("\(name), Beams", BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .beams), floorOn))
+            sizes.append(("\(name), Fluid", BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .fluid), fluid))
+        }
+        sizes.append(("full Retina 3456x2234, Beams", CGSize(width: 3456, height: 2234), floorOn))
+        for (name, size, animator) in sizes {
             guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
-            let beamTime = renderer.gpuMilliseconds(floorOn), fluidTime = renderer.gpuMilliseconds(fluid)
-            print(String(format: "GPU per frame, %@ (%dx%d): Beams %.2f ms, Fluid %.2f ms", name, Int(size.width), Int(size.height), beamTime, fluidTime))
+            let time = renderer.gpuMilliseconds(animator)
+            let rate: Double = name.contains("old") ? 30 : (animator.configuration.kind == .beams ? 60 : 30)
+            print(String(format: "GPU per frame, %@ (%dx%d): %.2f ms, %.1f%% of the GPU at %.0f Hz", name, Int(size.width), Int(size.height),
+                         time, time * rate / 10, rate))
         }
         var animator = BackgroundAnimator()
         animator.configure(BackgroundConfiguration(kind: .beams, colors: Covers.palette(Covers.sunset), beamCount: 8), animated: false)
@@ -919,8 +964,7 @@ struct BackgroundTests {
         let renderer: BackgroundRenderer
         private let copyQueue: MTLCommandQueue
 
-        init(device: MTLDevice) {
-            let bounds = CGRect(x: 0, y: 0, width: 512, height: 320)
+        init(device: MTLDevice, bounds: CGRect = CGRect(x: 0, y: 0, width: 512, height: 320)) {
             view = TrackingMetalView(frame: bounds, device: device)
             view.isPaused = true
             view.enableSetNeedsDisplay = false

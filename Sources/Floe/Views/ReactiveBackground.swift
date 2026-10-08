@@ -86,23 +86,29 @@ private final class BackgroundMetalView: MTKView {
 @MainActor
 final class BackgroundRenderer: NSObject, MTKViewDelegate {
     enum Failure: Error { case unavailable }
-    /// One pipeline per kind, both compiled once when the view is made.
+    /// One pipeline per kind (and Beams' haze), all compiled once when the view is made.
     struct Pipelines {
         let fluid: MTLRenderPipelineState
         let beams: MTLRenderPipelineState
+        let haze: MTLRenderPipelineState
     }
-    /// Pixels per frame at most: a large window draws at about one pixel per
-    /// point, a small one at full Retina. The shaders pre-filter every line for
-    /// the pixel size they get, so Core Animation's upscale stays smooth.
-    static let pixelBudget: CGFloat = 1_600_000
+    /// Pixels per frame at most: a large window draws Beams at about one pixel
+    /// per point, a small one at full Retina. The shaders pre-filter every line
+    /// for the pixel size they get, so Core Animation's upscale stays smooth.
+    /// Fluid has no hard edges anywhere, so it gets by with far fewer.
+    static func pixelBudget(_ kind: VisualSettings.BackgroundKind) -> CGFloat {
+        kind == .beams ? 1_600_000 : 600_000
+    }
     /// Frames allowed on the GPU at once while running; paused draws wait for none.
     private static let maximumInFlight = 2
     private weak var view: MTKView?
     private weak var status: VisualizationModel?
     private let commandQueue: MTLCommandQueue
     private let pipelines: Pipelines
+    private let targets: Targets
     private var link: CADisplayLink?
     private var timer: DispatchSourceTimer?
+    private var rate: Float = 60
     private var animator = BackgroundAnimator()
     private var configured = false
     private var previous: CFTimeInterval?
@@ -113,6 +119,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         guard let device = view.device, let queue = device.makeCommandQueue() else { throw Failure.unavailable }
         commandQueue = queue
         pipelines = try Self.makePipelines(device: device, pixelFormat: view.colorPixelFormat)
+        targets = Targets(device: device)
         self.view = view
         self.status = status
         super.init()
@@ -121,37 +128,77 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
 
     static func makePipelines(device: MTLDevice, pixelFormat: MTLPixelFormat) throws -> Pipelines {
         let library = try device.makeLibrary(source: ReactiveShader.source, options: nil)
-        func pipeline(_ fragment: String) throws -> MTLRenderPipelineState {
+        func pipeline(_ fragment: String, _ format: MTLPixelFormat) throws -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
             descriptor.fragmentFunction = library.makeFunction(name: fragment)
-            descriptor.colorAttachments[0].pixelFormat = pixelFormat
+            descriptor.colorAttachments[0].pixelFormat = format
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
-        return Pipelines(fluid: try pipeline("floeFluidFragment"), beams: try pipeline("floeBeamsFragment"))
+        return Pipelines(fluid: try pipeline("floeFluidFragment", pixelFormat), beams: try pipeline("floeBeamsFragment", pixelFormat),
+                         haze: try pipeline("floeHazeFragment", Targets.hazeFormat))
+    }
+
+    /// Scratch textures that follow the drawable's size: Beams' smoke at a quarter
+    /// of its resolution.
+    final class Targets {
+        static let hazeFormat = MTLPixelFormat.rg16Float
+        private let device: MTLDevice
+        private var haze: MTLTexture?
+
+        init(device: MTLDevice) { self.device = device }
+
+        func haze(width: Int, height: Int) -> MTLTexture? {
+            let w = max(1, (width + 3) / 4), h = max(1, (height + 3) / 4)
+            if let haze, haze.width == w, haze.height == h { return haze }
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.hazeFormat, width: w, height: h, mipmapped: false)
+            descriptor.usage = [.renderTarget, .shaderRead]
+            descriptor.storageMode = .private
+            haze = device.makeTexture(descriptor: descriptor)
+            return haze
+        }
     }
 
     /// The pixels to draw for a view of `points` on a display of `scale`.
-    static func drawableSize(points: CGSize, scale: CGFloat) -> CGSize {
+    static func drawableSize(points: CGSize, scale: CGFloat, kind: VisualSettings.BackgroundKind = .beams) -> CGSize {
         let area = max(1, points.width * points.height)
-        let s = min(max(scale, 1), max(0.5, (pixelBudget / area).squareRoot()))
+        let s = min(max(scale, 1), max(0.5, (pixelBudget(kind) / area).squareRoot()))
         return CGSize(width: max(1, (points.width * s).rounded()), height: max(1, (points.height * s).rounded()))
     }
 
-    /// Draws one frame of the animator's current state into an open encoder.
-    static func encode(_ encoder: MTLRenderCommandEncoder, pipelines: Pipelines,
-                       animator: BackgroundAnimator, width: Float, height: Float) {
+    /// Encodes one frame of the animator's current state: Beams first draws its
+    /// smoke small, then the light over it into `pass`.
+    @discardableResult
+    static func encode(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
+                       animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
         switch animator.configuration.kind {
         case .fluid:
             var uniforms = animator.fluidUniforms(width: width, height: height)
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
             encoder.setRenderPipelineState(pipelines.fluid)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<FluidUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
         case .beams:
             var uniforms = animator.beamUniforms(width: width, height: height)
+            guard let haze = targets.haze(width: Int(width), height: Int(height)) else { return false }
+            let smoke = MTLRenderPassDescriptor()
+            smoke.colorAttachments[0].texture = haze
+            smoke.colorAttachments[0].loadAction = .dontCare
+            smoke.colorAttachments[0].storeAction = .store
+            guard let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
+            first.setRenderPipelineState(pipelines.haze)
+            first.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
+            first.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            first.endEncoding()
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
             encoder.setRenderPipelineState(pipelines.beams)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
+            encoder.setFragmentTexture(haze, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
         }
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        return true
     }
 
     func update(running: Bool, configuration: BackgroundConfiguration) {
@@ -165,24 +212,34 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             if changed || needsStaticDraw { redrawIfPaused() }
             return
         }
-        if !isTicking { start() }
+        if !isTicking {
+            start()
+        } else if rate != Self.frameRate(configuration.kind) {
+            stop()
+            start()
+        }
     }
 
     private var isTicking: Bool { link != nil || timer != nil }
 
-    /// Frames come from the display's own clock, so each is shown for exactly
-    /// one refresh and motion doesn't judder against an unrelated timer. A view
-    /// that isn't on screen yet gets a plain 60 Hz timer instead.
+    /// Beams' punches and wobbles need every refresh up to 60 Hz; Fluid only
+    /// drifts and swells, so half that looks the same at half the cost.
+    private static func frameRate(_ kind: VisualSettings.BackgroundKind) -> Float { kind == .beams ? 60 : 30 }
+
+    /// Frames come from the display's own clock, so each is shown for the same
+    /// number of refreshes and motion doesn't judder against an unrelated timer.
+    /// A view that isn't on screen yet gets a plain timer instead.
     private func start() {
         previous = nil
+        rate = Self.frameRate(animator.configuration.kind)
         if let view, view.window?.isVisible == true {
             let link = view.displayLink(target: self, selector: #selector(tick(_:)))
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: rate, preferred: rate)
             link.add(to: .main, forMode: .common)
             self.link = link
         } else {
             let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now(), repeating: .nanoseconds(16_666_667), leeway: .milliseconds(2))
+            timer.schedule(deadline: .now(), repeating: .nanoseconds(Int(1_000_000_000 / rate)), leeway: .milliseconds(2))
             timer.setEventHandler { [weak self] in self?.advance(to: CACurrentMediaTime()) }
             self.timer = timer
             timer.resume()
@@ -228,16 +285,16 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         let limit = isTicking ? Self.maximumInFlight : 1
         guard inFlight < limit, view.bounds.width > 0, view.bounds.height > 0 else { return }
-        let size = Self.drawableSize(points: view.bounds.size, scale: view.window?.backingScaleFactor ?? 2)
+        let size = Self.drawableSize(points: view.bounds.size, scale: view.window?.backingScaleFactor ?? 2,
+                                     kind: animator.configuration.kind)
         if view.drawableSize != size { view.drawableSize = size }
         guard let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let command = commandQueue.makeCommandBuffer(), let encoder = command.makeRenderCommandEncoder(descriptor: pass)
+              let command = commandQueue.makeCommandBuffer(),
+              Self.encode(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator,
+                          width: Float(size.width), height: Float(size.height))
         else { return }
         inFlight += 1
         needsStaticDraw = false
-        Self.encode(encoder, pipelines: pipelines, animator: animator,
-                    width: Float(size.width), height: Float(size.height))
-        encoder.endEncoding()
         command.present(drawable)
         command.addCompletedHandler { [weak self] command in
             let succeeded = command.status == .completed

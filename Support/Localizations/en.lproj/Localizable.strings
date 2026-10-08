@@ -200,3 +200,8 @@
 "Let consecutive tracks play without a gap." = "Let consecutive tracks play without a gap.";
 "320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine." = "320 kbps is Floe's highest streaming quality. Lossless is unavailable in this playback engine.";
 "Changes waiting to apply" = "Changes waiting to apply";
+"Scroll back" = "Scroll back";
+"Scroll forward" = "Scroll forward";
+"Loading" = "Loading";
+"Playing" = "Playing";
+"Account" = "Account";

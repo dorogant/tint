@@ -6,9 +6,10 @@
 #   4. Sign           with the local "Floe Local Signing" certificate if present,
 #                     otherwise ad-hoc (see README: Signing)
 #
-# Usage: scripts/build-app.sh [--debug] [--open]
+# Usage: scripts/build-app.sh [--debug] [--install] [--open]
 #   --debug  Swift debug build (the Rust core is always release)
 #   --open   launch the app when done
+#   --install update ~/Applications/Floe.app and its Desktop shortcut
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,10 +27,12 @@ export MACOSX_DEPLOYMENT_TARGET=26.0
 
 CONFIG=release
 OPEN=0
+INSTALL=0
 for arg in "$@"; do
     case "$arg" in
         --debug) CONFIG=debug ;;
         --open) OPEN=1 ;;
+        --install) INSTALL=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -81,4 +84,8 @@ fi
 codesign --verify --strict "$APP"
 
 printf '\nBuilt %s (%s, %s)\n' "$APP" "$CONFIG" "$(du -sh "$APP" | cut -f1)"
+if [[ $INSTALL == 1 ]]; then
+    "$ROOT/scripts/install-app.sh"
+    APP="$HOME/Applications/$APP_NAME.app"
+fi
 if [[ $OPEN == 1 ]]; then open "$APP"; fi

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Home
@@ -186,9 +187,11 @@ struct SearchView: View {
     }
 }
 
-/// The pill search field from the reference UI.
+/// The pill search field from the reference UI. Choosing Search puts the cursor
+/// here; the accent ring follows focus.
 struct SearchField: View {
     @Environment(\.coverPalette) private var palette
+    @Environment(Navigator.self) private var navigator
     @Bindable var search: SearchModel
     @FocusState private var focused: Bool
 
@@ -202,6 +205,7 @@ struct SearchField: View {
                 Button { search.text = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
                     .foregroundStyle(Theme.secondary)
+                    .help("Clear")
             }
         }
         .font(.system(size: 13))
@@ -210,7 +214,24 @@ struct SearchField: View {
         .frame(maxWidth: 420)
         .glassControl(in: .capsule)
         .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.6) : .clear))
-        .floeAnimation(value: focused, duration: 0.2)
-        .onAppear { focused = true }
+        .floeState(value: focused)
+        .task(id: navigator.searchFocusRequest) { await takeRequestedFocus() }
+    }
+
+    /// Focus set while the field is still being inserted is dropped before its
+    /// text field joins the window, so keep asking for a few frames until it
+    /// sticks. Only explicit requests count: re-renders and Back never steal focus.
+    private func takeRequestedFocus() async {
+        guard navigator.searchFocusRequest != navigator.searchFocusHandled else { return }
+        navigator.searchFocusHandled = navigator.searchFocusRequest
+        if focused {
+            // Asked again while typing (⌘F): select the query, ready to replace.
+            (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
+            return
+        }
+        for _ in 0..<12 where !Task.isCancelled && !focused {
+            focused = true
+            try? await Task.sleep(for: .milliseconds(16))
+        }
     }
 }

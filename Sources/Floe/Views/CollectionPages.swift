@@ -47,6 +47,15 @@ struct ListTools: View {
     }
 }
 
+/// Sorting and filtering need every page. Another request may be fetching
+/// one; yield instead of spinning on the main actor and keeping it from finishing.
+@MainActor
+private func loadEveryPage(more: () -> Bool, busy: () -> Bool, next: () async -> Void) async {
+    while more(), !Task.isCancelled {
+        if busy() { try? await Task.sleep(for: .milliseconds(50)) } else { await next() }
+    }
+}
+
 extension [TrackEntry] {
     func filtered(_ text: String) -> [TrackEntry] {
         let query = text.trimmingCharacters(in: .whitespaces)
@@ -188,18 +197,9 @@ struct PlaylistView: View {
         }
     }
 
-    /// Sorting and filtering need every page.
     private func loadAll() async {
         guard sort != .custom || !filter.isEmpty else { return }
-        while nextOffset != nil, error == nil, !Task.isCancelled {
-            // Another request may be fetching a page. Yield instead of spinning
-            // on the main actor and preventing that request from completing.
-            if loadingPage {
-                try? await Task.sleep(for: .milliseconds(50))
-            } else {
-                await loadNextPage()
-            }
-        }
+        await loadEveryPage(more: { nextOffset != nil && error == nil }, busy: { loadingPage }, next: loadNextPage)
     }
 
     private func play(_ entry: TrackEntry) {
@@ -401,15 +401,7 @@ struct SongsView: View {
 
     private func loadAll() async {
         guard sort != .custom || !filter.isEmpty else { return }
-        while nextOffset != nil, error == nil, !Task.isCancelled {
-            // Another request may be fetching a page. Yield instead of spinning
-            // on the main actor and preventing that request from completing.
-            if loadingPage {
-                try? await Task.sleep(for: .milliseconds(50))
-            } else {
-                await loadNextPage()
-            }
-        }
+        await loadEveryPage(more: { nextOffset != nil && error == nil }, busy: { loadingPage }, next: loadNextPage)
     }
 
     private func play(_ entry: TrackEntry) {

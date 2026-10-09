@@ -67,7 +67,7 @@ struct MiniPlayerView: View {
 
     private func details(_ track: TrackInfo) -> some View {
         HStack(spacing: 8) {
-            TitleLink(text: track.name) { openAlbum(track) }
+            TitleLink(text: track.name) { navigator.openAlbum(of: track, api: library.api) }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
@@ -113,7 +113,7 @@ struct MiniPlayerView: View {
 
     @ViewBuilder
     private func trackItems(_ track: TrackInfo) -> some View {
-        Button("Go to Album") { openAlbum(track) }
+        Button("Go to Album") { navigator.openAlbum(of: track, api: library.api) }
         let artists = track.artists.filter { $0.uri != nil }
         if artists.count == 1, let uri = artists[0].uri {
             Button("Go to Artist") { navigator.open(uri: uri) }
@@ -126,25 +126,12 @@ struct MiniPlayerView: View {
         }
         if track.uri.hasPrefix("spotify:track:"), let id = track.uri.split(separator: ":").last {
             Divider()
-            Button("Copy Song Link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString("https://open.spotify.com/track/\(id)", forType: .string)
-            }
+            CopySongLinkButton(id: String(id))
         }
     }
 
     private func toggleLyrics() {
         navigator.surface = navigator.surface == .lyrics ? .library : .lyrics
-    }
-
-    /// librespot doesn't report the album ID; look it up when asked.
-    private func openAlbum(_ track: TrackInfo) {
-        guard let id = track.uri.split(separator: ":").last.map(String.init) else { return }
-        Task {
-            if let album = try? await library.api.track(id).album {
-                navigator.push(.album(album.id))
-            }
-        }
     }
 }
 

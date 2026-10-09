@@ -152,7 +152,7 @@ private struct TrackTitle: View {
             .lineLimit(1)
             .padding(.top, compact ? 4 : 6)
             if let album = track.album, !album.isEmpty {
-                TitleLink(text: album) { openAlbum() }
+                TitleLink(text: album) { navigator.openAlbum(of: track, api: library.api) }
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
@@ -160,16 +160,6 @@ private struct TrackTitle: View {
             }
         }
         .frame(maxWidth: 520)
-    }
-
-    /// librespot doesn't report the album ID; look it up when asked.
-    private func openAlbum() {
-        guard let id = track.uri.split(separator: ":").last.map(String.init) else { return }
-        Task {
-            if let album = try? await library.api.track(id).album {
-                navigator.push(.album(album.id))
-            }
-        }
     }
 }
 

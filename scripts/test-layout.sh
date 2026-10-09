@@ -2,7 +2,8 @@
 # Offscreen renders of the main window (Home, Search, playlist, artist, album,
 # Liked Songs and the toolbar) with a fixture library: no login, network, audio
 # or visible window. PNGs go to $FLOE_LAYOUT_DIR (default /tmp/tint-layout);
-# FLOE_LAYOUT_ONLY=home,search renders a subset.
+# FLOE_LAYOUT_ONLY=home,search renders a subset; FLOE_LAYOUT_PERF=1 also measures
+# CPU and SwiftUI layouts per second on each surface, paused and playing.
 # Needs the Rust core built (core/target/release), since the visualizer links it.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

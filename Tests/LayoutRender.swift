@@ -9,6 +9,7 @@ struct LayoutRender {
     static let size = CGSize(width: 1710, height: 1000)
 
     static func main() async {
+        setvbuf(stdout, nil, _IOLBF, 0) // line by line, so a log being followed stays current
         let environment = ProcessInfo.processInfo.environment
         let output = URL(fileURLWithPath: environment["FLOE_LAYOUT_DIR"] ?? "/tmp/tint-layout", isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -63,6 +64,9 @@ struct LayoutRender {
         .environment(settings)
         .environment(ConnectModel(api: api))
         .environment(\.coverPalette, CoverPalette.fixed(settings.fixedAccent))
+        // The harness can't activate without taking focus from whatever's in front;
+        // FLOE_LAYOUT_ACTIVE=1 measures as if it were the frontmost app.
+        .transformEnvironment(\.scenePhase) { if environment["FLOE_LAYOUT_ACTIVE"] == "1" { $0 = .active } }
 
         let window = OffscreenWindow(contentRect: NSRect(origin: CGPoint(x: -30_000, y: -30_000), size: size),
                                      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -72,7 +76,7 @@ struct LayoutRender {
         window.toolbarStyle = .unified
         window.title = "Tint"
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: root)
+        let host = CountingHostingView(rootView: root)
         host.sceneBridgingOptions = [.toolbars]
         window.contentView = host
         window.orderFrontRegardless()
@@ -192,9 +196,48 @@ struct LayoutRender {
             guard name != "status-banner" else { continue }
             check(scrollViewsAtRest(window.contentView!), "\(name): pages and shelves rest unscrolled, on the guides")
         }
+        if environment["FLOE_LAYOUT_PERF"] == "1" {
+            await measure(window: window, host: host, player: player, navigator: navigator, playlist: playlist)
+        }
         window.close()
         print(failures == 0 ? "PASS: layout renders written to \(output.path)" : "FAIL: \(failures) check(s)")
         if failures > 0 { exit(1) }
+    }
+
+    /// FLOE_LAYOUT_PERF=1: CPU and SwiftUI window layouts per second on each
+    /// surface, paused and then playing, with effects off. Continuous SwiftUI
+    /// motion shows up as one layout per frame; the progress bars tick once a second.
+    static func measure(window: NSWindow, host: CountingHostingView<some View>, player: PlayerModel,
+                        navigator: Navigator, playlist: Route) async {
+        func cpu() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        window.setContentSize(size)
+        let seconds = Double(ProcessInfo.processInfo.environment["FLOE_LAYOUT_PERF_SECONDS"] ?? "") ?? 4
+        let surfaces: [(String, () -> Void)] = [
+            ("home", { navigator.surface = .library; navigator.select(.home) }),
+            ("playlist", { navigator.select(playlist) }),
+            ("now playing", { navigator.surface = .nowPlaying }),
+            ("lyrics", { navigator.surface = .lyrics }),
+        ]
+        for playing in [false, true] {
+            FloeCore.shared.deliver(playing ? .playing(positionMs: 64_000) : .paused(positionMs: 64_000))
+            for (name, show) in surfaces {
+                show()
+                await settle(window, steps: 15)
+                let before = cpu(), layouts = host.layouts, started = Date()
+                try? await Task.sleep(for: .seconds(seconds))
+                let elapsed = Date().timeIntervalSince(started)
+                print(String(format: "PERF %@, %@: %.2f%% CPU, %.1f window layouts/s", name,
+                             player.isPlaying ? "playing" : "paused", (cpu() - before) / elapsed * 100,
+                             Double(host.layouts - layouts) / elapsed))
+            }
+        }
+        FloeCore.shared.deliver(.paused(positionMs: 64_000))
+        navigator.surface = .library
     }
 
     /// The toolbar's search field (the system's, inside the titlebar).
@@ -277,6 +320,16 @@ struct LayoutRender {
         NSGraphicsContext.restoreGraphicsState()
         try? opaque.representation(using: .png, properties: [:])?.write(to: url)
         print("[layout] \(url.path)")
+    }
+}
+
+/// Counts SwiftUI's passes over the window.
+final class CountingHostingView<Content: View>: NSHostingView<Content> {
+    private(set) var layouts = 0
+
+    override func layout() {
+        layouts += 1
+        super.layout()
     }
 }
 

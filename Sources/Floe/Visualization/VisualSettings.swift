@@ -33,6 +33,17 @@ final class VisualSettings {
     private(set) var backgroundPreset: BackgroundPreset {
         didSet { defaults.set(backgroundPreset.rawValue, forKey: "backgroundPreset") }
     }
+    /// Picks the preset for each song (see `AutoPresetController`). Choosing a
+    /// preset or touching a knob by hand turns it off, so a look the user set
+    /// never changes behind their back on the next song.
+    var autoPreset: Bool {
+        didSet {
+            defaults.set(autoPreset, forKey: "backgroundAutoPreset")
+            if !autoPreset { autoStatus = nil }
+        }
+    }
+    /// What the auto preset chose for this song and why; nil while it's off.
+    var autoStatus: AutoPresetStatus?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var applying = false
 
@@ -64,6 +75,7 @@ final class VisualSettings {
         vividness = clamped("backgroundVividness", Self.vividnessRange, fallback.vividness)
         beamCount = clamped("backgroundBeamCount", Self.beamCountRange, fallback.beamCount)
         strobe = defaults.bool(forKey: "backgroundStrobe")
+        autoPreset = defaults.bool(forKey: "backgroundAutoPreset")
         backgroundPreset = preset
     }
 
@@ -79,8 +91,20 @@ final class VisualSettings {
     }
 
     /// One click per preset, for quick comparisons. Leaving Custom keeps its
-    /// values; choosing Custom again brings them back.
+    /// values; choosing Custom again brings them back. A choice by hand ends
+    /// the auto preset.
     func choose(_ preset: BackgroundPreset) {
+        autoPreset = false
+        apply(preset)
+    }
+
+    /// The auto preset's choice for a song: like `choose`, but stays on auto.
+    /// Never touches the strobe, which no preset turns on.
+    func applyAutomatically(_ preset: BackgroundPreset) {
+        apply(preset)
+    }
+
+    private func apply(_ preset: BackgroundPreset) {
         guard preset != backgroundPreset else { return }
         if backgroundPreset == .custom { defaults.set(backgroundLook.dictionary, forKey: "backgroundCustomLook") }
         let look = preset.look ?? customLook
@@ -97,9 +121,22 @@ final class VisualSettings {
     }
 
     private func edited() {
-        guard !applying, backgroundPreset != .custom else { return }
-        backgroundPreset = .custom
+        guard !applying else { return }
+        if autoPreset { autoPreset = false }
+        if backgroundPreset != .custom { backgroundPreset = .custom }
     }
+}
+
+/// What the auto preset shows under its checkbox.
+enum AutoPresetStatus: Equatable {
+    /// Looking up the genre, or listening to the song.
+    case choosing
+    /// From the artist's Spotify genre (as Spotify spells it).
+    case genre(BackgroundPreset, String)
+    /// From the sound, when Spotify had no genre.
+    case sound(BackgroundPreset)
+    /// No genre, and no analysis to listen with (Reduce Motion): the look stays.
+    case noGenre(BackgroundPreset)
 }
 
 /// Every knob a preset sets. The strobe isn't one: it stays opt-in.

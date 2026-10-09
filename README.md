@@ -288,9 +288,9 @@ stay neutral, dark ones keep their hue and nothing turns green that isn't.
 three sizes and checks alignment guides, scroll resting positions and search focus;
 PNGs go to /tmp/tint-layout.
 
-`scripts/benchmark-lyrics.sh` opens a separate native window with synthetic timed
-lines, measures CPU during steady/changing/paused lyrics, checks line-clock wakeups,
-then closes it. It needs neither Spotify nor saved credentials. An optional first
+`scripts/benchmark-lyrics.sh` renders lyrics offscreen with synthetic timed lines
+(steady, changing, a playing instrumental gap, paused) and measures CPU, window
+layouts and line-clock wakeups; `FLOE_LYRICS_LOOK_DIR=<dir>` saves the gap's look. It needs neither Spotify nor saved credentials. An optional first
 argument selects another `LyricsView.swift` to benchmark against the same fixture.
 The production lyric clock now sleeps until the next line, and stops waking after
 the final line or during pauses. Progress motion also stops while Tint is inactive

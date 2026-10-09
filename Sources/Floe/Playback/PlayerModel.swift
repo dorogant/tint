@@ -126,7 +126,7 @@ final class PlayerModel {
         pendingPlayback = nil
         storedCredentials = nil
         core.logOut()
-        Task.detached { CredentialStore.shared.delete(.playbackSession) }
+        Task.detached { CredentialStore.shared.delete(.playbackSession) } // fire-and-forget file I/O, off main
     }
 
     // MARK: - Transport

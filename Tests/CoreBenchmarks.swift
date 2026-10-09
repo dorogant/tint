@@ -111,6 +111,11 @@ struct CoreBenchmarks {
         print(String(format: "BENCH cover appearance: %.2f ms per song (median of 12, decode excluded); "
                      + "invalidations per song: image %.1f, background %.1f, palette %.1f", median(loads),
                      Double(counts.image) / 12, Double(counts.background) / 12, Double(counts.palette) / 12))
+        // Compare revisions' output: the backdrop's pixels and the palette.
+        if let backdrop = appearance.background, let bytes = backdrop.dataProvider?.data as Data? {
+            print("CHECK backdrop \(backdrop.width)x\(backdrop.height) sum \(bytes.reduce(0) { $0 &+ Int($1) })"
+                  + " accent \(appearance.palette.rgb)")
+        }
         var blurOnly: [Double] = []
         var paletteChanges = 0
         for blur in [4.0, 9, 14, 6, 12] {

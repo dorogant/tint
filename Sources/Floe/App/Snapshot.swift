@@ -20,6 +20,7 @@ enum Snapshot {
 
     static func installTrigger() {
         guard isEnabled, token == 0 else { return }
+        // Delivered on the main queue, hence on the main actor.
         notify_register_dispatch("com.antonchurchyn.floe.snapshot", &token, .main) { _ in
             MainActor.assumeIsolated {
                 counter += 1

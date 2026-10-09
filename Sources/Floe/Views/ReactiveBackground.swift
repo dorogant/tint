@@ -15,7 +15,7 @@ struct ReactiveBackground: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> MTKView {
+    func makeNSView(context: Context) -> BackgroundMetalView {
         let view = BackgroundMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.isPaused = true
         view.enableSetNeedsDisplay = false
@@ -38,7 +38,7 @@ struct ReactiveBackground: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: MTKView, context: Context) {
+    func updateNSView(_ view: BackgroundMetalView, context: Context) {
         // The renderer reads each analysis frame itself; observing it here would
         // put the whole window through a SwiftUI update 30 times a second.
         context.coordinator.renderer?.update(running: visualization.isRunning, configuration: configuration)
@@ -52,9 +52,9 @@ struct ReactiveBackground: NSViewRepresentable {
                                 strobe: settings.strobe)
     }
 
-    static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
-        (view as? BackgroundMetalView)?.onResize = nil
-        (view as? BackgroundMetalView)?.onWindowChange = nil
+    static func dismantleNSView(_ view: BackgroundMetalView, coordinator: Coordinator) {
+        view.onResize = nil
+        view.onWindowChange = nil
         coordinator.renderer?.stop()
         coordinator.renderer = nil
         view.delegate = nil
@@ -65,7 +65,7 @@ struct ReactiveBackground: NSViewRepresentable {
 
 /// A paused background still needs one fresh frame when the window is resized,
 /// and a running one follows its window to the display it's on.
-private final class BackgroundMetalView: MTKView {
+final class BackgroundMetalView: MTKView {
     var onResize: (() -> Void)?
     var onWindowChange: (() -> Void)?
     private var lastSize = CGSize.zero

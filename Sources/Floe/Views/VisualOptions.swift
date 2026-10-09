@@ -16,7 +16,7 @@ struct VisualizerOptions: View {
                 Text("Wave").tag(VisualSettings.Shape.wave)
             }.pickerStyle(.segmented)
             SettingsSlider("Sensitivity", value: $settings.sensitivity, range: 0.25...3,
-                           displayedValue: Text("\(Int(settings.sensitivity * 100))%"))
+                           displayedValue: percent(settings.sensitivity))
         }.disabled(!settings.showVisualizer)
     }
 }
@@ -75,8 +75,10 @@ struct BackgroundOptions: View {
         .pickerStyle(.menu)
     }
 
-    private func percent(_ value: Double) -> Text { Text("\(Int((value * 100).rounded()))%") }
 }
+
+/// A slider's value as a whole percentage, rounded (1.149 reads 115%, not 114%).
+private func percent(_ value: Double) -> Text { Text("\(Int((value * 100).rounded()))%") }
 
 struct VisualControls: View {
     var body: some View {

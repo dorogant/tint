@@ -96,10 +96,14 @@ private struct SyncedLyricsView: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(lines) { line in
                         // Decoder rounding can report a position just before the tag when paused.
+                        // Only a gap's "…" cares whether music plays. Equatable rows
+                        // skip their body when nothing they show changed.
                         LyricRow(line: line, distance: distance(of: line), fontSize: fontSize,
-                                 softened: follow && !still, still: still, playing: player.isPlaying, pill: pill) {
+                                 softened: follow && !still, still: still,
+                                 playing: line.text.isEmpty && player.isPlaying, pill: pill) {
                             player.seek(toMs: line.time * 1000 + 50)
                         }
+                        .equatable()
                     }
                 }
                 .scrollTargetLayout()
@@ -172,7 +176,7 @@ private struct SyncedLyricsView: View {
 /// The current line sits on the frosted pill; the rest dim, shrink and soften with distance.
 /// Under the pointer a line previews itself: it sharpens, brightens, grows a
 /// little toward the current line's size and shows the time it seeks to.
-private struct LyricRow: View {
+private struct LyricRow: View, Equatable {
     let line: LyricLine
     /// 0 is the current line, negative already sung, positive upcoming.
     let distance: Int
@@ -184,6 +188,13 @@ private struct LyricRow: View {
     let seek: () -> Void
     @Environment(\.coverPalette) private var palette
     @ViewState private var hovering = false
+
+    /// `seek` is left out: it only ever seeks to `line`, and a closure never
+    /// compares equal, which made every visible row redraw on each line change.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.line == b.line && a.distance == b.distance && a.fontSize == b.fontSize && a.softened == b.softened
+            && a.still == b.still && a.playing == b.playing && a.pill == b.pill
+    }
 
     var body: some View {
         let current = distance == 0

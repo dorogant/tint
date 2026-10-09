@@ -234,6 +234,9 @@ struct LayoutRender {
                 print(String(format: "PERF %@, %@: %.2f%% CPU, %.1f window layouts/s", name,
                              player.isPlaying ? "playing" : "paused", (cpu() - before) / elapsed * 100,
                              Double(host.layouts - layouts) / elapsed))
+                if !player.isPlaying, let root = window.contentView?.superview?.layer {
+                    print("  " + LayerCensus(root).summary)
+                }
             }
         }
         FloeCore.shared.deliver(.paused(positionMs: 64_000))
@@ -320,6 +323,47 @@ struct LayoutRender {
         NSGraphicsContext.restoreGraphicsState()
         try? opaque.representation(using: .png, properties: [:])?.write(to: url)
         print("[layout] \(url.path)")
+    }
+}
+
+/// What the window's layers hold: how many, how much backing store their
+/// contents take (estimated at their scale), and how many need an offscreen
+/// pass (shadows without a path, masks, filters, group opacity).
+struct LayerCensus {
+    var layers = 0, withContents = 0, offscreen = 0
+    var bytes = 0.0
+    var largest: [(String, Double)] = []
+
+    init(_ root: CALayer) {
+        visit(root)
+        largest = Array(largest.sorted { $0.1 > $1.1 }.prefix(5))
+    }
+
+    private mutating func visit(_ layer: CALayer) {
+        layers += 1
+        if layer.contents != nil {
+            withContents += 1
+            let size = layer.bounds.size, scale = layer.contentsScale
+            // An image costs its own pixels however large it's drawn; drawn contents cost the layer's.
+            let image = CFGetTypeID(layer.contents as CFTypeRef) == CGImage.typeID ? (layer.contents as! CGImage) : nil
+            let layerBytes = image.map { Double($0.width * $0.height * 4) }
+                ?? Double(size.width * scale * size.height * scale * 4)
+            bytes += layerBytes
+            let owner = layer.delegate.map { " of \(type(of: $0))" } ?? ""
+            largest.append(("\(type(of: layer))\(owner) \(Int(size.width))x\(Int(size.height))@\(Int(scale))x"
+                            + (image.map { " image \($0.width)x\($0.height)" } ?? ""), layerBytes))
+        }
+        if (layer.shadowOpacity > 0 && layer.shadowPath == nil) || layer.mask != nil
+            || !(layer.filters ?? []).isEmpty || layer.allowsGroupOpacity && layer.opacity < 1 && !(layer.sublayers ?? []).isEmpty {
+            offscreen += 1
+        }
+        layer.sublayers?.forEach { visit($0) }
+    }
+
+    var summary: String {
+        String(format: "layers %d, with contents %d (~%.1f MB), offscreen passes %d; largest: %@", layers,
+               withContents, bytes / 1_048_576, offscreen,
+               largest.map { String(format: "%@ %.1f MB", $0.0, $0.1 / 1_048_576) }.joined(separator: ", "))
     }
 }
 

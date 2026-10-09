@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::analysis::AnalysisTap;
+use crate::{analysis::AnalysisTap, stereo};
 
 use librespot_playback::{
     audio_backend::{Sink, SinkResult},
@@ -66,7 +66,8 @@ pub struct Stats {
     pub buffered_ms: u32,
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+/// Poisoning only means another thread panicked mid-update; the data is still usable.
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -142,8 +143,14 @@ impl Pcm {
     /// the ring (the rest is silence). Never blocks or allocates.
     pub fn render(&self, left: &mut [f32], right: &mut [f32]) -> usize {
         let frames = left.len().min(right.len());
-        left.fill(0.0);
-        right.fill(0.0);
+        let n = self.render_audio(&mut left[..frames], &mut right[..frames]);
+        left[n..].fill(0.0);
+        right[n..].fill(0.0);
+        n
+    }
+
+    /// Fills the first frames from the ring and returns how many; `render` silences the rest.
+    fn render_audio(&self, left: &mut [f32], right: &mut [f32]) -> usize {
         if !self.gate_open.load(Ordering::Acquire) {
             return 0;
         }
@@ -151,6 +158,7 @@ impl Pcm {
         let Ok(mut consumer) = self.consumer.try_lock() else {
             return 0;
         };
+        let frames = left.len();
         let n = (consumer.slots() / CHANNELS).min(frames);
         // Count transitions into starvation, not every empty cycle while a track loads.
         let starved = n < frames;
@@ -163,27 +171,20 @@ impl Pcm {
         let Ok(chunk) = consumer.read_chunk(n * CHANNELS) else {
             return 0;
         };
-        let (a, b) = chunk.as_slices();
-        let mut peak = 0f32;
-        for (i, &s) in a.iter().chain(b).enumerate() {
-            peak = peak.max(s.abs());
-            if i % CHANNELS == 0 {
-                left[i / CHANNELS] = s;
-            } else {
-                right[i / CHANNELS] = s;
-            }
-        }
-        self.analysis.capture(&left[..n], &right[..n]);
+        let (left, right) = (&mut left[..n], &mut right[..n]);
+        stereo::deinterleave(chunk.as_slices(), left, right);
         chunk.commit_all();
+        self.analysis.capture(left, right);
         self.buffered.fetch_sub(n * CHANNELS, Ordering::AcqRel);
         self.frames_rendered.fetch_add(n as u64, Ordering::Relaxed);
         // Non-negative floats order the same as their bit patterns.
+        let peak = stereo::peak(left).max(stereo::peak(right));
         self.peak_bits.fetch_max(peak.to_bits(), Ordering::Relaxed);
         n
     }
 
-    /// Pushes whole frames from `data`; returns how many samples were taken.
-    fn push(&self, data: &[f32]) -> usize {
+    /// Pushes whole frames from `data`, converted to f32; returns how many samples were taken.
+    fn push<T: Copy>(&self, data: &[T], to_f32: impl Fn(T) -> f32) -> usize {
         let mut producer = lock(&self.producer);
         let n = producer.slots().min(data.len()) / CHANNELS * CHANNELS;
         if n == 0 {
@@ -193,8 +194,9 @@ impl Pcm {
             return 0;
         };
         let (a, b) = chunk.as_mut_slices();
-        a.copy_from_slice(&data[..a.len()]);
-        b.copy_from_slice(&data[a.len()..n]);
+        let (first, rest) = data[..n].split_at(a.len());
+        a.iter_mut().zip(first).for_each(|(slot, &s)| *slot = to_f32(s));
+        b.iter_mut().zip(rest).for_each(|(slot, &s)| *slot = to_f32(s));
         // Count before publishing so the consumer side never subtracts first.
         self.buffered.fetch_add(n, Ordering::AcqRel);
         chunk.commit_all();
@@ -230,18 +232,22 @@ impl FloeSink {
         }
     }
 
-    /// Anything still pending from before a flush is stale.
-    fn drop_stale(&mut self) {
+    /// Anything still pending from before a flush is stale. Returns true if it was dropped.
+    fn drop_stale(&mut self) -> bool {
         let epoch = self.pcm.epoch.load(Ordering::Acquire);
-        if epoch != self.epoch {
-            self.epoch = epoch;
-            self.pending.clear();
+        if epoch == self.epoch {
+            return false;
         }
+        self.epoch = epoch;
+        self.pending.clear();
+        true
     }
 }
 
 impl Sink for FloeSink {
-    fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
+    /// Converts straight into the ring; only samples that don't fit are kept
+    /// (as f32) in `pending`, so a steady stream allocates nothing per packet.
+    fn write(&mut self, packet: AudioPacket, _: &mut Converter) -> SinkResult<()> {
         // `Raw` only comes from the passthrough decoder, which we never enable.
         let AudioPacket::Samples(samples) = packet else {
             return Ok(());
@@ -255,30 +261,46 @@ impl Sink for FloeSink {
             thread::sleep(Duration::from_millis(ms as u64));
             return Ok(());
         }
-        self.pending.extend(converter.f64_to_f32(&samples));
+        // librespot's converter casts f64 to f32 without dithering; so does this.
+        let mut fresh = &samples[..];
         loop {
-            self.drop_stale();
-            if self.pcm.switching.load(Ordering::Acquire) {
+            if self.drop_stale() || self.pcm.switching.load(Ordering::Acquire) {
                 self.pending.clear();
                 return Ok(());
             }
-            let taken = self.pcm.push(&self.pending);
-            self.pending.drain(..taken);
+            // Parked samples go first, so the stream stays in order.
+            if !self.pending.is_empty() {
+                let taken = self.pcm.push(&self.pending, |s| s);
+                self.pending.drain(..taken);
+            }
             if self.pending.is_empty() {
-                return Ok(());
+                let taken = self.pcm.push(fresh, |s| s as f32);
+                fresh = &fresh[taken..];
+                if fresh.is_empty() {
+                    return Ok(());
+                }
             }
             // Ring is full. When paused, park the rest and return so the player
             // can process the pause command instead of blocking here.
+            let waiting = self.pending.len() + fresh.len();
             let paused = !self.pcm.gate_open.load(Ordering::Acquire);
-            if paused && self.pending.len() < MAX_PARKED_SAMPLES {
+            if paused && waiting < MAX_PARKED_SAMPLES {
+                self.pending.extend(fresh.iter().map(|&s| s as f32));
                 return Ok(());
             }
-            // Sleep about as long as it takes to drain room for what's pending,
+            // Sleep about as long as it takes to drain room for what's waiting,
             // instead of waking every few ms to push a sliver.
-            let frames = self.pending.len() / CHANNELS;
+            let frames = waiting / CHANNELS;
             let ms = (frames * 1000 / SAMPLE_RATE).clamp(5, 50) as u64;
             thread::sleep(Duration::from_millis(ms));
         }
+    }
+}
+
+#[cfg(test)]
+impl Pcm {
+    pub fn push_f32(&self, data: &[f32]) -> usize {
+        self.push(data, |s| s)
     }
 }
 
@@ -308,15 +330,15 @@ mod tests {
         let mut left = [0.0; 4];
         let mut right = [0.0; 4];
         pcm.set_gate(true);
-        pcm.push(&[0.25; 8]);
+        pcm.push_f32(&[0.25; 8]);
         pcm.begin_switch();
         // Old decoding may continue while the new context is being resolved.
-        pcm.push(&[0.25; 8]);
+        pcm.push_f32(&[0.25; 8]);
         pcm.set_gate(true); // an old position correction must not reopen output
         assert_eq!(pcm.render(&mut left, &mut right), 0);
         assert_eq!(left, [0.0; 4]);
         pcm.track_changed();
-        pcm.push(&[0.75; 8]);
+        pcm.push_f32(&[0.75; 8]);
         pcm.set_gate(true);
         assert_eq!(pcm.render(&mut left, &mut right), 4);
         assert_eq!(left, [0.75; 4]);
@@ -327,7 +349,7 @@ mod tests {
     fn automatic_gapless_switch_keeps_the_buffered_tail() {
         let pcm = Pcm::new();
         pcm.set_gate(true);
-        pcm.push(&[0.25; 8]);
+        pcm.push_f32(&[0.25; 8]);
         pcm.track_changed();
         let mut left = [0.0; 4];
         let mut right = [0.0; 4];
@@ -335,18 +357,50 @@ mod tests {
         assert_eq!(left, [0.25; 4]);
     }
 
+    /// Timing only: `cargo test --release -- --ignored --nocapture bench_`.
+    #[test]
+    #[ignore]
+    fn bench_render_and_sink_write() {
+        const FRAMES: usize = 512;
+        const ROUNDS: usize = 20_000;
+        let pcm = Pcm::new();
+        pcm.set_gate(true);
+        pcm.analysis.set_enabled(true);
+        let mut left = [0.0; FRAMES];
+        let mut right = [0.0; FRAMES];
+        let block: Vec<f32> = (0..FRAMES * CHANNELS).map(|i| (i as f32 * 0.001).sin()).collect();
+        let start = Instant::now();
+        for _ in 0..ROUNDS {
+            pcm.push_f32(&block);
+            std::hint::black_box(pcm.render(&mut left, &mut right));
+        }
+        let render = start.elapsed().as_nanos() as f64 / ROUNDS as f64;
+
+        // librespot hands the sink packets of about 4096 f64 samples.
+        let mut sink = FloeSink::new(pcm.clone());
+        let mut converter = Converter::new(None);
+        let packet: Vec<f64> = (0..4096).map(|i| (i as f64 * 0.001).sin()).collect();
+        let start = Instant::now();
+        for _ in 0..ROUNDS / 4 {
+            sink.write(AudioPacket::Samples(packet.clone()), &mut converter).unwrap();
+            while pcm.render(&mut left, &mut right) > 0 {}
+        }
+        let write = start.elapsed().as_nanos() as f64 / (ROUNDS / 4) as f64;
+        println!("BENCH push+render {FRAMES} frames (tap on): {render:.0} ns; sink write 4096 samples + drain: {write:.0} ns");
+    }
+
     #[test]
     fn skip_marker_does_not_silence_audio_and_expires_without_harming_gapless() {
         let pcm = Pcm::new();
         pcm.set_gate(true);
         pcm.prepare_skip();
-        pcm.push(&[0.25; 8]);
+        pcm.push_f32(&[0.25; 8]);
         let mut left = [0.0; 4];
         let mut right = [0.0; 4];
         assert_eq!(pcm.render(&mut left, &mut right), 4);
         assert_eq!(left, [0.25; 4]);
         *lock(&pcm.skip_requested) = Some(Instant::now() - SKIP_CONFIRMATION_WINDOW - Duration::from_millis(1));
-        pcm.push(&[0.5; 8]);
+        pcm.push_f32(&[0.5; 8]);
         pcm.track_changed();
         assert_eq!(pcm.render(&mut left, &mut right), 4);
         assert_eq!(left, [0.5; 4]);

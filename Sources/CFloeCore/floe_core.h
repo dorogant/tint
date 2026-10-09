@@ -23,7 +23,7 @@ bool floe_init(FloeEventCallback callback, void *_Nullable context);
 /// Spotify's own client ID, which librespot's session login requires. Process lifetime.
 const char *floe_session_client_id(void);
 
-/// Async logins that also start the "Floe" Connect device at `volume` (0…65535).
+/// Async logins that also start the "Tint" Connect device at `volume` (0…65535).
 /// Emit `connecting`, then `credentials` + `connected`, or `login_failed`.
 /// `disconnected` follows later if the session drops.
 void floe_login_token(const char *access_token, uint16_t volume);
@@ -45,7 +45,7 @@ void floe_set_shuffle(bool shuffle);
 /// 0 off, 1 repeat context, 2 repeat track.
 void floe_set_repeat(uint8_t mode);
 void floe_set_volume(uint16_t volume);
-/// Moves playback from the currently active device (e.g. a phone) to Floe.
+/// Moves playback from the currently active device (e.g. a phone) to Tint.
 void floe_transfer(void);
 bool floe_add_to_queue(const char *uri);
 

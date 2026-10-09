@@ -332,6 +332,8 @@ struct LayoutRender {
 /// pass (shadows without a path, masks, filters, group opacity).
 struct LayerCensus {
     var layers = 0, withContents = 0, offscreen = 0
+    /// Offscreen passes by cause: shadow, mask, filter, group opacity.
+    var causes: [String: Int] = [:]
     var bytes = 0.0
     var largest: [(String, Double)] = []
 
@@ -357,9 +359,16 @@ struct LayerCensus {
                             + (image.map { " image \($0.width)x\($0.height)" }
                                ?? " \(contentsKind(layer.contents!))"), layerBytes))
         }
-        if (layer.shadowOpacity > 0 && layer.shadowPath == nil) || layer.mask != nil
-            || !(layer.filters ?? []).isEmpty || layer.allowsGroupOpacity && layer.opacity < 1 && !(layer.sublayers ?? []).isEmpty {
+        let cause = if layer.shadowOpacity > 0 && layer.shadowPath == nil {
+                (layer.shadowColor?.alpha ?? 0) == 0 ? "invisible shadow" : "shadow"
+            }
+            else if layer.mask != nil { "mask" }
+            else if !(layer.filters ?? []).isEmpty { layer.opacity == 0 ? "hidden filter" : "filter" }
+            else if layer.allowsGroupOpacity && layer.opacity < 1 && !(layer.sublayers ?? []).isEmpty { "group opacity" }
+            else { String?.none }
+        if let cause {
             offscreen += 1
+            causes[cause, default: 0] += 1
         }
         layer.sublayers?.forEach { visit($0) }
     }
@@ -371,8 +380,9 @@ struct LayerCensus {
     }
 
     var summary: String {
-        String(format: "layers %d, with contents %d (~%.1f MB), offscreen passes %d; largest: %@", layers,
+        String(format: "layers %d, with contents %d (~%.1f MB), offscreen passes %d (%@); largest: %@", layers,
                withContents, bytes / 1_048_576, offscreen,
+               causes.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", "),
                largest.map { String(format: "%@ %.1f MB", $0.0, $0.1 / 1_048_576) }.joined(separator: ", "))
     }
 }

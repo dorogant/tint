@@ -63,6 +63,9 @@ struct BackgroundAnimator {
     private var from = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
     private var to = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
     private var fade: Float = 1
+    /// The palette as drawn now, eased between the old cover's colours and the new.
+    /// Kept up to date as the crossfade moves, so drawing a frame allocates nothing.
+    private(set) var colors = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
     private(set) var fluid = FluidMotion()
     private(set) var beams = BeamRig()
     static let crossfade: Float = 1.6
@@ -77,12 +80,14 @@ struct BackgroundAnimator {
         from = animated ? colors : target
         to = target
         fade = animated ? 0 : 1
+        blend()
     }
 
     /// Finishes a crossfade at once; true if one was under way.
     mutating func settle() -> Bool {
         guard fade < 1 else { return false }
         fade = 1
+        blend()
         return true
     }
 
@@ -98,7 +103,10 @@ struct BackgroundAnimator {
     /// Moves everything on by `dt` seconds of display time.
     mutating func step(by dt: Float) {
         let dt = min(max(dt, 0), 0.1)
-        fade = min(1, fade + dt / Self.crossfade)
+        if fade < 1 {
+            fade = min(1, fade + dt / Self.crossfade)
+            blend()
+        }
         switch configuration.kind {
         case .fluid: fluid.step(by: dt, pulse: pulse, configuration: configuration)
         case .beams: beams.step(by: dt, configuration: configuration)
@@ -111,14 +119,14 @@ struct BackgroundAnimator {
         step(by: dt)
     }
 
-    /// The palette as drawn now, eased between the old cover's colours and the new.
-    /// Each slot turns at its own moment, so the ink changes colour blob by blob
-    /// instead of every colour passing through grey together.
-    var colors: [SIMD3<Float>] {
-        zip(from, to).enumerated().map { i, pair in
+    /// Updates `colors` for the crossfade's progress. Each slot turns at its own
+    /// moment, so the ink changes colour blob by blob instead of every colour
+    /// passing through grey together.
+    private mutating func blend() {
+        for i in colors.indices {
             let start = Float(i) * 0.12
             let x = min(1, max(0, (fade - start) / 0.52))
-            return pair.0 + (pair.1 - pair.0) * (x * x * (3 - 2 * x))
+            colors[i] = from[i] + (to[i] - from[i]) * (x * x * (3 - 2 * x))
         }
     }
 
@@ -133,7 +141,7 @@ struct BackgroundAnimator {
         let palette = colors
         // Paired from the palette being faded to, so a crossfade can't swap a pair midway.
         let pair = beams.colorPair(to)
-        let h = beams.heads(count: count, palette: palette, pair: pair)
+        let rig = beams.heads(count: count, palette: palette, pair: pair)
         let average = palette.reduce(SIMD3<Float>.zero, +) / Float(palette.count)
         // The vocal colour: the cover's accent, softened toward the whole palette;
         // nearly grey for a neutral cover, so silver light isn't muddied.
@@ -146,8 +154,7 @@ struct BackgroundAnimator {
                             floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, sin(beams.floorAngle)),
                             haze: SIMD4(haze, configuration.neutral ? 1 : 0),
                             floorColors: (SIMD4(palette[pair.bass], 0), SIMD4(palette[pair.treble], 0)),
-                            heads: (h[0].0, h[1].0, h[2].0, h[3].0, h[4].0, h[5].0, h[6].0, h[7].0),
-                            tints: (h[0].1, h[1].1, h[2].1, h[3].1, h[4].1, h[5].1, h[6].1, h[7].1))
+                            heads: rig.heads, tints: rig.tints)
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

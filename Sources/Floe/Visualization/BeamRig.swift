@@ -22,9 +22,10 @@ import simd
 /// the music goes quiet. Nothing moves that the music didn't move.
 struct BeamRig {
     enum Pattern: Int, CaseIterable { case fan, sweep, scissors, converge }
+    /// The uniforms carry one slot per head, eight in all (see `heads`).
     static let maximumHeads = 8
-    /// Strobe flashes stay at three a second or fewer (WCAG 2.3.1).
-    static let flashInterval: Float = 0.34
+    /// Strobe flashes stay at three a second or fewer (WCAG 2.3.1), like beats.
+    static let flashInterval = BeatDetector.minimumInterval
     /// Beats between looks when the tempo is known: eight bars of four.
     static let phrase: Float = 32
     private(set) var pattern = Pattern.fan
@@ -175,9 +176,9 @@ struct BeamRig {
     }
 
     /// Each head's angle, intensity, spread and glint, and its colour and the
-    /// angle's sine; unused heads are zero.
-    func heads(count: Int, palette: [SIMD3<Float>], pair: (bass: Int, treble: Int)) -> [(SIMD4<Float>, SIMD4<Float>)] {
-        (0..<Self.maximumHeads).map { i in
+    /// angle's sine; unused heads are zero. Tuples, as the shader takes them.
+    func heads(count: Int, palette: [SIMD3<Float>], pair: (bass: Int, treble: Int)) -> (heads: Heads, tints: Heads) {
+        func head(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
             guard i < count else { return (.zero, .zero) }
             let s = Self.position(i, count: count)
             let outer = Self.outer(s), inner = 1 - outer
@@ -191,6 +192,9 @@ struct BeamRig {
             // The sine rides along, so the shader needn't take one per pixel per beam.
             return (SIMD4(angle, intensity, spread, glint), SIMD4(color, sin(angle)))
         }
+        let h = (head(0), head(1), head(2), head(3), head(4), head(5), head(6), head(7))
+        return ((h.0.0, h.1.0, h.2.0, h.3.0, h.4.0, h.5.0, h.6.0, h.7.0),
+                (h.0.1, h.1.1, h.2.1, h.3.1, h.4.1, h.5.1, h.6.1, h.7.1))
     }
 
     /// The floor beams lean in from the corners, scissor slowly with the bars and

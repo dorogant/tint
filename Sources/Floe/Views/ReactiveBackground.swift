@@ -140,22 +140,30 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     /// Scratch textures that follow the drawable's size: Beams' smoke at a quarter
-    /// of its resolution.
+    /// of its resolution, with the pass that draws it (made once, not per frame).
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
         private let device: MTLDevice
         private var haze: MTLTexture?
+        private let smoke: MTLRenderPassDescriptor = {
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].loadAction = .dontCare
+            pass.colorAttachments[0].storeAction = .store
+            return pass
+        }()
 
         init(device: MTLDevice) { self.device = device }
 
-        func haze(width: Int, height: Int) -> MTLTexture? {
+        /// The smoke texture for a drawable of this size, and the pass that renders into it.
+        func haze(width: Int, height: Int) -> (texture: MTLTexture, pass: MTLRenderPassDescriptor)? {
             let w = max(1, (width + 3) / 4), h = max(1, (height + 3) / 4)
-            if let haze, haze.width == w, haze.height == h { return haze }
+            if let haze, haze.width == w, haze.height == h { return (haze, smoke) }
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.hazeFormat, width: w, height: h, mipmapped: false)
             descriptor.usage = [.renderTarget, .shaderRead]
             descriptor.storageMode = .private
             haze = device.makeTexture(descriptor: descriptor)
-            return haze
+            smoke.colorAttachments[0].texture = haze
+            return haze.map { ($0, smoke) }
         }
     }
 
@@ -181,12 +189,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             encoder.endEncoding()
         case .beams:
             var uniforms = animator.beamUniforms(width: width, height: height)
-            guard let haze = targets.haze(width: Int(width), height: Int(height)) else { return false }
-            let smoke = MTLRenderPassDescriptor()
-            smoke.colorAttachments[0].texture = haze
-            smoke.colorAttachments[0].loadAction = .dontCare
-            smoke.colorAttachments[0].storeAction = .store
-            guard let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
+            guard let (haze, smoke) = targets.haze(width: Int(width), height: Int(height)),
+                  let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
             first.setRenderPipelineState(pipelines.haze)
             first.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
             first.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)

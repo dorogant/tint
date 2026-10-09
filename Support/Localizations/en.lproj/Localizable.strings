@@ -31,7 +31,6 @@
 "Connected" = "Connected";
 "Connecting to Spotify…" = "Connecting to Spotify…";
 "Copy Song Link" = "Copy Song Link";
-"Copy Spotify Link" = "Copy Spotify Link";
 "Couldn't add this song to the queue." = "Couldn't add this song to the queue.";
 "Couldn't load lyrics. Try again later." = "Couldn't load lyrics. Try again later.";
 "Couldn't start playback. Is Tint connected?" = "Couldn't start playback. Is Tint connected?";
@@ -46,9 +45,7 @@
 "Duration" = "Duration";
 "English" = "English";
 "Find in Liked Songs" = "Find in Liked Songs";
-"Find in album" = "Find in album";
 "Find in playlist" = "Find in playlist";
-"Find in songs" = "Find in songs";
 "Fixed accent" = "Fixed accent";
 "Follow lyrics" = "Follow lyrics";
 "Gapless playback" = "Gapless playback";
@@ -62,12 +59,9 @@
 "Home" = "Home";
 "Instrumental" = "Instrumental";
 "Language" = "Language";
-"Lets Tint read your library, search, and save songs. Uses your developer app's client ID." = "Lets Tint read your library, search, and save songs. Uses your developer app's client ID.";
 "Lets Tint read your playlists, saved music and history through your developer app." = "Lets Tint read your playlists, saved music and history through your developer app.";
 "Lets Tint stream music as a Spotify Connect device." = "Lets Tint stream music as a Spotify Connect device.";
 "Library" = "Library";
-"Like" = "Like";
-"Liked" = "Liked";
 "Liked Songs" = "Liked Songs";
 "Live background" = "Live background";
 "Live background is unavailable on this Mac." = "Live background is unavailable on this Mac.";
@@ -89,7 +83,6 @@
 "Pause" = "Pause";
 "Pick a song to see its lyrics." = "Pick a song to see its lyrics.";
 "Pick something to play" = "Pick something to play";
-"Pin" = "Pin";
 "Pin to Sidebar" = "Pin to Sidebar";
 "Pinned Playlists" = "Pinned Playlists";
 "Play" = "Play";
@@ -152,7 +145,6 @@
 "To change your Mac's audio output, use Control Center." = "To change your Mac's audio output, use Control Center.";
 "Try Again" = "Try Again";
 "Unavailable" = "Unavailable";
-"Unlike" = "Unlike";
 "Unpin" = "Unpin";
 "Up next" = "Up next";
 "Version %@" = "Version %@";
@@ -167,7 +159,6 @@
 "Welcome to Tint" = "Welcome to Tint";
 "Your Spotify library isn't connected." = "Your Spotify library isn't connected.";
 "Your playlists" = "Your playlists";
-"Your queue is empty." = "Your queue is empty.";
 "Your top artists" = "Your top artists";
 "Українська" = "Українська";
 "Mute" = "Mute";

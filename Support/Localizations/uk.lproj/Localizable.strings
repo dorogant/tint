@@ -31,7 +31,6 @@
 "Connected" = "Підключено";
 "Connecting to Spotify…" = "Підключення до Spotify…";
 "Copy Song Link" = "Копіювати посилання на пісню";
-"Copy Spotify Link" = "Копіювати посилання Spotify";
 "Couldn't add this song to the queue." = "Не вдалося додати цю пісню до черги.";
 "Couldn't load lyrics. Try again later." = "Не вдалося завантажити текст. Спробуйте пізніше.";
 "Couldn't start playback. Is Tint connected?" = "Не вдалося почати відтворення. Перевірте підключення Tint.";
@@ -46,9 +45,7 @@
 "Duration" = "Тривалість";
 "English" = "English";
 "Find in Liked Songs" = "Знайти в улюблених піснях";
-"Find in album" = "Знайти в альбомі";
 "Find in playlist" = "Знайти в плейлисті";
-"Find in songs" = "Знайти серед пісень";
 "Fixed accent" = "Фіксований акцент";
 "Follow lyrics" = "Стежити за текстом";
 "Gapless playback" = "Відтворення без пауз";
@@ -62,12 +59,9 @@
 "Home" = "Головна";
 "Instrumental" = "Інструментальна композиція";
 "Language" = "Мова";
-"Lets Tint read your library, search, and save songs. Uses your developer app's client ID." = "Дозволяє Tint читати медіатеку, шукати та зберігати пісні через ваш застосунок розробника.";
 "Lets Tint read your playlists, saved music and history through your developer app." = "Дозволяє Tint читати ваші плейлисти, збережену музику та історію через ваш застосунок розробника.";
 "Lets Tint stream music as a Spotify Connect device." = "Дозволяє Tint відтворювати музику як пристрій Spotify Connect.";
 "Library" = "Медіатека";
-"Like" = "Вподобати";
-"Liked" = "Вподобано";
 "Liked Songs" = "Улюблені пісні";
 "Live background" = "Живе тло";
 "Live background is unavailable on this Mac." = "Живе тло недоступне на цьому Mac.";
@@ -89,7 +83,6 @@
 "Pause" = "Пауза";
 "Pick a song to see its lyrics." = "Виберіть пісню, щоб побачити її текст.";
 "Pick something to play" = "Виберіть, що послухати";
-"Pin" = "Закріпити";
 "Pin to Sidebar" = "Закріпити на бічній панелі";
 "Pinned Playlists" = "Закріплені плейлисти";
 "Play" = "Грати";
@@ -152,7 +145,6 @@
 "To change your Mac's audio output, use Control Center." = "Щоб змінити аудіовихід Mac, скористайтеся Центром керування.";
 "Try Again" = "Спробувати ще раз";
 "Unavailable" = "Недоступно";
-"Unlike" = "Прибрати з улюблених";
 "Unpin" = "Відкріпити";
 "Up next" = "Далі в черзі";
 "Version %@" = "Версія %@";
@@ -167,7 +159,6 @@
 "Welcome to Tint" = "Ласкаво просимо до Tint";
 "Your Spotify library isn't connected." = "Вашу медіатеку Spotify не підключено.";
 "Your playlists" = "Ваші плейлисти";
-"Your queue is empty." = "Ваша черга порожня.";
 "Your top artists" = "Ваші улюблені виконавці";
 "Українська" = "Українська";
 "Mute" = "Вимкнути звук";

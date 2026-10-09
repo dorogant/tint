@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 import SwiftUI
 
 /// Renders the real main window offscreen with a fixture library and writes
@@ -346,18 +347,27 @@ struct LayerCensus {
             let size = layer.bounds.size, scale = layer.contentsScale
             // An image costs its own pixels however large it's drawn; drawn contents cost the layer's.
             let image = CFGetTypeID(layer.contents as CFTypeRef) == CGImage.typeID ? (layer.contents as! CGImage) : nil
+            // SwiftUI's proxy images hide their pixels; they're images too, so don't guess from the layer.
+            let proxy = "\(type(of: layer.contents as AnyObject))".contains("ProxyImage")
             let layerBytes = image.map { Double($0.width * $0.height * 4) }
-                ?? Double(size.width * scale * size.height * scale * 4)
+                ?? (proxy ? 0 : Double(size.width * scale * size.height * scale * 4))
             bytes += layerBytes
             let owner = layer.delegate.map { " of \(type(of: $0))" } ?? ""
             largest.append(("\(type(of: layer))\(owner) \(Int(size.width))x\(Int(size.height))@\(Int(scale))x"
-                            + (image.map { " image \($0.width)x\($0.height)" } ?? ""), layerBytes))
+                            + (image.map { " image \($0.width)x\($0.height)" }
+                               ?? " \(contentsKind(layer.contents!))"), layerBytes))
         }
         if (layer.shadowOpacity > 0 && layer.shadowPath == nil) || layer.mask != nil
             || !(layer.filters ?? []).isEmpty || layer.allowsGroupOpacity && layer.opacity < 1 && !(layer.sublayers ?? []).isEmpty {
             offscreen += 1
         }
         layer.sublayers?.forEach { visit($0) }
+    }
+
+    /// The contents' class, and an IOSurface's real size.
+    private func contentsKind(_ contents: Any) -> String {
+        if let surface = contents as? IOSurface { return "IOSurface \(surface.width)x\(surface.height)" }
+        return String(describing: type(of: contents as AnyObject))
     }
 
     var summary: String {

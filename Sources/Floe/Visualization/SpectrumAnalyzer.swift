@@ -126,9 +126,10 @@ final class SpectrumAnalyzer {
         vDSP_measqv(right, 1, &rightMean, vDSP_Length(Self.size))
         let rms = sqrtf((leftMean + rightMean) * 0.5)
         level += (rms - level) * (rms > level ? 0.8 : 0.18)
-        transform(left)
-        stereoPower = power
-        transform(right)
+        // Each channel's power into its own buffer: sharing one between them
+        // copied it on every frame.
+        transform(left, into: &stereoPower)
+        transform(right, into: &power)
         let scale = powf(2 / Float(Self.size), 2) * 0.5
         for i in power.indices { stereoPower[i] = (stereoPower[i] + power[i]) * scale }
         for (i, range) in ranges.enumerated() {
@@ -175,7 +176,7 @@ final class SpectrumAnalyzer {
         }
     }
 
-    private func transform(_ samples: [Float]) {
+    private func transform(_ samples: [Float], into power: inout [Float]) {
         vDSP_vmul(samples, 1, window, 1, &weighted, 1, vDSP_Length(Self.size))
         real.withUnsafeMutableBufferPointer { re in
             imaginary.withUnsafeMutableBufferPointer { im in

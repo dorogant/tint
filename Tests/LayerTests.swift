@@ -13,12 +13,14 @@ struct LayerTests {
         coverIsUprightAndSwapsWhilePaused()
         visualizerIsUpright()
         haloBackLayerFollowsBass()
+        visualizerDrawsPublishedFramesOnlyWhileRunning()
         beadEchoDoesNotTintTheFront()
         progressFillsOnlyTheElapsedPart()
         progressRecentersAfterHeightOnlyResize()
         progressThickensAndShowsThumbOnlyUnderPointer()
         progressGlidesOnlyWhilePlaying()
-        print("PASS: 10 layer checks (cover orientation, paused swap, ring and bar orientation, halo bass layer, bead overlap, progress fill, resize, hover and glide)")
+        visualizerCost()
+        print("PASS: 11 layer checks (cover orientation, paused swap, ring and bar orientation, halo bass layer, frame delivery, bead overlap, progress fill, resize, hover and glide)")
     }
 
     // MARK: - Checks
@@ -89,6 +91,28 @@ struct LayerTests {
         check(bassHit > 40 && trebleHit == 0, "the halo's outer layer must follow the bass (\(bassHit), \(trebleHit))")
     }
 
+    /// Frames reach a visualizer only while it's running and on screen, and
+    /// each one published then is drawn. (Pixels can't show this: any layout
+    /// pass redraws the current frame, running or not.)
+    static func visualizerDrawsPublishedFramesOnlyWhileRunning() {
+        let model = VisualizationModel()
+        let view = VisualizerLayerView(model: model)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 80), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        view.configure(style: .bars, sensitivity: 1, color: .systemBlue, pale: .white, running: true)
+        check(model.listeners.isEmpty, "a visualizer off screen must not take frames")
+        window.contentView = view
+        check(model.listeners.count == 1, "a running visualizer on screen must take frames")
+        let loud = SpectrumFrame(bands: Array(repeating: 0.9, count: 48), levels: Array(repeating: 0.9, count: 48), rms: 0.3)
+        let drawn = AllocationCounter.allocations { model.publish(loud) }
+        check(drawn > 0, "a published frame must be drawn")
+        view.configure(style: .bars, sensitivity: 1, color: .systemBlue, pale: .white, running: false)
+        check(model.listeners.isEmpty, "a paused visualizer must not take frames")
+        view.configure(style: .bars, sensitivity: 1, color: .systemBlue, pale: .white, running: true)
+        window.contentView = nil
+        check(model.listeners.isEmpty, "a visualizer leaving the window must stop taking frames")
+    }
+
     static func progressFillsOnlyTheElapsedPart() {
         let view = ProgressTrackView()
         let image = render(view, size: CGSize(width: 400, height: 24)) {
@@ -125,7 +149,7 @@ struct LayerTests {
             frontOnly.configure(style: .beads, sensitivity: 1, color: color, pale: .white, running: false)
         }
         let shapes = VisualizerGeometry.beads(size: size, levels: levels.map(CGFloat.init), clock: model.flow)
-        let front = shapes.front.cgPath, back = shapes.echo.cgPath
+        let front = shapes.front, back = shapes.echo
         var overlaps = 0, visibleEcho = 0, tintedOverlaps = 0
         for y in stride(from: 5, to: 79, by: 3) {
             for x in stride(from: 5, to: 595, by: 5) {
@@ -218,6 +242,46 @@ struct LayerTests {
         let gliding = fillEnd(glide: true), landed = fillEnd(glide: false)
         check(landed >= 206 && (201...205).contains(gliding),
               "the playhead must glide while playing and land at once otherwise (\(gliding), \(landed))")
+    }
+
+    // MARK: - Cost
+
+    /// The visualizer's main-thread work per analysis frame (30 a second while
+    /// playing): building each style's outlines and handing them to Core
+    /// Animation, at the sizes Now Playing shows them. Reports time and heap
+    /// allocations per frame.
+    static func visualizerCost() {
+        let model = VisualizationModel()
+        let frames = (0..<16).map { n in
+            let levels = (0..<48).map { i in Float(0.5 + 0.45 * sin(Double(i) * 0.3 + Double(n) * 0.7)) }
+            return SpectrumFrame(bands: levels, levels: levels, rms: 0.3)
+        }
+        let styles: [(VisualizerLayerView.Style, CGSize)] = [(.radialBars, CGSize(width: 480, height: 480)),
+                                                              (.halo, CGSize(width: 480, height: 480)),
+                                                              (.bars, CGSize(width: 640, height: 84)),
+                                                              (.beads, CGSize(width: 640, height: 84))]
+        for (style, size) in styles {
+            let view = VisualizerLayerView(model: model)
+            let count = 600
+            var micros = 0.0, allocations = 0
+            // Measured while hosted and running, so frames arrive as they do in the app.
+            _ = render(view, size: size) {
+                view.configure(style: style, sensitivity: 1.2, color: .systemBlue, pale: .white, running: true)
+                var n = 0
+                @MainActor func next() {
+                    model.publish(frames[n % frames.count])
+                    n += 1
+                }
+                for _ in 0..<60 { next() } // warm up
+                allocations = AllocationCounter.allocations { for _ in 0..<count { next() } }
+                let start = DispatchTime.now().uptimeNanoseconds
+                for _ in 0..<count { next() }
+                micros = Double(DispatchTime.now().uptimeNanoseconds - start) / 1000 / Double(count)
+                view.configure(style: style, sensitivity: 1.2, color: .systemBlue, pale: .white, running: false)
+            }
+            print(String(format: "Visualizer %@ (%dx%d): %.1f µs and %.1f allocations per analysis frame",
+                         "\(style)", Int(size.width), Int(size.height), micros, Double(allocations) / Double(count)))
+        }
     }
 
     /// Optimized builds drop `precondition` messages, so say what failed.

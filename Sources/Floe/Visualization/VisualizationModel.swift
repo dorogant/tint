@@ -3,23 +3,36 @@ import Foundation
 import Observation
 
 /// Publishes compact frames at 30 Hz only when a visible effect needs them.
+///
+/// Only `isRunning` and `backgroundFailure` are observed. Everything that
+/// changes per frame is ignored by Observation, so no SwiftUI view can come to
+/// depend on it and re-render the window 30 times a second; the views that
+/// draw frames take them through `addFrameListener` and `takeFrame` instead.
 @MainActor
 @Observable
 final class VisualizationModel {
     var backgroundFailure: String?
-    var backgroundFramesDrawn: UInt64 = 0
-    private(set) var frame = SpectrumFrame.quiet
     private(set) var isRunning = false
-    private(set) var framesAnalyzed: UInt64 = 0
+    @ObservationIgnored var backgroundFramesDrawn: UInt64 = 0
+    @ObservationIgnored private(set) var frame = SpectrumFrame.quiet
+    @ObservationIgnored private(set) var framesAnalyzed: UInt64 = 0
     /// A clock in seconds that runs faster when the music is louder; drifting
     /// visuals use it so their pace follows the song. Frozen while analysis is off.
-    private(set) var flow: Double = 0
+    @ObservationIgnored private(set) var flow: Double = 0
     @ObservationIgnored private let worker = AnalysisWorker()
     @ObservationIgnored private var generation: UInt64 = 0
     /// The newest frame the live background hasn't taken yet, carrying the hits
-    /// of any frame it missed. Not observed: nothing in SwiftUI may read it.
+    /// of any frame it missed.
     @ObservationIgnored private var unread: SpectrumFrame?
     @ObservationIgnored private var unreadCount = 0
+    @ObservationIgnored private var listeners: [ObjectIdentifier: () -> Void] = [:]
+
+    /// Calls `listener` on the main thread as each analysis frame arrives, so a
+    /// view draws every frame once, in step with the analysis rather than on a
+    /// clock of its own. One listener per owner; `nil` removes it.
+    func setFrameListener(for owner: AnyObject, _ listener: (() -> Void)?) {
+        listeners[ObjectIdentifier(owner)] = listener
+    }
 
     /// For the live background's display link: each analysis frame once, or nil
     /// when nothing new has arrived since the last draw.
@@ -43,6 +56,7 @@ final class VisualizationModel {
                 self.unread = self.unreadCount <= 4 ? self.unread.map { frame.folding(onsetsOf: $0) } ?? frame : frame
                 self.framesAnalyzed += 1
                 self.flow += (0.5 + min(1.5, Double(frame.rms) * 5)) / 30
+                for listener in self.listeners.values { listener() }
             }
         } else {
             worker.stop()
@@ -54,6 +68,8 @@ final class VisualizationModel {
 
 /// All mutable DSP state belongs to this serial queue. The render callback only
 /// writes the independent bounded Rust tap; no timers or FFT touch that callback.
+/// Unchecked because every stored property is read and written only on `queue`
+/// (`start` and `stop` hop onto it, and the timer fires on it).
 private final class AnalysisWorker: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.antonchurchyn.floe.analysis", qos: .utility)
     private var timer: DispatchSourceTimer?

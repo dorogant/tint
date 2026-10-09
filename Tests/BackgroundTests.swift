@@ -989,6 +989,49 @@ struct BackgroundTests {
         }
         let perFrame = Date().timeIntervalSince(start) / Double(frames.count * 2 * 5) * 1_000_000
         print(String(format: "CPU per display frame (motion step + uniforms, Beams with 8 heads): %.1f µs%@", perFrame, sink.isNaN ? "!" : ""))
+        frameAllocations(device: device, frames: frames)
+    }
+
+    /// Heap allocations on the main thread per frame of the paths that run
+    /// while playing: the analyzer (30 Hz, on its own queue in the app), each
+    /// kind's motion and uniforms, and encoding a frame for the GPU (60 Hz).
+    static func frameAllocations(device: MTLDevice, frames: [SpectrumFrame]) {
+        let block = Int(SpectrumAnalyzer.sampleRate / 30)
+        let samples = (0..<block).map { sinf(Float($0) * 0.05) * 0.5 }
+        let analyzer = SpectrumAnalyzer()!
+        for _ in 0..<30 { _ = analyzer.process(left: samples, right: samples, count: block) }
+        var kept = SpectrumFrame.quiet
+        let analysis = AllocationCounter.allocations {
+            for _ in 0..<300 { kept = analyzer.process(left: samples, right: samples, count: block) }
+        }
+        let start = DispatchTime.now().uptimeNanoseconds
+        for _ in 0..<300 { kept = analyzer.process(left: samples, right: samples, count: block) }
+        let analysisMicros = Double(DispatchTime.now().uptimeNanoseconds - start) / 1000 / 300
+        print(String(format: "Analyzer: %.1f µs and %.1f allocations per analysis frame%@", analysisMicros,
+                     Double(analysis) / 300, kept.rms.isNaN ? "!" : ""))
+
+        guard let renderer = try? OffscreenRenderer(device: device, width: 1600, height: 1000) else { return }
+        for kind in [VisualSettings.BackgroundKind.beams, .fluid] {
+            var animator = BackgroundAnimator()
+            animator.configure(BackgroundConfiguration(kind: kind, colors: Covers.palette(Covers.sunset), beamCount: 8), animated: false)
+            // Mid-crossfade, so the palette is blended as it is after a song change.
+            for frame in frames.prefix(60) { animator.advance(by: 1 / 60, frame: frame) }
+            animator.configure(BackgroundConfiguration(kind: kind, colors: Covers.palette(Covers.ocean), beamCount: 8), animated: true)
+            var sink: Float = 0
+            let motion = AllocationCounter.allocations {
+                for frame in frames.prefix(120) {
+                    animator.receive(frame)
+                    for _ in 0..<2 {
+                        animator.step(by: 1 / 60)
+                        sink += kind == .beams ? animator.beamUniforms(width: 1600, height: 1000).heads.0.x
+                                               : animator.fluidUniforms(width: 1600, height: 1000).motion.x
+                    }
+                }
+            }
+            let encoding = AllocationCounter.allocations { renderer.encodeOnly(animator, frames: 60) }
+            print(String(format: "Allocations per display frame, %@: %.1f for motion + uniforms, %.1f encoding the frame%@",
+                         kind.rawValue, Double(motion) / 240, Double(encoding) / 60, sink.isNaN ? "!" : ""))
+        }
     }
 
     /// WCAG 2.3.1: no more than three flashes in any second, over the whole frame

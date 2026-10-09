@@ -32,6 +32,7 @@ struct BackgroundOptions: View {
         Toggle("Live background", isOn: $settings.liveBackground)
         Group {
             presets
+            autoPreset
             Picker("Kind", selection: $settings.backgroundKind) {
                 Text("Fluid").tag(VisualSettings.BackgroundKind.fluid)
                 Text("Beams").tag(VisualSettings.BackgroundKind.beams)
@@ -75,6 +76,34 @@ struct BackgroundOptions: View {
         .pickerStyle(.menu)
     }
 
+    /// Picks the preset per song. Choosing a preset or moving a slider by hand
+    /// unticks it (rather than pausing it for one song), so the checkbox always
+    /// says whether the look will change on the next song.
+    @ViewBuilder private var autoPreset: some View {
+        @Bindable var settings = settings
+        // The caption sits in the toggle's label: under the checkbox's title in
+        // the popover, as the row's subtitle in Settings.
+        Toggle(isOn: $settings.autoPreset) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Auto preset")
+                if settings.autoPreset, let status = settings.autoStatus {
+                    caption(status)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .help("Picks a preset for each song from its genre on Spotify, or from how it sounds. Choosing a preset or moving a slider turns it off.")
+    }
+
+    private func caption(_ status: AutoPresetStatus) -> Text {
+        switch status {
+        case .choosing: Text("Choosing a preset for this song…")
+        case let .genre(preset, genre): Text("\(Text(LocalizedStringKey(preset.title))) · from genre: \(genre)")
+        case let .sound(preset): Text("\(Text(LocalizedStringKey(preset.title))) · from the sound")
+        case let .noGenre(preset): Text("\(Text(LocalizedStringKey(preset.title))) · no genre found")
+        }
+    }
 }
 
 /// A slider's value as a whole percentage, rounded (1.149 reads 115%, not 114%).

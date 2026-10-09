@@ -10,8 +10,9 @@ struct FloeApp: App {
     @ViewState private var navigator = Navigator()
     @ViewState private var search = SearchModel()
     @ViewState private var lyrics = LyricsModel()
-    @ViewState private var visualization = VisualizationModel()
-    @ViewState private var visuals = VisualSettings()
+    @ViewState private var visualization: VisualizationModel
+    @ViewState private var visuals: VisualSettings
+    @ViewState private var autoPreset: AutoPresetController
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -22,7 +23,24 @@ struct FloeApp: App {
         let api = WebAPI(user: UserTokenProvider())
         _library = ViewState(wrappedValue: LibraryModel(api: api))
         _connect = ViewState(wrappedValue: ConnectModel(api: api))
+        let visualization = VisualizationModel(), visuals = VisualSettings(), genres = ArtistGenres(api: api)
+        let autoPreset = AutoPresetController(settings: visuals, genres: { await genres.genres(for: $0) }) {
+            UserDefaults.standard.bool(forKey: "reduceMotion") || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
+        // Listens only while a song still needs its sound classified.
+        autoPreset.setListening = { [weak autoPreset, weak visualization] on in
+            guard let autoPreset, let visualization else { return }
+            visualization.setFrameListener(for: autoPreset, on ? { [weak autoPreset, weak visualization] in
+                if let visualization { autoPreset?.hear(visualization.frame) }
+            } : nil)
+        }
+        _visualization = ViewState(wrappedValue: visualization)
+        _visuals = ViewState(wrappedValue: visuals)
+        _autoPreset = ViewState(wrappedValue: autoPreset)
     }
+
+    /// The auto preset only chooses while there's a live background to show it.
+    private var autoPresetActive: Bool { visuals.autoPreset && visuals.liveBackground }
 
     private var needsAnalysis: Bool {
         player.isPlaying && (scenePhase == .active || SelfTest.isEnabled) && !reduceMotion && !systemReduceMotion
@@ -50,6 +68,9 @@ struct FloeApp: App {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
                 .task(id: player.displayTrack.map(LyricsRequest.init)) { await lyrics.load(player.displayTrack) }
+                .task(id: "\(player.displayTrack?.uri ?? "")#\(autoPresetActive)") {
+                    await autoPreset.update(player.displayTrack.map(AutoPresetController.Song.init), enabled: autoPresetActive)
+                }
                 .task {
                     SpaceToPlay.install(player)
                     Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }

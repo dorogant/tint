@@ -7,8 +7,7 @@ struct RGB: Equatable, Sendable {
     /// of the Blue accent, so nothing borrows a streaming service's green.
     static let fallback = RGB(r: 0.32, g: 0.65, b: 1)
     var luminance: Double {
-        func linear(_ x: Double) -> Double { x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4) }
-        return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        0.2126 * OKLab.linear(r) + 0.7152 * OKLab.linear(g) + 0.0722 * OKLab.linear(b)
     }
     /// Black text has more contrast than white above this luminance (WCAG).
     var usesDarkText: Bool { luminance > 0.179 }

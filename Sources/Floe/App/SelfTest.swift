@@ -470,7 +470,7 @@ enum SelfTest {
         try? await Task.sleep(for: .seconds(1.5))
     }
 
-    /// Holds each visual scenario steady and reports Floe's CPU, frame rates and
+    /// Holds each visual scenario steady and reports Tint's CPU, frame rates and
     /// memory, then compares equalizer shapes on two songs. Brings the window to
     /// the front, since hidden windows barely draw. Restores every preference.
     private static func performance(player: PlayerModel, library: LibraryModel, navigator: Navigator,

@@ -10,7 +10,7 @@ enum SpotifyOAuth {
         let redirectURI: URL
         let scopes: [String]
 
-        /// Floe's own developer app, used for the Web API. The client ID
+        /// Tint's own developer app, used for the Web API. The client ID
         /// is public; PKCE needs no secret. The redirect is registered in that app.
         static let webAPI = Config(
             clientID: "YOUR_SPOTIFY_CLIENT_ID",

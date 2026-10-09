@@ -100,14 +100,18 @@ final class CoverAppearance {
         guard !Task.isCancelled else { return }
         // A blur change reloads the same cover; its colours are already known.
         let known = paletteURL == url ? palette : nil
-        let processed = await Task.detached(priority: .utility) {
-            (small.flatMap { Self.blur($0, radius: blur) }, known ?? small.map(Self.palette) ?? CoverPalette())
-        }.value
+        let processed = await Self.process(small, blur: blur, known: known)
         guard !Task.isCancelled else { return }
-        background = processed.0
+        background = processed.background
         backgroundURL = url
-        palette = processed.1
+        palette = processed.palette
         paletteURL = small == nil ? nil : url
+    }
+
+    /// The backdrop and (unless already known) the colours, off the main actor.
+    @concurrent private nonisolated static func process(_ thumbnail: CGImage?, blur radius: Double,
+                                                       known: CoverPalette?) async -> (background: CGImage?, palette: CoverPalette) {
+        (thumbnail.flatMap { blur($0, radius: radius) }, known ?? thumbnail.map(palette) ?? CoverPalette())
     }
 
     /// The accent and the background's colours, read once per cover off the main thread.

@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// Spotify Web API client, authorised with Floe's own client ID (Development Mode).
+/// Spotify Web API client, authorised with Tint's own client ID (Development Mode).
 final class WebAPI: Sendable {
     enum Failure: LocalizedError {
         case http(status: Int, message: String)

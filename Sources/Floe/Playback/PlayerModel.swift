@@ -3,7 +3,7 @@ import Observation
 import os
 
 /// App-wide playback state: session, current track, transport, shuffle/repeat, volume.
-/// Floe is a Spotify Connect device, so state can also change from other devices.
+/// Tint is a Spotify Connect device, so state can also change from other devices.
 @MainActor
 @Observable
 final class PlayerModel {
@@ -28,7 +28,7 @@ final class PlayerModel {
     private(set) var repeatMode: RepeatMode = .off
     /// Slider position 0…1 (Spotify's volume / 65535).
     private(set) var volume: Double
-    /// The context Floe last started, e.g. `spotify:playlist:…`, for highlighting.
+    /// The context Tint last started, e.g. `spotify:playlist:…`, for highlighting.
     private(set) var contextURI: String?
     private(set) var lastError: String?
     private(set) var activeConfiguration: PlaybackConfiguration?
@@ -89,10 +89,15 @@ final class PlayerModel {
 
     /// Restores the previous session from `CredentialStore`, if there is one.
     func restoreSession() async {
-        let stored = await Task.detached { CredentialStore.shared.read(.playbackSession) }.value
+        let stored = await Self.readStoredSession()
         guard let stored, session == .loggedOut else { return }
         storedCredentials = stored
         startSession(using: stored)
+    }
+
+    /// File I/O, and once a Keychain migration prompt: never on the main actor.
+    @concurrent private nonisolated static func readStoredSession() async -> Data? {
+        CredentialStore.shared.read(.playbackSession)
     }
 
     func logIn() {

@@ -2,7 +2,7 @@ import Foundation
 import os
 import Security
 
-/// Floe's saved Spotify logins: one file per account in
+/// Tint's saved Spotify logins: one file per account in
 /// `~/Library/Application Support/Floe/Credentials` (0700, files 0600, excluded from backups).
 ///
 /// Trade-off: any process running as this user can read these files. Spotify's own
@@ -16,7 +16,7 @@ final class CredentialStore: Sendable {
     enum Account: String, Sendable {
         /// Reusable librespot credentials (JSON).
         case playbackSession = "librespot-session"
-        /// Web API tokens for Floe's own client ID (JSON: access + refresh token).
+        /// Web API tokens for Tint's own client ID (JSON: access + refresh token).
         case webAPI = "web-api"
     }
 
@@ -68,7 +68,7 @@ final class CredentialStore: Sendable {
 
     /// Moves the account's legacy Keychain item into its file on first read. Reading it may
     /// show one last password prompt. Deleting it shouldn't: apps on an item's access list
-    /// may delete it without asking, and Floe's signing certificate keeps it on that list.
+    /// may delete it without asking, and Tint's signing certificate keeps it on that list.
     private func migrate(_ account: Account) -> Data? {
         guard !isRetired(account) else { return nil }
         let data = legacy.read(account)

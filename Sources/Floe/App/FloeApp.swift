@@ -49,7 +49,7 @@ struct FloeApp: App {
                 .task(id: "\(player.displayTrack?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
-                .task(id: player.displayTrack) { await lyrics.load(player.displayTrack) }
+                .task(id: player.displayTrack.map(LyricsRequest.init)) { await lyrics.load(player.displayTrack) }
                 .task {
                     SpaceToPlay.install(player)
                     Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }
@@ -101,6 +101,19 @@ struct FloeApp: App {
         .defaultSize(width: 820, height: 600)
         .windowResizability(.contentMinSize)
 
+    }
+}
+
+/// What a lyrics lookup depends on. The selected row's metadata hands over to the
+/// engine's when playback starts; extra featured artists or another cover size
+/// there must not restart the lookup (a loading flash and a cancelled request).
+private struct LyricsRequest: Hashable {
+    let uri: String
+    let signature: LyricsService.Signature
+
+    init(_ track: TrackInfo) {
+        uri = track.uri
+        signature = LyricsService.Signature(track)
     }
 }
 

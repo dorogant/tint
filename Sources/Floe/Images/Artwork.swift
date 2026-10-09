@@ -6,13 +6,9 @@ import SwiftUI
 actor ArtworkCache {
     static let shared = ArtworkCache()
 
-    private final class Box {
-        let image: CGImage
-        init(_ image: CGImage) { self.image = image }
-    }
-
-    // NSCache is thread-safe, so synchronous lookups don't need the actor.
-    private nonisolated(unsafe) let memory = NSCache<NSString, Box>()
+    /// Unsafe only to the compiler: NSCache is documented thread-safe but not marked
+    /// Sendable. Synchronous lookups from views skip the actor through it.
+    private nonisolated(unsafe) let memory = NSCache<NSString, CGImage>()
     private var inFlight: [String: Task<CGImage?, Never>] = [:]
     private var downloads: [URL: Task<Data?, Never>] = [:]
     private let session: URLSession
@@ -32,22 +28,22 @@ actor ArtworkCache {
     }
 
     nonisolated func cached(_ url: URL, pixels: Int) -> CGImage? {
-        memory.object(forKey: Self.key(url, pixels))?.image
+        memory.object(forKey: Self.key(url, pixels))
     }
 
     func image(for url: URL, pixels: Int) async -> CGImage? {
         let key = Self.key(url, pixels)
-        if let hit = memory.object(forKey: key) { return hit.image }
+        if let hit = memory.object(forKey: key) { return hit }
         if let running = inFlight[key as String] { return await running.value }
         let task = Task<CGImage?, Never> {
             guard let data = await self.data(for: url) else { return nil }
-            return Self.downsample(data, maxPixels: pixels)
+            return await Self.downsample(data, maxPixels: pixels)
         }
         inFlight[key as String] = task
         let image = await task.value
         inFlight[key as String] = nil
         if let image {
-            memory.setObject(Box(image), forKey: key, cost: image.bytesPerRow * image.height)
+            memory.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
         }
         return image
     }
@@ -72,7 +68,8 @@ actor ArtworkCache {
         "\(url.absoluteString)#\(pixels)" as NSString
     }
 
-    private nonisolated static func downsample(_ data: Data, maxPixels: Int) -> CGImage? {
+    /// Off the actor, so a page of covers decodes in parallel instead of one by one.
+    @concurrent private nonisolated static func downsample(_ data: Data, maxPixels: Int) async -> CGImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
         let options = [

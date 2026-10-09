@@ -1,11 +1,11 @@
-//! Floe core: the C ABI the Swift app links against.
+//! Tint's playback core (`floe_core`): the C ABI the Swift app links against.
 //!
 //! The surface is deliberately small. `Sources/CFloeCore/floe_core.h` declares it
 //! and must stay in sync with the `extern "C"` functions below. Everything that
 //! talks to Spotify runs on a small tokio runtime owned by this crate; results go
 //! back to Swift as JSON events through a single callback.
 //!
-//! Playback runs through librespot's Spirc: Floe is a Spotify Connect device, and
+//! Playback runs through librespot's Spirc: Tint is a Spotify Connect device, and
 //! Spotify's own context logic (playlists, albums, queue, shuffle, repeat,
 //! autoplay) drives the player, exactly as with the official clients.
 
@@ -13,6 +13,7 @@ mod analysis;
 mod events;
 mod fetch;
 mod pcm;
+mod stereo;
 
 use std::{
     ffi::{CStr, CString, c_char, c_void},
@@ -43,7 +44,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{runtime::Runtime, task::JoinHandle};
 
-use crate::pcm::{FloeSink, Pcm};
+use crate::pcm::{FloeSink, Pcm, lock};
 
 /// Receives one JSON event; `json` is only valid during the call.
 pub type EventCallback = extern "C" fn(context: *mut c_void, json: *const c_char);
@@ -88,7 +89,7 @@ impl Core {
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock(&self.state)
     }
 
     fn spirc(&self) -> Option<Arc<Spirc>> {
@@ -151,7 +152,7 @@ impl Core {
     }
 
     fn connect(&'static self, credentials: Credentials, volume: u16) {
-        let settings = *self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        let settings = *lock(&self.settings);
         let generation = self.teardown();
         self.emit(json!({ "type": "connecting" }));
         self.runtime.spawn(async move {
@@ -483,7 +484,7 @@ pub extern "C" fn floe_logout() {
 }
 
 /// Plays a context or track list described by JSON (see `LoadSpec`), making
-/// Floe the active Connect device. Returns false if the JSON is invalid or
+/// Tint the active Connect device. Returns false if the JSON is invalid or
 /// there is no session.
 ///
 /// # Safety
@@ -580,7 +581,7 @@ pub extern "C" fn floe_set_volume(volume: u16) {
     }
 }
 
-/// Moves playback from whichever device is active (e.g. the phone) to Floe.
+/// Moves playback from whichever device is active (e.g. the phone) to Tint.
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_transfer() {
     if let Some(core) = CORE.get() {
@@ -695,7 +696,7 @@ pub unsafe extern "C" fn floe_read_analysis(
 #[unsafe(no_mangle)]
 pub extern "C" fn floe_configure_playback(bitrate: u16, normalization: bool, gapless: bool) {
     if let Some(core) = CORE.get() {
-        *core.settings.lock().unwrap_or_else(|p| p.into_inner()) = PlaybackSettings {
+        *lock(&core.settings) = PlaybackSettings {
             bitrate: if [96, 160, 320].contains(&bitrate) { bitrate } else { 320 },
             normalization,
             gapless,

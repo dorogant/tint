@@ -31,15 +31,18 @@ struct CoverPalette: Equatable {
     var highlight: Color { Color(red: highlightRGB.r, green: highlightRGB.g, blue: highlightRGB.b) }
     var onAccent: Color { rgb.usesDarkText ? .black : .white }
 
+    /// One of Settings' four fixed accents ("blue" for anything unknown). The app
+    /// scene asks on every update, so each is built once (~6 µs of colour maths).
     static func fixed(_ name: String) -> CoverPalette {
-        let rgb: RGB = switch name {
-        case "green": RGB(r: 0.12, g: 0.84, b: 0.38)
-        case "violet": RGB(r: 0.73, g: 0.5, b: 1)
-        case "amber": RGB(r: 1, g: 0.7, b: 0.3)
-        default: .fallback // blue
-        }
-        return CoverPalette(rgb: rgb)
+        fixedPalettes[name] ?? fixedPalettes["blue"]!
     }
+
+    private static let fixedPalettes: [String: CoverPalette] = [
+        "green": CoverPalette(rgb: RGB(r: 0.12, g: 0.84, b: 0.38)),
+        "violet": CoverPalette(rgb: RGB(r: 0.73, g: 0.5, b: 1)),
+        "amber": CoverPalette(rgb: RGB(r: 1, g: 0.7, b: 0.3)),
+        "blue": CoverPalette(rgb: .fallback),
+    ]
 }
 
 private struct CoverPaletteKey: EnvironmentKey {
@@ -97,14 +100,18 @@ final class CoverAppearance {
         guard !Task.isCancelled else { return }
         // A blur change reloads the same cover; its colours are already known.
         let known = paletteURL == url ? palette : nil
-        let processed = await Task.detached(priority: .utility) {
-            (small.flatMap { Self.blur($0, radius: blur) }, known ?? small.map(Self.palette) ?? CoverPalette())
-        }.value
+        let processed = await Self.process(small, blur: blur, known: known)
         guard !Task.isCancelled else { return }
-        background = processed.0
+        background = processed.background
         backgroundURL = url
-        palette = processed.1
+        palette = processed.palette
         paletteURL = small == nil ? nil : url
+    }
+
+    /// The backdrop and (unless already known) the colours, off the main actor.
+    @concurrent private nonisolated static func process(_ thumbnail: CGImage?, blur radius: Double,
+                                                       known: CoverPalette?) async -> (background: CGImage?, palette: CoverPalette) {
+        (thumbnail.flatMap { blur($0, radius: radius) }, known ?? thumbnail.map(palette) ?? CoverPalette())
     }
 
     /// The accent and the background's colours, read once per cover off the main thread.
@@ -112,11 +119,13 @@ final class CoverAppearance {
         CoverColorExtractor.colors(of: image).map(CoverPalette.init) ?? CoverPalette()
     }
 
+    /// The source is only 96 px: a CPU context, no full-window live blur or persistent
+    /// GPU cache. Made once; building a context cost more than the blur itself.
+    private nonisolated static let blurContext = CIContext(options: [.useSoftwareRenderer: true, .cacheIntermediates: false])
+
     private nonisolated static func blur(_ image: CGImage, radius: Double) -> CGImage? {
         let input = CIImage(cgImage: image)
         let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: min(18, max(0, radius))])
-        // The source is only 96 px. No full-window live blur or persistent GPU cache.
-        return CIContext(options: [.useSoftwareRenderer: true, .cacheIntermediates: false])
-            .createCGImage(blurred, from: input.extent)
+        return blurContext.createCGImage(blurred, from: input.extent)
     }
 }

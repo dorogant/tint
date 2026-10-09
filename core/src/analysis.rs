@@ -6,6 +6,8 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
+use crate::{pcm::lock, stereo};
+
 const CAPACITY: usize = 4096 * 2; // 93 ms of stereo PCM, 32 KiB
 
 struct Reader {
@@ -54,17 +56,14 @@ impl AnalysisTap {
             return;
         }
         let Ok(mut chunk) = producer.write_chunk(frames * 2) else { return; };
-        let (a, b) = chunk.as_mut_slices();
-        for (i, sample) in a.iter_mut().chain(b).enumerate() {
-            *sample = if i % 2 == 0 { left[i / 2] } else { right[i / 2] };
-        }
+        stereo::interleave(left, right, chunk.as_mut_slices());
         chunk.commit_all();
     }
 
     /// Analysis queue only. Keep the newest samples, discard stale track/seek data.
     pub fn read_latest(&self, left: &mut [f32], right: &mut [f32]) -> (usize, u64) {
         let generation = self.generation.load(Ordering::Acquire);
-        let mut reader = self.reader.lock().unwrap_or_else(|p| p.into_inner());
+        let mut reader = lock(&self.reader);
         if reader.generation != generation || !self.enabled.load(Ordering::Acquire) {
             let stale = reader.consumer.slots();
             if let Ok(chunk) = reader.consumer.read_chunk(stale) {
@@ -83,14 +82,7 @@ impl AnalysisTap {
         }
         if frames > 0 {
             if let Ok(chunk) = reader.consumer.read_chunk(frames * 2) {
-                let (a, b) = chunk.as_slices();
-                for (i, sample) in a.iter().chain(b).enumerate() {
-                    if i % 2 == 0 {
-                        left[i / 2] = *sample;
-                    } else {
-                        right[i / 2] = *sample;
-                    }
-                }
+                stereo::deinterleave(chunk.as_slices(), left, right);
                 chunk.commit_all();
             }
         }

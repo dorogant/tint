@@ -1,7 +1,7 @@
 import AppKit
 import notify
 
-/// Development aid: renders Floe's own window to PNG, so UI can be checked
+/// Development aid: renders Tint's own window to PNG, so UI can be checked
 /// without Screen Recording permission. Enabled with `-FloeSnapshotDir <dir>`;
 /// `notifyutil -p com.antonchurchyn.floe.snapshot` takes one on demand.
 /// Blur materials render flatter than on screen.
@@ -20,6 +20,7 @@ enum Snapshot {
 
     static func installTrigger() {
         guard isEnabled, token == 0 else { return }
+        // Delivered on the main queue, hence on the main actor.
         notify_register_dispatch("com.antonchurchyn.floe.snapshot", &token, .main) { _ in
             MainActor.assumeIsolated {
                 counter += 1

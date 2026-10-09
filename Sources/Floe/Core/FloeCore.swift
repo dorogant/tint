@@ -75,7 +75,8 @@ final class FloeCore {
     }
 }
 
-/// Called by Rust on a tokio worker thread. Decode there, deliver in order on main.
+/// Called by Rust on a tokio worker thread. Decode there, deliver in order on main:
+/// the main queue keeps FIFO order (a Task per event wouldn't) and runs on the main actor.
 private func floeEventCallback(_ context: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>) {
     let data = Data(bytes: json, count: strlen(json))
     guard let event = CoreEvent(json: data) else { return }

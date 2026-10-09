@@ -3,6 +3,7 @@ import Network
 
 /// One-shot HTTP listener on the loopback interface that catches the OAuth
 /// redirect (`GET <path>?code=…&state=…`) and answers with a small page.
+/// `@unchecked Sendable`: its mutable state is only touched on `queue`.
 final class LoopbackRedirectServer: @unchecked Sendable {
     enum Failure: LocalizedError {
         case portUnavailable(UInt16, String)

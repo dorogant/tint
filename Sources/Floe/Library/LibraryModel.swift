@@ -45,7 +45,7 @@ final class LibraryModel {
         if connection == .connected { await refresh() }
     }
 
-    /// One-time browser consent for Floe's own developer app (the Web API client).
+    /// One-time browser consent for Tint's own developer app (the Web API client).
     func connect() async {
         connection = .connecting
         do {

@@ -395,10 +395,21 @@ been benchmarked. For a diagnostic comparison with upstream buffering, launch wi
 
 Artwork sizes now share one in-flight HTTP download per URL; decoded variants
 remain in the existing bounded cache, and raw bytes are not kept after processing.
-Control Center retains a pending artwork task across metadata updates. Synthetic
-tests verify concurrent sizes, memory hits, failed-request recovery and cancelled
-callers. Sixteen Rust tests cover configuration, analysis, transport events and switch/gapless buffering;
-offline API checks and all 12 synthetic lyric regressions pass.
+Control Center retains a pending artwork task across metadata updates and shows
+the 720 px cover Now Playing already decoded. Covers decode in parallel, off the
+cache's actor. Synthetic tests verify concurrent sizes, memory hits, failed-request
+recovery and cancelled callers. Seventeen Rust tests cover configuration, analysis,
+transport events, stereo copying and switch/gapless buffering; offline API checks
+and all 12 synthetic lyric regressions pass.
+
+`scripts/benchmark-core.sh` times the non-visual hot spots offline: the Rust audio
+path (render callback and sink), decoding a page of covers, the per-song cover work
+(backdrop blur and palette) and core-event decoding. On this M3 (2026-10-09),
+before → after the round-3 refactor: push+render of 512 frames 1270 → 254 ns, a
+4096-sample sink write 6.0 → 1.5 µs with no allocation per packet, 32 covers
+21–50 → 7–11 ms, the cover work 14–16 → 1–3 ms per song (one blur context instead
+of one per song). The audio graph is built on the first play rather than at launch
+(~50 ms of main thread).
 
 ## Layout
 

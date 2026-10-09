@@ -1,6 +1,6 @@
 import Foundation
 
-/// Where Web API access tokens come from: Floe's own client ID via PKCE.
+/// Where Web API access tokens come from: Tint's own client ID via PKCE.
 ///
 /// PLAN.md's fallback ("Path B": tokens from the librespot session) was tried on
 /// 2026-10-08 and doesn't work: keymaster answers 403 "Invalid request", and
@@ -18,7 +18,7 @@ enum TokenError: LocalizedError {
     var errorDescription: String? { L10n.string("Your Spotify library isn't connected.") }
 }
 
-/// PKCE tokens for Floe's own client ID, persisted in `CredentialStore` and refreshed as needed.
+/// PKCE tokens for Tint's own client ID, persisted in `CredentialStore` and refreshed as needed.
 actor UserTokenProvider: TokenProvider {
     private struct Stored: Codable {
         var accessToken: String

@@ -1,6 +1,6 @@
 import Foundation
 
-// Web API objects, decoded with `.convertFromSnakeCase`. Only the fields Floe uses.
+// Web API objects, decoded with `.convertFromSnakeCase`. Only the fields Tint uses.
 // Decoding is lenient: Spotify returns `null` entries in some lists, local files
 // without IDs, and (since 2026) `items`/`item` where older responses said `tracks`/`track`.
 

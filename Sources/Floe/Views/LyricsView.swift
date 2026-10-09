@@ -77,8 +77,7 @@ private struct SyncedLyricsView: View {
     let lines: [LyricLine]
     @Binding var follow: Bool
     @Environment(PlayerModel.self) private var player
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage("reduceMotion") private var reduceMotion = false
+    @ReducedMotion private var still
     @Namespace private var pill
     @ViewState private var active: Int?
     @ViewState private var position = ScrollPosition(idType: Int.self)
@@ -87,7 +86,6 @@ private struct SyncedLyricsView: View {
     private static let lead: TimeInterval = 0.15
     /// The current line rests a little above the middle, leaving room to read ahead.
     private static let anchor = UnitPoint(x: 0.5, y: 0.4)
-    private var still: Bool { reduceMotion || systemReduceMotion }
 
     var body: some View {
         GeometryReader { geometry in

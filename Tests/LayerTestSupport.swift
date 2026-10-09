@@ -9,6 +9,19 @@ import SwiftUI
     var flow = 0.0
     var framesAnalyzed: UInt64 = 1
     var isRunning = false
+    @ObservationIgnored private(set) var listeners: [ObjectIdentifier: () -> Void] = [:]
+
+    func setFrameListener(for owner: AnyObject, _ listener: (() -> Void)?) {
+        listeners[ObjectIdentifier(owner)] = listener
+    }
+
+    /// What the analysis worker does with each frame.
+    func publish(_ frame: SpectrumFrame) {
+        self.frame = frame
+        framesAnalyzed += 1
+        flow += 1.0 / 30
+        for listener in listeners.values { listener() }
+    }
 }
 
 @MainActor @Observable final class VisualSettings {

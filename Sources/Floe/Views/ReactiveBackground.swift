@@ -15,7 +15,7 @@ struct ReactiveBackground: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> MTKView {
+    func makeNSView(context: Context) -> BackgroundMetalView {
         let view = BackgroundMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.isPaused = true
         view.enableSetNeedsDisplay = false
@@ -38,7 +38,7 @@ struct ReactiveBackground: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: MTKView, context: Context) {
+    func updateNSView(_ view: BackgroundMetalView, context: Context) {
         // The renderer reads each analysis frame itself; observing it here would
         // put the whole window through a SwiftUI update 30 times a second.
         context.coordinator.renderer?.update(running: visualization.isRunning, configuration: configuration)
@@ -52,9 +52,9 @@ struct ReactiveBackground: NSViewRepresentable {
                                 strobe: settings.strobe)
     }
 
-    static func dismantleNSView(_ view: MTKView, coordinator: Coordinator) {
-        (view as? BackgroundMetalView)?.onResize = nil
-        (view as? BackgroundMetalView)?.onWindowChange = nil
+    static func dismantleNSView(_ view: BackgroundMetalView, coordinator: Coordinator) {
+        view.onResize = nil
+        view.onWindowChange = nil
         coordinator.renderer?.stop()
         coordinator.renderer = nil
         view.delegate = nil
@@ -65,7 +65,7 @@ struct ReactiveBackground: NSViewRepresentable {
 
 /// A paused background still needs one fresh frame when the window is resized,
 /// and a running one follows its window to the display it's on.
-private final class BackgroundMetalView: MTKView {
+final class BackgroundMetalView: MTKView {
     var onResize: (() -> Void)?
     var onWindowChange: (() -> Void)?
     private var lastSize = CGSize.zero
@@ -140,22 +140,30 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     /// Scratch textures that follow the drawable's size: Beams' smoke at a quarter
-    /// of its resolution.
+    /// of its resolution, with the pass that draws it (made once, not per frame).
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
         private let device: MTLDevice
         private var haze: MTLTexture?
+        private let smoke: MTLRenderPassDescriptor = {
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].loadAction = .dontCare
+            pass.colorAttachments[0].storeAction = .store
+            return pass
+        }()
 
         init(device: MTLDevice) { self.device = device }
 
-        func haze(width: Int, height: Int) -> MTLTexture? {
+        /// The smoke texture for a drawable of this size, and the pass that renders into it.
+        func haze(width: Int, height: Int) -> (texture: MTLTexture, pass: MTLRenderPassDescriptor)? {
             let w = max(1, (width + 3) / 4), h = max(1, (height + 3) / 4)
-            if let haze, haze.width == w, haze.height == h { return haze }
+            if let haze, haze.width == w, haze.height == h { return (haze, smoke) }
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.hazeFormat, width: w, height: h, mipmapped: false)
             descriptor.usage = [.renderTarget, .shaderRead]
             descriptor.storageMode = .private
             haze = device.makeTexture(descriptor: descriptor)
-            return haze
+            smoke.colorAttachments[0].texture = haze
+            return haze.map { ($0, smoke) }
         }
     }
 
@@ -181,12 +189,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             encoder.endEncoding()
         case .beams:
             var uniforms = animator.beamUniforms(width: width, height: height)
-            guard let haze = targets.haze(width: Int(width), height: Int(height)) else { return false }
-            let smoke = MTLRenderPassDescriptor()
-            smoke.colorAttachments[0].texture = haze
-            smoke.colorAttachments[0].loadAction = .dontCare
-            smoke.colorAttachments[0].storeAction = .store
-            guard let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
+            guard let (haze, smoke) = targets.haze(width: Int(width), height: Int(height)),
+                  let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
             first.setRenderPipelineState(pipelines.haze)
             first.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
             first.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)

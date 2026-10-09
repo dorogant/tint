@@ -281,6 +281,24 @@ struct RenderedFrame {
         return RenderedFrame(width: width, height: height, bytes: Array(UnsafeBufferPointer(start: pointer, count: width * height * 4)))
     }
 
+    /// Encodes and commits `frames` frames as the running view does, waiting
+    /// only once at the end: for counting the CPU side of a frame.
+    func encodeOnly(_ animator: BackgroundAnimator, frames: Int) {
+        var last: MTLCommandBuffer?
+        for _ in 0..<frames {
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = texture
+            pass.colorAttachments[0].loadAction = .dontCare
+            pass.colorAttachments[0].storeAction = .store
+            guard let command = queue.makeCommandBuffer() else { return }
+            BackgroundRenderer.encode(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator,
+                                      width: Float(width), height: Float(height))
+            command.commit()
+            last = command
+        }
+        last?.waitUntilCompleted()
+    }
+
     /// GPU time per frame in milliseconds while drawing continuously: frames
     /// submitted back to back (as a running display does, so the GPU is at its
     /// working clock), from the first one's start to the last one's end.

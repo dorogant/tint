@@ -2,11 +2,12 @@ import AppKit
 import SwiftUI
 
 /// The visualizer, drawn by Core Animation: GPU shape layers carry a gradient
-/// fill, a soft glow and a rim, and a 30 Hz timer feeds them each analysis
-/// frame directly. Driving a SwiftUI Canvas instead put the whole window through
-/// a SwiftUI update every frame (~15% CPU). The strokes and ribbons share one look:
-/// rounded, pale at the top and saturated at the bottom, with a faint glow beneath.
-/// The halo is three translucent layers instead, one each for bass, mids and treble.
+/// fill, a soft glow and a rim, and each analysis frame reaches them directly
+/// from the model as it arrives. Driving a SwiftUI Canvas instead put the whole
+/// window through a SwiftUI update every frame (~15% CPU). The strokes and
+/// ribbons share one look: rounded, pale at the top and saturated at the
+/// bottom, with a faint glow beneath. The halo is three translucent layers
+/// instead, one each for bass, mids and treble.
 struct VisualizerView: NSViewRepresentable {
     var circular = false
     @Environment(VisualizationModel.self) private var visualization
@@ -55,10 +56,14 @@ final class VisualizerLayerView: NSView {
     private let tiers = [CAShapeLayer(), CAShapeLayer(), CAShapeLayer()]
     private var style = Style.radialBars
     private var sensitivity: Float = 1
-    private var color = NSColor.white
     private var running = false
-    private var timer: DispatchSourceTimer?
+    private var listening = false
     private var drawnFrame: UInt64?
+    /// This frame's levels, reused so drawing a frame allocates no array.
+    private var levels: [CGFloat] = []
+
+    /// Every layer that fills the view.
+    private var sublayers: [CALayer] { [glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim] + tiers }
 
     init(model: VisualizationModel) {
         self.model = model
@@ -93,7 +98,6 @@ final class VisualizerLayerView: NSView {
     func configure(style: Style, sensitivity: Float, color: NSColor, pale: NSColor, running: Bool) {
         self.style = style
         self.sensitivity = sensitivity
-        self.color = color
         let beads = style == .beads
         // The pale end stays nearly opaque: a translucent pale over the dark
         // backdrop read as khaki on yellows and dusty pink on reds.
@@ -118,6 +122,14 @@ final class VisualizerLayerView: NSView {
             tier.strokeColor = color.withAlphaComponent(0.6).cgColor
             tier.lineWidth = 1.2
         }
+        // The glow beneath: its strength is the style's; bar widths follow the view's size.
+        let glowAlpha: CGFloat = switch style {
+        case .radialBars: 0.14
+        case .bars: 0.1
+        case .halo, .beads: 0.12
+        }
+        glow.strokeColor = color.withAlphaComponent(glowAlpha).cgColor
+        if halo { glow.lineWidth = 10 } else if beads { glow.lineWidth = 6 }
         rim.isHidden = style == .bars || style == .radialBars || halo
         // A crisp edge in the base colour; darkening it toward black turned
         // yellows olive and oranges brown.
@@ -139,7 +151,7 @@ final class VisualizerLayerView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         container.frame = bounds
-        for layer in [glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim] + tiers { layer.frame = bounds }
+        for layer in sublayers { layer.frame = bounds }
         CATransaction.commit()
         drawnFrame = nil
         redraw()
@@ -148,91 +160,76 @@ final class VisualizerLayerView: NSView {
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         let scale = window?.backingScaleFactor ?? 2
-        for layer in [container, glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim] + tiers {
-            layer.contentsScale = scale
-        }
+        container.contentsScale = scale
+        for layer in sublayers { layer.contentsScale = scale }
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        let wanted = running
-        running = false
-        setRunning(wanted)
+        setRunning(running)
     }
 
+    /// Takes each new analysis frame while running and on screen.
     private func setRunning(_ running: Bool) {
-        let active = running && window != nil
         self.running = running
-        guard active != (timer != nil) else { return }
-        if active {
-            let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333), leeway: .milliseconds(4))
-            timer.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.redraw() } }
-            self.timer = timer
-            timer.resume()
-        } else {
-            timer?.cancel()
-            timer = nil
-        }
+        let listen = running && window != nil
+        guard listen != listening else { return }
+        listening = listen
+        model?.setFrameListener(for: self, listen ? { [weak self] in self?.redraw() } : nil)
     }
 
-    /// Redraws only when a new analysis frame has arrived.
-    private func redraw() {
+    /// Draws the model's current frame, unless it's already drawn.
+    func redraw() {
         guard let model, bounds.width > 0, bounds.height > 0, drawnFrame != model.framesAnalyzed else { return }
         drawnFrame = model.framesAnalyzed
         let size = bounds.size
-        let levels = model.frame.levels.map { CGFloat(min(1, max(0, $0 * sensitivity))) }
+        let source = model.frame.levels
+        if levels.count != source.count { levels = Array(repeating: 0, count: source.count) }
+        for i in source.indices { levels[i] = CGFloat(min(1, max(0, source[i] * sensitivity))) }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         switch style {
         case .radialBars:
             let (path, width) = VisualizerGeometry.radialBars(size: size, levels: levels)
-            stroke(path.cgPath, width: width, glowWidth: width * 2.2, glowAlpha: 0.14)
+            stroke(path, width: width, glowWidth: width * 2.2)
         case .bars:
             let (path, width) = VisualizerGeometry.bars(size: size, levels: levels)
-            stroke(path.cgPath, width: width, glowWidth: width * 1.8, glowAlpha: 0.1)
+            stroke(path, width: width, glowWidth: width * 1.8)
         case .halo:
-            let paths = VisualizerGeometry.halo(size: size, levels: levels, clock: model.flow).map(\.cgPath)
-            for (tier, path) in zip(tiers, paths) { tier.path = path }
-            glow.path = paths[0]
-            glow.lineWidth = 10
-            glow.strokeColor = color.withAlphaComponent(0.12).cgColor
+            for (tier, shape) in zip(VisualizerGeometry.Tier.all, tiers) {
+                shape.path = VisualizerGeometry.halo(tier, size: size, levels: levels, clock: model.flow)
+            }
+            glow.path = tiers[0].path
         case .beads:
             let (front, back) = VisualizerGeometry.beads(size: size, levels: levels, clock: model.flow)
-            outline(front.cgPath, glowWidth: 6, glowAlpha: 0.12)
-            echoMask.path = back.cgPath
+            glow.path = front
+            fillMask.path = front
+            rim.path = front
+            echoMask.path = back
             // Exclude the front ribbon in the compositor instead of computing
             // a polygon subtraction on the main thread for every audio frame.
             let exclusion = CGMutablePath()
             exclusion.addRect(CGRect(origin: .zero, size: size))
-            exclusion.addPath(front.cgPath)
+            exclusion.addPath(front)
             echoExclusion.path = exclusion
         }
         CATransaction.commit()
     }
 
-    private func stroke(_ path: CGPath, width: CGFloat, glowWidth: CGFloat, glowAlpha: CGFloat) {
+    private func stroke(_ path: CGPath, width: CGFloat, glowWidth: CGFloat) {
         glow.path = path
         glow.lineWidth = glowWidth
-        glow.strokeColor = color.withAlphaComponent(glowAlpha).cgColor
         fillMask.path = path
         fillMask.lineWidth = width
-    }
-
-    private func outline(_ path: CGPath, glowWidth: CGFloat, glowAlpha: CGFloat) {
-        glow.path = path
-        glow.lineWidth = glowWidth
-        glow.strokeColor = color.withAlphaComponent(glowAlpha).cgColor
-        fillMask.path = path
-        rim.path = path
     }
 }
 
 /// Outlines for each style, top-down in the view's size. Levels are 0…1, one per
-/// analyser band, already adapted to the song.
+/// analyser band, already adapted to the song. Scratch work stays in temporary
+/// buffers, so a frame's only allocations are its paths.
 enum VisualizerGeometry {
     /// Mirrored radial bars around the cover: bass at the top, treble at the bottom.
-    static func radialBars(size: CGSize, levels: [CGFloat]) -> (Path, CGFloat) {
+    static func radialBars(size: CGSize, levels: [CGFloat]) -> (CGPath, CGFloat) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let outer = min(size.width, size.height) / 2
         let count = levels.count * 2
@@ -241,7 +238,7 @@ enum VisualizerGeometry {
         // Round caps stay clear of the cover outline and the view's edge.
         let start = inner + width / 2
         let room = outer - start - width / 2
-        var path = Path()
+        let path = CGMutablePath()
         for i in 0..<count {
             let level = levels[i < levels.count ? i : count - i - 1]
             let angle = (Double(i) + 0.5) / Double(count) * 2 * .pi - .pi / 2
@@ -270,46 +267,48 @@ enum VisualizerGeometry {
         ]
     }
 
-    /// Three filled layers around the cover, back to front: bass, mids and treble.
-    /// Each petal is as tall as its slice of that layer's bands, and each layer
-    /// turns its own way at the music's pace, so the petals drift through each other.
-    static func halo(size: CGSize, levels: [CGFloat], clock: Double) -> [Path] {
+    /// One filled layer around the cover (see `Tier.all`, back to front: bass,
+    /// mids and treble). Each petal is as tall as its slice of that layer's bands,
+    /// and each layer turns its own way at the music's pace, so the petals drift
+    /// through each other.
+    static func halo(_ tier: Tier, size: CGSize, levels: [CGFloat], clock: Double) -> CGPath {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let outer = min(size.width, size.height) / 2
         let cover = outer / VisualizerView.ringScale
         let room = outer - cover - 4
         let samples = 240
-        return Tier.all.map { tier in
-            let range = Int(tier.bands.lowerBound * Double(levels.count))..<Int(tier.bands.upperBound * Double(levels.count))
+        let range = Int(tier.bands.lowerBound * Double(levels.count))..<Int(tier.bands.upperBound * Double(levels.count))
+        let path = CGMutablePath()
+        smoothed(levels[range], groups: tier.petals) { heights in
             // Quiet petals keep a little height, so silence isn't a plain circle.
-            let heights = smoothed(Array(levels[range]), groups: tier.petals).map { 0.12 + 0.88 * $0 }
+            func height(_ k: Int) -> CGFloat { 0.12 + 0.88 * heights[k] }
             let n = Double(tier.petals)
             let turn = clock * tier.spin
-            let points = (0..<samples).map { i in
+            for i in 0..<samples {
                 let angle = Double(i) / Double(samples) * 2 * .pi
                 // Petal centres sit on whole values of `u`; heights blend smoothly between them.
                 let u = (angle / (2 * .pi) * n).truncatingRemainder(dividingBy: n)
                 let k = Int(u), f = u - Double(k), eased = CGFloat(f * f * (3 - 2 * f))
-                let height = heights[k] * (1 - eased) + heights[(k + 1) % tier.petals] * eased
+                let blended = height(k) * (1 - eased) + height((k + 1) % tier.petals) * eased
                 let petal = CGFloat(pow((1 + cos(2 * .pi * u)) / 2, tier.sharpness))
-                let radius = cover + room * (tier.rest + (tier.reach - tier.rest) * height * petal)
-                return point(center, angle + turn - .pi / 2, radius)
+                let radius = cover + room * (tier.rest + (tier.reach - tier.rest) * blended * petal)
+                let p = point(center, angle + turn - .pi / 2, radius)
+                i == 0 ? path.move(to: p) : path.addLine(to: p)
             }
-            var path = Path()
-            path.addLines(points)
-            path.closeSubpath()
-            return path
         }
+        path.closeSubpath()
+        return path
     }
 
     /// The ring unrolled: bass in the middle, mirrored out to treble at both ends.
-    static func bars(size: CGSize, levels: [CGFloat]) -> (Path, CGFloat) {
-        let mirrored = levels.reversed() + levels
-        let step = size.width / CGFloat(mirrored.count)
+    static func bars(size: CGSize, levels: [CGFloat]) -> (CGPath, CGFloat) {
+        let count = levels.count * 2
+        let step = size.width / CGFloat(count)
         let width = max(2, step * 0.5)
         let bottom = size.height - width / 2
-        var path = Path()
-        for (i, level) in mirrored.enumerated() {
+        let path = CGMutablePath()
+        for i in 0..<count {
+            let level = i < levels.count ? levels[levels.count - 1 - i] : levels[i - levels.count]
             let x = (CGFloat(i) + 0.5) * step
             path.move(to: CGPoint(x: x, y: bottom))
             path.addLine(to: CGPoint(x: x, y: bottom - (size.height - width) * (0.04 + 0.96 * level)))
@@ -320,48 +319,65 @@ enum VisualizerGeometry {
     /// A twisted ribbon of beads drifting sideways, bass in the middle. Each bead
     /// takes its height from the spectrum at its own centre, so beads stay round
     /// and swell or shrink as they pass; a dimmer chain shows through the pinches.
-    static func beads(size: CGSize, levels: [CGFloat], clock: Double) -> (front: Path, echo: Path) {
+    static func beads(size: CGSize, levels: [CGFloat], clock: Double) -> (front: CGPath, echo: CGPath) {
         let mid = size.height / 2
-        let half = smoothed(levels, groups: levels.count)
-        let mirrored = half.reversed() + half
         let beads = 12.0
-        func height(at t: Double) -> CGFloat {
-            let x = min(max(t, 0), 1) * Double(mirrored.count - 1)
-            let i = Int(x), f = CGFloat(x - Double(i))
-            let level = mirrored[i] * (1 - f) + mirrored[min(i + 1, mirrored.count - 1)] * f
-            return (mid - 3) * (0.08 + 0.92 * level) * CGFloat(sin(.pi * min(max(t, 0), 1)).squareRoot())
-        }
-        func chain(phase: Double) -> Path {
-            let steps = Int(beads * 24)
-            var path = Path()
-            var top: [CGPoint] = []
-            for i in 0...steps {
-                let t = Double(i) / Double(steps)
-                let angle = .pi * beads * t + phase
-                let center = ((angle / .pi).rounded(.down) + 0.5) * .pi
-                // Beads cut by the strip's edge still close to a point.
-                let edge = CGFloat(min(1, sin(.pi * t) * 4))
-                let swell = height(at: (center - phase) / (.pi * beads)) * CGFloat(abs(sin(angle))) * edge
-                top.append(CGPoint(x: t * size.width, y: mid - swell))
+        let steps = Int(beads * 24)
+        return smoothed(levels[...], groups: levels.count) { half in
+            withUnsafeTemporaryAllocation(of: CGFloat.self, capacity: half.count * 2) { mirrored in
+                for i in half.indices {
+                    mirrored[i] = half[half.count - 1 - i]
+                    mirrored[half.count + i] = half[i]
+                }
+                func height(at t: Double) -> CGFloat {
+                    let x = min(max(t, 0), 1) * Double(mirrored.count - 1)
+                    let i = Int(x), f = CGFloat(x - Double(i))
+                    let level = mirrored[i] * (1 - f) + mirrored[min(i + 1, mirrored.count - 1)] * f
+                    return (mid - 3) * (0.08 + 0.92 * level) * CGFloat(sin(.pi * min(max(t, 0), 1)).squareRoot())
+                }
+                func chain(phase: Double) -> CGPath {
+                    withUnsafeTemporaryAllocation(of: CGPoint.self, capacity: steps + 1) { top in
+                        for i in 0...steps {
+                            let t = Double(i) / Double(steps)
+                            let angle = .pi * beads * t + phase
+                            let center = ((angle / .pi).rounded(.down) + 0.5) * .pi
+                            // Beads cut by the strip's edge still close to a point.
+                            let edge = CGFloat(min(1, sin(.pi * t) * 4))
+                            let swell = height(at: (center - phase) / (.pi * beads)) * CGFloat(abs(sin(angle))) * edge
+                            top[i] = CGPoint(x: t * size.width, y: mid - swell)
+                        }
+                        let path = CGMutablePath()
+                        path.move(to: top[0])
+                        for point in top.dropFirst() { path.addLine(to: point) }
+                        for point in top.reversed() { path.addLine(to: CGPoint(x: point.x, y: 2 * mid - point.y)) }
+                        path.closeSubpath()
+                        return path
+                    }
+                }
+                let phase = clock * 1.1
+                return (chain(phase: phase), chain(phase: phase + .pi / 2))
             }
-            path.move(to: top[0])
-            for point in top.dropFirst() { path.addLine(to: point) }
-            for point in top.reversed() { path.addLine(to: CGPoint(x: point.x, y: 2 * mid - point.y)) }
-            path.closeSubpath()
-            return path
         }
-        let phase = clock * 1.1
-        return (chain(phase: phase), chain(phase: phase + .pi / 2))
     }
 
-    /// Averages neighbouring bands, then blurs once more so outlines get a few broad lobes.
-    private static func smoothed(_ levels: [CGFloat], groups: Int) -> [CGFloat] {
-        let averaged = (0..<groups).map { g in
-            let range = (g * levels.count / groups)..<((g + 1) * levels.count / groups)
-            return levels[range].reduce(0, +) / CGFloat(max(1, range.count))
-        }
-        return averaged.indices.map { i in
-            (averaged[max(0, i - 1)] + 2 * averaged[i] + averaged[min(groups - 1, i + 1)]) / 4
+    /// Averages neighbouring bands into `groups`, then blurs once more so
+    /// outlines get a few broad lobes; `body` reads the result.
+    private static func smoothed<Result>(_ levels: ArraySlice<CGFloat>, groups: Int,
+                                         _ body: (UnsafeMutableBufferPointer<CGFloat>) -> Result) -> Result {
+        withUnsafeTemporaryAllocation(of: CGFloat.self, capacity: groups * 2) { scratch in
+            let averaged = UnsafeMutableBufferPointer(rebasing: scratch[0..<groups])
+            let blurred = UnsafeMutableBufferPointer(rebasing: scratch[groups...])
+            let base = levels.startIndex
+            for g in 0..<groups {
+                let range = (g * levels.count / groups)..<((g + 1) * levels.count / groups)
+                var sum: CGFloat = 0
+                for i in range { sum += levels[base + i] }
+                averaged[g] = sum / CGFloat(max(1, range.count))
+            }
+            for i in 0..<groups {
+                blurred[i] = (averaged[max(0, i - 1)] + 2 * averaged[i] + averaged[min(groups - 1, i + 1)]) / 4
+            }
+            return body(blurred)
         }
     }
 

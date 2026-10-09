@@ -248,9 +248,13 @@ private struct LyricRow: View {
 
     @ViewBuilder private var label: some View {
         if line.text.isEmpty {
-            Image(systemName: "ellipsis")
-                .symbolEffect(.breathe, isActive: distance == 0 && playing && !still)
-                .accessibilityLabel("Instrumental")
+            // AppKit runs the breathing, so a gap doesn't re-lay out the window every
+            // frame. The still SwiftUI symbol only sizes the row, exactly as before;
+            // the row's dimming reaches AppKit through `opacity`, not the foreground style.
+            Image(systemName: "ellipsis").hidden().overlay {
+                LoopingSymbol.instrumental(pointSize: fontSize, running: distance == 0 && playing && !still)
+                    .opacity(opacity)
+            }
         } else {
             Text(line.text)
         }

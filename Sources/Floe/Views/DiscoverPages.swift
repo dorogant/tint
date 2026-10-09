@@ -237,7 +237,7 @@ private struct ShortcutTile: View {
                     HoverPlayButton(diameter: 32, action: play)
                         .transition(HoverPlayButton.transition(still: still))
                 } else if playing {
-                    PlayingSymbol(pointSize: 11, color: palette.highlight, animating: !still)
+                    LoopingSymbol.playing(pointSize: 11, color: palette.highlight, running: !still)
                         .transition(.opacity)
                 }
             }

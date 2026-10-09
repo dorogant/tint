@@ -165,7 +165,7 @@ private struct PlaylistRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if playing {
-                    PlayingSymbol(pointSize: 10, color: palette.highlight, animating: !reduceMotion)
+                    LoopingSymbol.playing(pointSize: 10, color: palette.highlight, running: !reduceMotion)
                         .padding(.trailing, SidebarMetrics.padding)
                         .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
                 }

@@ -241,7 +241,7 @@ struct TrackRow: View {
         if loading {
             ProgressView().controlSize(.mini)
         } else if isCurrent && player.isPlaying {
-            PlayingSymbol(pointSize: 11, color: palette.highlight, animating: !still)
+            LoopingSymbol.playing(pointSize: 11, color: palette.highlight, running: !still)
         } else {
             Text("\(number)")
                 .font(.system(size: 12).monospacedDigit())

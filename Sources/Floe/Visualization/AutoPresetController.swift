@@ -122,7 +122,10 @@ final class AutoPresetController {
     }
 
     private func stopListening() {
-        if case .idle = stage {} else { setListening?(false) }
+        switch stage {
+        case .first, .watching: setListening?(false)
+        case .idle, .done: break
+        }
         stage = .idle
     }
 

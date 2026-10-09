@@ -45,11 +45,11 @@ struct SoundClassifier {
     private static let audible: Float = 0.004
 
     private var frames = 0
-    private var settled = 0
+    private var settled = 0, locked = 0
     private var kicks = 0, snares = 0, hats = 0, kicksOnGrid = 0, kicksTimed = 0
     private var tempo: Float = 0, steadiness: Float = 0
     private var bass: Float = 0, lowMid: Float = 0, high: Float = 0
-    private var dynamics: Float = 0, lastLoudness: Float = -1
+    private var dynamics: Float = 0, lastLoudness: Float = 0
     /// Frames since the last reset, audible or not, for the tempo tracker's warm-up.
     private var sinceReset = 0
 
@@ -60,7 +60,7 @@ struct SoundClassifier {
     var features: Features {
         let seconds = max(Float(frames) / 30, 1 / 30)
         let n = Float(max(frames, 1))
-        return Features(tempo: settled > 0 ? tempo / Float(settled) : 0,
+        return Features(tempo: locked > 0 ? tempo / Float(locked) : 0,
                         steadiness: settled > 0 ? steadiness / Float(settled) : 0,
                         kicks: Float(kicks) / seconds, snares: Float(snares) / seconds, hats: Float(hats) / seconds,
                         onGrid: kicksTimed > 0 ? Float(kicksOnGrid) / Float(kicksTimed) : 0,
@@ -92,11 +92,11 @@ struct SoundClassifier {
         lowMid += l / Float(MusicLayers.lowMidBands.count)
         high += h / Float(MusicLayers.highBands.count)
         let loudness = 20 * log10f(max(frame.rms, 1e-5))
-        if lastLoudness > -1000, frames > 1 { dynamics += min(12, abs(loudness - lastLoudness)) }
+        if frames > 1 { dynamics += min(12, abs(loudness - lastLoudness)) }
         lastLoudness = loudness
         guard sinceReset > Self.settle else { return }
         settled += 1
-        tempo += layers.tempo
+        if layers.tempo > 0 { locked += 1; tempo += layers.tempo }
         steadiness += layers.confidence
         if layers.kick > 0, layers.tempo > 0 {
             kicksTimed += 1
@@ -108,21 +108,23 @@ struct SoundClassifier {
     /// it only has to tell a club groove from a half-time 808 from a guitar band
     /// from a pad, and anything it isn't sure about stays Balanced.
     static func preset(for f: Features) -> BackgroundPreset {
-        let hits = f.kicks + f.snares
-        // No pulse to speak of: pads and drones are Chill, plucked and
-        // played music (strings, piano, a voice) moves more and is Acoustic.
-        if f.steadiness < 0.3 || f.tempo == 0 || f.kicks < 0.4 {
-            if hits < 1.2 { return f.dynamics > 0.6 ? .acoustic : .chill }
-            return .balanced
-        }
-        let fourOnTheFloor = f.kicksPerBeat > 0.75 && f.onGrid > 0.6
-        // Hats on top of a steady kick on every beat, at dance tempo.
+        // How far the bass stands above the highs (in 65 dB units): 808s and
+        // sub bass push it up, cymbals and distorted guitars pull it down.
+        let tilt = f.bass - f.high
+        // No drums (a low note can still read as a kick): pads and drones hold
+        // still and are Chill; plucked and played music moves and is Acoustic.
+        if f.snares + f.hats < 0.5 { return f.dynamics > 0.3 ? .acoustic : .chill }
+        // Drums but no steady grid: sparse, booming 808s are hip-hop.
+        if f.steadiness < 0.3 || f.tempo == 0 { return tilt > 0.45 ? .hipHop : .balanced }
+        // A kick on every beat, on the grid, at dance tempo.
+        let fourOnTheFloor = f.kicksPerBeat > 0.9 && f.onGrid > 0.6
         if fourOnTheFloor, f.tempo >= 110, f.tempo <= 150 { return .club }
-        // Sparse, heavy kicks under the beat: half time, the bass carrying it.
-        if f.kicksPerBeat < 0.7, f.bass > f.high + 0.1 { return .hipHop }
-        // Backbeat snares and bright cymbals over a bass that doesn't dominate.
-        if f.snares > 0.6 * f.kicks, f.high > f.bass - 0.05 { return .rock }
+        // Slow or half-time, with the bass carrying it.
+        if f.tempo < 105 || f.kicksPerBeat < 0.75, tilt > 0.35 { return .hipHop }
+        // Snares and cymbals busier than the kick, and a bright top: guitars and
+        // ride. Relative to the bass, so a quiet or a squashed master reads the same.
+        if f.snares + f.hats >= f.kicks, tilt < 0.4 { return .rock }
         if fourOnTheFloor { return .club }
-        return .balanced
+        return tilt > 0.45 ? .hipHop : .balanced
     }
 }

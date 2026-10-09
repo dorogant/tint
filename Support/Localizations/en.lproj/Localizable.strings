@@ -233,5 +233,12 @@
 "Rock" = "Rock";
 "Chill" = "Chill";
 "Acoustic" = "Acoustic";
+/* Live backgrounds: auto preset */
+"Auto preset" = "Auto preset";
+"Picks a preset for each song from its genre on Spotify, or from how it sounds. Choosing a preset or moving a slider turns it off." = "Picks a preset for each song from its genre on Spotify, or from how it sounds. Choosing a preset or moving a slider turns it off.";
+"Choosing a preset for this song…" = "Choosing a preset for this song…";
+"%@ · from genre: %@" = "%1$@ · from genre: %2$@";
+"%@ · from the sound" = "%@ · from the sound";
+"%@ · no genre found" = "%@ · no genre found";
 "Bass punch" = "Bass punch";
 "Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.";

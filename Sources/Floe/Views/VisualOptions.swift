@@ -81,13 +81,19 @@ struct BackgroundOptions: View {
     /// says whether the look will change on the next song.
     @ViewBuilder private var autoPreset: some View {
         @Bindable var settings = settings
-        Toggle("Auto preset", isOn: $settings.autoPreset)
-            .help("Picks a preset for each song from its genre on Spotify, or from how it sounds. Choosing a preset or moving a slider turns it off.")
-        if settings.autoPreset, let status = settings.autoStatus {
-            caption(status)
-                .font(.callout).foregroundStyle(.secondary)
-                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        // The caption sits in the toggle's label: under the checkbox's title in
+        // the popover, as the row's subtitle in Settings.
+        Toggle(isOn: $settings.autoPreset) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Auto preset")
+                if settings.autoPreset, let status = settings.autoStatus {
+                    caption(status)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
+        .help("Picks a preset for each song from its genre on Spotify, or from how it sounds. Choosing a preset or moving a slider turns it off.")
     }
 
     private func caption(_ status: AutoPresetStatus) -> Text {

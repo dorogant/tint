@@ -58,7 +58,7 @@ final class AutoPresetController {
         self.enabled = enabled
         genreIsWeak = false
         guard let song, enabled || logging else {
-            if !enabled { settings.autoStatus = nil }
+            settings.autoStatus = nil
             return
         }
         if enabled { settings.autoStatus = .choosing }
@@ -66,6 +66,7 @@ final class AutoPresetController {
         guard !Task.isCancelled, self.song == song else { return }
         let match = GenrePresets.match(answer.genres)
         say("song \(song.uri) by \(song.artistNames.joined(separator: ", "))")
+        if song.artistIDs.isEmpty { say("  no Spotify artist IDs (a local file?)") }
         for line in answer.trail { say("  artist \(line)") }
         say("  genres \(answer.genres) → \(Self.describe(match))")
         if let match {

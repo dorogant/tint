@@ -273,6 +273,14 @@ that arrive during GPU work coalesce into the latest replacement frame. It also 
 synthetic songs (kicks, snares, hats, vocals, drops, silence) through the real
 analyzer and checks the layer mapping, motion limits, crisp edges and flash rate.
 
+**Auto preset** (off by default) picks the live-background preset for each song: from
+the artist's Spotify genres when available (cached per artist), otherwise from about
+10 s of the sound (tempo, steady kick, bass weight, hats). Choosing a preset or moving
+a slider turns it off; it never enables the strobe. `scripts/test-autopreset.sh` checks
+the genre table, the sound classifier and the cache; `-FloeSelfTestAutoPreset YES` logs
+what Spotify returned for each playing song and the preset chosen, without playing
+anything itself.
+
 `scripts/test-palette.sh` runs cover colour extraction on drawn covers (black and
 white, sepia, dark red, navy, pastel, neon specks) and checks that neutral covers
 stay neutral, dark ones keep their hue and nothing turns green that isn't.

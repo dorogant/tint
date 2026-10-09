@@ -30,7 +30,9 @@ final class WebAPI: Sendable {
     init(user: UserTokenProvider, tokens: (any TokenProvider)? = nil, http: URLSession? = nil) {
         self.user = user
         self.tokens = tokens ?? user
-        let config = URLSessionConfiguration.ephemeral // API responses aren't worth caching
+        // API responses aren't worth caching; ephemeral sessions still keep 500 KB in memory.
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
         config.timeoutIntervalForRequest = 20
         self.http = http ?? URLSession(configuration: config)
         decoder = JSONDecoder()

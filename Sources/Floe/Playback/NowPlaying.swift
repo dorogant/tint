@@ -68,7 +68,8 @@ final class NowPlayingController {
         artwork = nil
         guard let url else { return }
         artworkTask = Task {
-            let image = await ArtworkCache.shared.image(for: url, pixels: 512)
+            // The size Now Playing already decoded (CoverAppearance), not a second 1 MB copy.
+            let image = await ArtworkCache.shared.image(for: url, pixels: 720)
             guard !Task.isCancelled, artworkURL == url else { return }
             artworkTask = nil
             guard let image else { return }

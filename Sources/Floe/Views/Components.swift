@@ -75,11 +75,55 @@ extension View {
 private struct GlassPanelModifier: ViewModifier {
     var cornerRadius: CGFloat
     @AppStorage("glassOpacity") private var opacity = 0.62
+
+    private static let edge = LinearGradient(colors: [.white.opacity(0.14), Theme.panelStroke, .white.opacity(0.035)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing)
+
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content.background(Color(white: 0.11).opacity(opacity), in: shape)
-            .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.14), Theme.panelStroke, .white.opacity(0.035)],
-                                                       startPoint: .topLeading, endPoint: .bottomTrailing)))
+            .overlay {
+                // One gradient across the panel, drawn as eight pieces of its edge.
+                ZStack {
+                    ForEach(PanelEdge.Piece.allCases, id: \.self) { piece in
+                        PanelEdge(cornerRadius: cornerRadius, piece: piece).fill(Self.edge)
+                    }
+                }
+                .allowsHitTesting(false)
+            }
+    }
+}
+
+/// A piece of a panel's 1 pt edge, exactly where `strokeBorder` draws it.
+/// SwiftUI draws a gradient-filled shape into a bitmap the size of the shape's
+/// bounds, so the whole hairline cost a panel-sized backing store (19 MB for
+/// the page at 1710×1000, 24 MB for Now Playing); cut into corners and sides,
+/// it costs a few kilobytes.
+private struct PanelEdge: Shape {
+    enum Piece: CaseIterable { case topLeading, top, topTrailing, trailing, bottomTrailing, bottom, bottomLeading, leading }
+
+    let cornerRadius: CGFloat
+    let piece: Piece
+
+    func path(in rect: CGRect) -> Path {
+        // Continuous corners blend into the sides over about 1.53 radii.
+        let corner = min((cornerRadius * 1.6).rounded(.up), rect.width / 2, rect.height / 2)
+        let (x0, x1, x2) = (rect.minX, rect.minX + corner, rect.maxX - corner)
+        let (y0, y1, y2) = (rect.minY, rect.minY + corner, rect.maxY - corner)
+        let middle = (width: max(x2 - x1, 0), height: max(y2 - y1, 0))
+        let clip = switch piece {
+        case .topLeading: CGRect(x: x0, y: y0, width: corner, height: corner)
+        case .top: CGRect(x: x1, y: y0, width: middle.width, height: corner)
+        case .topTrailing: CGRect(x: x2, y: y0, width: corner, height: corner)
+        case .trailing: CGRect(x: x2, y: y1, width: corner, height: middle.height)
+        case .bottomTrailing: CGRect(x: x2, y: y2, width: corner, height: corner)
+        case .bottom: CGRect(x: x1, y: y2, width: middle.width, height: corner)
+        case .bottomLeading: CGRect(x: x0, y: y2, width: corner, height: corner)
+        case .leading: CGRect(x: x0, y: y1, width: corner, height: middle.height)
+        }
+        let edge = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).inset(by: 0.5)
+            .path(in: rect).strokedPath(StrokeStyle(lineWidth: 1))
+        return edge.intersection(Path(clip))
     }
 }
 

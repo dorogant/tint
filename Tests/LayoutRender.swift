@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 import SwiftUI
 
 /// Renders the real main window offscreen with a fixture library and writes
@@ -9,6 +10,7 @@ struct LayoutRender {
     static let size = CGSize(width: 1710, height: 1000)
 
     static func main() async {
+        setvbuf(stdout, nil, _IOLBF, 0) // line by line, so a log being followed stays current
         let environment = ProcessInfo.processInfo.environment
         let output = URL(fileURLWithPath: environment["FLOE_LAYOUT_DIR"] ?? "/tmp/tint-layout", isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -63,6 +65,9 @@ struct LayoutRender {
         .environment(settings)
         .environment(ConnectModel(api: api))
         .environment(\.coverPalette, CoverPalette.fixed(settings.fixedAccent))
+        // The harness can't activate without taking focus from whatever's in front;
+        // FLOE_LAYOUT_ACTIVE=1 measures as if it were the frontmost app.
+        .transformEnvironment(\.scenePhase) { if environment["FLOE_LAYOUT_ACTIVE"] == "1" { $0 = .active } }
 
         let window = OffscreenWindow(contentRect: NSRect(origin: CGPoint(x: -30_000, y: -30_000), size: size),
                                      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -72,7 +77,7 @@ struct LayoutRender {
         window.toolbarStyle = .unified
         window.title = "Tint"
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: root)
+        let host = CountingHostingView(rootView: root)
         host.sceneBridgingOptions = [.toolbars]
         window.contentView = host
         window.orderFrontRegardless()
@@ -192,9 +197,51 @@ struct LayoutRender {
             guard name != "status-banner" else { continue }
             check(scrollViewsAtRest(window.contentView!), "\(name): pages and shelves rest unscrolled, on the guides")
         }
+        if environment["FLOE_LAYOUT_PERF"] == "1" {
+            await measure(window: window, host: host, player: player, navigator: navigator, playlist: playlist)
+        }
         window.close()
         print(failures == 0 ? "PASS: layout renders written to \(output.path)" : "FAIL: \(failures) check(s)")
         if failures > 0 { exit(1) }
+    }
+
+    /// FLOE_LAYOUT_PERF=1: CPU and SwiftUI window layouts per second on each
+    /// surface, paused and then playing, with effects off. Continuous SwiftUI
+    /// motion shows up as one layout per frame; the progress bars tick once a second.
+    static func measure(window: NSWindow, host: CountingHostingView<some View>, player: PlayerModel,
+                        navigator: Navigator, playlist: Route) async {
+        func cpu() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        window.setContentSize(size)
+        let seconds = Double(ProcessInfo.processInfo.environment["FLOE_LAYOUT_PERF_SECONDS"] ?? "") ?? 4
+        let surfaces: [(String, () -> Void)] = [
+            ("home", { navigator.surface = .library; navigator.select(.home) }),
+            ("playlist", { navigator.select(playlist) }),
+            ("now playing", { navigator.surface = .nowPlaying }),
+            ("lyrics", { navigator.surface = .lyrics }),
+        ]
+        for playing in [false, true] {
+            FloeCore.shared.deliver(playing ? .playing(positionMs: 64_000) : .paused(positionMs: 64_000))
+            for (name, show) in surfaces {
+                show()
+                await settle(window, steps: 15)
+                let before = cpu(), layouts = host.layouts, started = Date()
+                try? await Task.sleep(for: .seconds(seconds))
+                let elapsed = Date().timeIntervalSince(started)
+                print(String(format: "PERF %@, %@: %.2f%% CPU, %.1f window layouts/s", name,
+                             player.isPlaying ? "playing" : "paused", (cpu() - before) / elapsed * 100,
+                             Double(host.layouts - layouts) / elapsed))
+                if !player.isPlaying, let root = window.contentView?.superview?.layer {
+                    print("  " + LayerCensus(root).summary)
+                }
+            }
+        }
+        FloeCore.shared.deliver(.paused(positionMs: 64_000))
+        navigator.surface = .library
     }
 
     /// The toolbar's search field (the system's, inside the titlebar).
@@ -277,6 +324,76 @@ struct LayoutRender {
         NSGraphicsContext.restoreGraphicsState()
         try? opaque.representation(using: .png, properties: [:])?.write(to: url)
         print("[layout] \(url.path)")
+    }
+}
+
+/// What the window's layers hold: how many, how much backing store their
+/// contents take (estimated at their scale), and how many need an offscreen
+/// pass (shadows without a path, masks, filters, group opacity).
+struct LayerCensus {
+    var layers = 0, withContents = 0, offscreen = 0
+    /// Offscreen passes by cause: shadow, mask, filter, group opacity.
+    var causes: [String: Int] = [:]
+    var bytes = 0.0
+    var largest: [(String, Double)] = []
+
+    init(_ root: CALayer) {
+        visit(root)
+        largest = Array(largest.sorted { $0.1 > $1.1 }.prefix(5))
+    }
+
+    private mutating func visit(_ layer: CALayer) {
+        layers += 1
+        if layer.contents != nil {
+            withContents += 1
+            let size = layer.bounds.size, scale = layer.contentsScale
+            // An image costs its own pixels however large it's drawn; drawn contents cost the layer's.
+            let image = CFGetTypeID(layer.contents as CFTypeRef) == CGImage.typeID ? (layer.contents as! CGImage) : nil
+            // SwiftUI's proxy images hide their pixels; they're images too, so don't guess from the layer.
+            let proxy = "\(type(of: layer.contents as AnyObject))".contains("ProxyImage")
+            let layerBytes = image.map { Double($0.width * $0.height * 4) }
+                ?? (proxy ? 0 : Double(size.width * scale * size.height * scale * 4))
+            bytes += layerBytes
+            let owner = layer.delegate.map { " of \(type(of: $0))" } ?? ""
+            largest.append(("\(type(of: layer))\(owner) \(Int(size.width))x\(Int(size.height))@\(Int(scale))x"
+                            + (image.map { " image \($0.width)x\($0.height)" }
+                               ?? " \(contentsKind(layer.contents!))"), layerBytes))
+        }
+        let cause = if layer.shadowOpacity > 0 && layer.shadowPath == nil {
+                (layer.shadowColor?.alpha ?? 0) == 0 ? "invisible shadow" : "shadow"
+            }
+            else if layer.mask != nil { "mask" }
+            else if !(layer.filters ?? []).isEmpty { layer.opacity == 0 ? "hidden filter" : "filter" }
+            else if layer.allowsGroupOpacity && layer.opacity < 1 && !(layer.sublayers ?? []).isEmpty { "group opacity" }
+            else { String?.none }
+        if let cause {
+            offscreen += 1
+            causes[cause, default: 0] += 1
+        }
+        layer.sublayers?.forEach { visit($0) }
+    }
+
+    /// The contents' class, and an IOSurface's real size.
+    private func contentsKind(_ contents: Any) -> String {
+        if let surface = contents as? IOSurface { return "IOSurface \(surface.width)x\(surface.height)" }
+        return String(describing: type(of: contents as AnyObject))
+    }
+
+    var summary: String {
+        String(format: "layers %d, with contents %d (~%.1f MB), offscreen passes %d (%@); largest: %@", layers,
+               withContents, bytes / 1_048_576, offscreen,
+               causes.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", "),
+               largest.map { String(format: "%@ %.1f MB", $0.0, $0.1 / 1_048_576) }.joined(separator: ", "))
+    }
+}
+
+/// Counts SwiftUI's passes over the window.
+final class CountingHostingView<Content: View>: NSHostingView<Content> {
+    private(set) var layouts = 0
+
+    override func layout() {
+        layouts += 1
+        super.layout()
     }
 }
 

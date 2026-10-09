@@ -5,12 +5,10 @@ private struct FloeAnimation<Value: Equatable>: ViewModifier {
     let value: Value
     var duration: Double
     var bounce: Double
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage("reduceMotion") private var reduceMotion = false
+    @ReducedMotion private var reduceMotion
 
     func body(content: Content) -> some View {
-        content.animation(reduceMotion || systemReduceMotion ? nil : .spring(duration: duration, bounce: bounce),
-                          value: value)
+        content.animation(reduceMotion ? nil : .spring(duration: duration, bounce: bounce), value: value)
     }
 }
 

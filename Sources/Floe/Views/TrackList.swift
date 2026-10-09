@@ -241,7 +241,7 @@ struct TrackRow: View {
         if loading {
             ProgressView().controlSize(.mini)
         } else if isCurrent && player.isPlaying {
-            PlayingSymbol(pointSize: 11, color: palette.highlight, animating: !still)
+            LoopingSymbol.playing(pointSize: 11, color: palette.highlight, running: !still)
         } else {
             Text("\(number)")
                 .font(.system(size: 12).monospacedDigit())
@@ -371,10 +371,29 @@ struct TrackMenuItems: View {
         }
         if let id = track.id {
             Divider()
-            Button("Copy Song Link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString("https://open.spotify.com/track/\(id)", forType: .string)
-            }
+            CopySongLinkButton(id: id)
+        }
+    }
+}
+
+/// Copies the song's open.spotify.com link, for pasting anywhere.
+struct CopySongLinkButton: View {
+    let id: String
+
+    var body: some View {
+        Button("Copy Song Link") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("https://open.spotify.com/track/\(id)", forType: .string)
+        }
+    }
+}
+
+extension Navigator {
+    /// librespot doesn't report the album ID; look it up when asked.
+    func openAlbum(of track: TrackInfo, api: WebAPI) {
+        guard let id = track.uri.split(separator: ":").last.map(String.init) else { return }
+        Task {
+            if let album = try? await api.track(id).album { push(.album(album.id)) }
         }
     }
 }

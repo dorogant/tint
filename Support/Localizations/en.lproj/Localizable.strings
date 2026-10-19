@@ -238,3 +238,10 @@
 "No hidden artists" = "No hidden artists";
 "Show" = "Show";
 "To hide an artist from Your top artists on Home, Control-click it. Spotify's own ranking doesn't change." = "To hide an artist from Your top artists on Home, Control-click it. Spotify's own ranking doesn't change.";
+/* Settings: interface size */
+"Size" = "Size";
+"Interface size" = "Interface size";
+"Compact" = "Compact";
+"Standard" = "Standard";
+"Large" = "Large";
+"Sets the size of text, artwork and spacing in the main window." = "Sets the size of text, artwork and spacing in the main window.";

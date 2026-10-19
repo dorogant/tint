@@ -238,3 +238,10 @@
 "No hidden artists" = "Немає прихованих виконавців";
 "Show" = "Показати";
 "To hide an artist from Your top artists on Home, Control-click it. Spotify's own ranking doesn't change." = "Щоб сховати виконавця з розділу «Ваші улюблені виконавці» на Головній, клацніть його з натиснутою клавішею Control. Рейтинг у Spotify не зміниться.";
+/* Settings: interface size */
+"Size" = "Розмір";
+"Interface size" = "Розмір інтерфейсу";
+"Compact" = "Компактний";
+"Standard" = "Стандартний";
+"Large" = "Великий";
+"Sets the size of text, artwork and spacing in the main window." = "Визначає розмір тексту, обкладинок і відступів у головному вікні.";

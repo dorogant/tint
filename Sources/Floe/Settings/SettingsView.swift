@@ -187,6 +187,17 @@ struct SettingsView: View {
             }.pickerStyle(.segmented).disabled(accentFromCover)
         }
         SwiftUI.Section {
+            Picker("Interface size", selection: $settings.interfaceSize) {
+                Text("Compact").tag(InterfaceSize.compact)
+                Text("Standard").tag(InterfaceSize.standard)
+                Text("Large").tag(InterfaceSize.large)
+            }.pickerStyle(.segmented)
+        } header: {
+            Text("Size")
+        } footer: {
+            note("Sets the size of text, artwork and spacing in the main window.")
+        }
+        SwiftUI.Section {
             SettingsSlider("Glass intensity", value: $settings.glassOpacity, range: AppSettings.glassOpacityRange,
                            displayedValue: Text("\(Int(settings.glassOpacity * 100))%"))
             Toggle("Reduce motion", isOn: $reduceMotion)

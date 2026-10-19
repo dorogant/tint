@@ -61,6 +61,7 @@ struct FloeApp: App {
                 .environment(settings)
                 .environment(connect)
                 .environment(\.locale, settings.locale)
+                .environment(\.interfaceScale, settings.interfaceSize.scale)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
                 .onChange(of: needsAnalysis, initial: true) { visualization.setRunning(needsAnalysis) }
                 .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }

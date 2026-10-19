@@ -48,10 +48,19 @@ background reads analysis frames itself. Lyric line changes still animate throug
 SwiftUI with a short spring; in a dense section they add a few percent while they run.
 The live background defaults off.
 
-> Tint uses librespot, an **unofficial** Spotify client library. That is against
-> Spotify's terms of use; bans are rare but possible, and protocol changes can break
-> playback until librespot catches up. It needs **Spotify Premium**, and offline
-> downloads are not possible. Tint is not affiliated with Spotify.
+## Disclaimer
+
+Tint is an unofficial app. It is not affiliated with, endorsed by or connected to
+Spotify. "Spotify" is a trademark of Spotify AB.
+
+Tint plays music through librespot, an **unofficial** Spotify client library. Using it
+is against Spotify's terms of use. Bans are rare but possible, and protocol changes can
+break playback until librespot catches up. Any risk to your account is yours.
+
+- Tint needs **Spotify Premium**.
+- Tint streams only. It doesn't download or save music, and offline downloads are not
+  possible.
+- Lyrics come from [LRCLIB](https://lrclib.net). They belong to their rights holders.
 
 ## Requirements
 
@@ -587,3 +596,8 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
   are unavailable for the same reason.
 - `core/.cargo/config.toml` makes cargo fetch git dependencies with the git CLI, so
   a global `https://github.com/` → SSH rewrite works.
+
+## License
+
+Tint is released under the MIT License; see [LICENSE](LICENSE). The libraries it builds
+on keep their own licences, listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

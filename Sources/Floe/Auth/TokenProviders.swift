@@ -14,17 +14,27 @@ protocol TokenProvider: Sendable {
 
 enum TokenError: LocalizedError {
     case notAuthorized
+    case noClientID
 
-    var errorDescription: String? { L10n.string("Your Spotify library isn't connected.") }
+    var errorDescription: String? {
+        switch self {
+        case .notAuthorized: L10n.string("Your Spotify library isn't connected.")
+        case .noClientID: L10n.string("Add your Spotify developer app's Client ID first.")
+        }
+    }
 }
 
-/// PKCE tokens for Tint's own client ID, persisted in `CredentialStore` and refreshed as needed.
+/// PKCE tokens for the user's developer app (`SpotifyClientID`), persisted in
+/// `CredentialStore` and refreshed as needed.
 actor UserTokenProvider: TokenProvider {
     private struct Stored: Codable {
         var accessToken: String
         var refreshToken: String
         var expiresAt: Date
         var scope: String?
+        /// The app that issued the tokens: a refresh token only works with its own client ID.
+        /// Missing in logins saved before the client ID became configurable.
+        var clientID: String?
     }
 
     private var stored: Stored?
@@ -44,11 +54,14 @@ actor UserTokenProvider: TokenProvider {
         let epoch = generation
         refreshTask?.cancel()
         refreshTask = nil
-        let token = try await SpotifyOAuth.authorize(playbackControls ? .playbackControls : .webAPI)
+        guard let clientID = SpotifyClientID.current else { throw TokenError.noClientID }
+        let token = try await SpotifyOAuth.authorize(playbackControls
+            ? .playbackControls(clientID: clientID) : .webAPI(clientID: clientID))
         guard epoch == generation else { throw CancellationError() }
         guard let refresh = token.refreshToken else { throw TokenError.notAuthorized }
         save(Stored(accessToken: token.accessToken, refreshToken: refresh,
-                    expiresAt: Date().addingTimeInterval(TimeInterval(token.expiresIn)), scope: token.scope))
+                    expiresAt: Date().addingTimeInterval(TimeInterval(token.expiresIn)), scope: token.scope,
+                    clientID: clientID))
     }
 
     var hasPlaybackControls: Bool {
@@ -91,11 +104,16 @@ actor UserTokenProvider: TokenProvider {
             guard epoch == generation else { throw CancellationError() }
             return value
         }
+        guard let clientID = current.clientID ?? SpotifyClientID.current else {
+            signOut(); reportAuthorizationExpired()
+            throw TokenError.notAuthorized
+        }
         let task = Task {
-            let token = try await SpotifyOAuth.refresh(.webAPI, refreshToken: current.refreshToken)
+            let token = try await SpotifyOAuth.refresh(.webAPI(clientID: clientID), refreshToken: current.refreshToken)
             return Stored(accessToken: token.accessToken,
                           refreshToken: token.refreshToken ?? current.refreshToken,
-                          expiresAt: Date().addingTimeInterval(TimeInterval(token.expiresIn)), scope: token.scope ?? current.scope)
+                          expiresAt: Date().addingTimeInterval(TimeInterval(token.expiresIn)), scope: token.scope ?? current.scope,
+                          clientID: clientID)
         }
         refreshTask = task
         defer { if epoch == generation { refreshTask = nil } }
@@ -104,8 +122,10 @@ actor UserTokenProvider: TokenProvider {
             guard epoch == generation else { throw CancellationError() }
             save(fresh)
             return fresh
-        } catch let SpotifyOAuth.Failure.tokenRequest(status, body) where status == 400 && body.contains("invalid_grant") {
-            // invalid_grant: the refresh token was revoked; ask the user to reconnect.
+        } catch let SpotifyOAuth.Failure.tokenRequest(status, body)
+                    where status == 400 && (body.contains("invalid_grant") || body.contains("invalid_client")) {
+            // invalid_grant: the refresh token was revoked; invalid_client: its developer app
+            // is gone. Either way, ask the user to reconnect.
             if epoch == generation { signOut(); reportAuthorizationExpired() }
             throw TokenError.notAuthorized
         }

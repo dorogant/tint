@@ -1,0 +1,67 @@
+# Builds Tint the way a fresh clone does (scripts/build-app.sh, ad-hoc signed, no
+# Spotify client ID built in) and runs the offline tests: no Spotify account,
+# network login or audio device.
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Apple Silicon with Xcode 26: Swift 6.2+ and the macOS 26 SDK, which Tint needs.
+    # If this label isn't available to your account, use macos-latest once it is
+    # macOS 26 or later; older images fail the build script's SDK check.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+          rustup --version
+
+      # Cargo's downloads and the Rust build output. librespot is the slow part, and
+      # only changes with Cargo.lock or the pinned Rust release.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            core/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('core/Cargo.lock', 'core/rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build Tint.app
+        run: scripts/build-app.sh --zip
+
+      - name: Offline tests
+        run: |
+          scripts/test-credentials.sh
+          scripts/test-artwork.sh
+          scripts/test-phase3.sh
+          scripts/test-phase4.sh
+          scripts/test-phase5.sh
+          scripts/test-transport.sh
+          scripts/test-autopreset.sh
+
+      # These draw through Metal and offscreen windows. CI machines are virtual and
+      # their GPU may not match a real Mac's, so a failure here is a hint, not a verdict.
+      # test-layout.sh (whole-window renders) is left to real Macs.
+      - name: Rendering checks
+        continue-on-error: true
+        run: |
+          scripts/test-layers.sh
+          scripts/test-palette.sh
+          scripts/test-background.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tint
+          path: build/Tint-*.zip
+          retention-days: 7

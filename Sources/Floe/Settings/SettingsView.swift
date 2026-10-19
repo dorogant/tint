@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     enum Section: String, CaseIterable, Identifiable {
         case visualizer = "Visualizer", background = "Background", playback = "Playback"
-        case downloads = "Downloads", appearance = "Appearance", about = "About"
+        case downloads = "Downloads", appearance = "Appearance", account = "Account", about = "About"
         var id: Self { self }
         var symbol: String {
             switch self {
@@ -12,6 +12,7 @@ struct SettingsView: View {
             case .playback: "play.circle"
             case .downloads: "arrow.down.circle"
             case .appearance: "paintpalette"
+            case .account: "person.crop.circle"
             case .about: "info.circle"
             }
         }
@@ -22,6 +23,7 @@ struct SettingsView: View {
             case .playback: "Choose how your music sounds and flows."
             case .downloads: "Your music streams directly from Spotify."
             case .appearance: "Make Tint feel like yours."
+            case .account: "How Tint signs in to Spotify."
             case .about: "A small, native home for your music."
             }
         }
@@ -35,7 +37,7 @@ struct SettingsView: View {
     @AppStorage("reduceMotion") private var reduceMotion = false
     @Environment(\.coverPalette) private var palette
 
-    /// A native sidebar keeps all six categories readable, including longer translations.
+    /// A native sidebar keeps every category readable, including longer translations.
     var body: some View {
         NavigationSplitView {
             List(selection: Binding<Section?>(get: { section }, set: { if let value = $0 { section = value } })) {
@@ -130,6 +132,8 @@ struct SettingsView: View {
             }
         case .appearance:
             appearanceOptions
+        case .account:
+            accountContent
         case .about:
             aboutContent
         }
@@ -239,6 +243,26 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder private var accountContent: some View {
+        SwiftUI.Section {
+            LabeledContent("Library") {
+                if library.connection == .connected {
+                    Text(verbatim: library.profile?.displayName ?? L10n.string("Connected"))
+                } else {
+                    Text("Not connected")
+                }
+            }
+            if library.connection == .connected {
+                Button("Disconnect Library") { Task { await library.disconnect() } }
+            }
+        } header: {
+            Text("Spotify")
+        } footer: {
+            note("Playback signs in with Spotify's own app. Your library goes through a Spotify developer app.")
+        }
+        DeveloperAppSettings()
+    }
+
     private func note(_ text: LocalizedStringKey) -> some View {
         Text(text).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
@@ -322,5 +346,68 @@ struct SettingsStepper: View {
         } label: {
             Text(title).foregroundStyle(isEnabled ? .primary : .tertiary)
         }
+    }
+}
+
+/// Which Spotify developer app the library signs in through (see `SpotifyClientID`).
+/// Tokens belong to the app that issued them, so switching disconnects the library.
+private struct DeveloperAppSettings: View {
+    @Environment(LibraryModel.self) private var library
+    /// Mirrors `SpotifyClientID.defaultsKey`, so the section follows changes.
+    @AppStorage(SpotifyClientID.defaultsKey) private var customID = ""
+    @ViewState private var draft = ""
+
+    var body: some View {
+        SwiftUI.Section {
+            LabeledContent("Client ID") {
+                if let current = SpotifyClientID.valid(customID) ?? SpotifyClientID.builtIn {
+                    Text(verbatim: current).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                } else {
+                    Text("None")
+                }
+            }
+            LabeledContent("Redirect URI") {
+                HStack(spacing: 8) {
+                    Text(verbatim: SpotifyOAuth.Config.webAPIRedirectURI.absoluteString)
+                        .font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                    CopyButton(text: SpotifyOAuth.Config.webAPIRedirectURI.absoluteString)
+                }
+            }
+            HStack {
+                TextField("Another Client ID", text: $draft)
+                    .font(.system(.callout, design: .monospaced))
+                    .onSubmit(use)
+                Button("Use", action: use).disabled(SpotifyClientID.valid(draft) == nil)
+            }
+            if SpotifyClientID.valid(customID) != nil, SpotifyClientID.builtIn != nil {
+                Button("Use the Built-in App") { switchApp(to: nil) }
+            }
+        } header: {
+            Text("Developer app")
+        } footer: {
+            note
+        }
+    }
+
+    private var note: some View {
+        let source: LocalizedStringKey = SpotifyClientID.valid(customID) != nil
+            ? "This is your own app." : SpotifyClientID.builtIn != nil
+            ? "This app is built into this copy of Tint." : "No app yet: Tint asks for one when you connect your library."
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(source)
+            Text("Changing the app disconnects your library; connect it again in the main window.")
+        }
+        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func use() {
+        guard let id = SpotifyClientID.valid(draft) else { return }
+        draft = ""
+        switchApp(to: id)
+    }
+
+    private func switchApp(to id: String?) {
+        SpotifyClientID.setCustom(id)
+        Task { await library.disconnect() }
     }
 }

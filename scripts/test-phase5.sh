@@ -3,12 +3,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo test --release --manifest-path "$ROOT/core/Cargo.toml"
+# From core/, so rustup uses the Rust release pinned in core/rust-toolchain.toml.
+(cd "$ROOT/core" && cargo test --release)
 TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 swiftc -swift-version 6 -O \
     "$ROOT/Sources/Floe/Core/CoreEvent.swift" "$ROOT/Sources/Floe/API/PlaybackAPI.swift" "$ROOT/Sources/Floe/API/Models.swift" "$ROOT/Sources/Floe/API/WebAPI.swift" \
-    "$ROOT/Sources/Floe/Auth/TokenProviders.swift" "$ROOT/Sources/Floe/Auth/SpotifyOAuth.swift" \
+    "$ROOT/Sources/Floe/Auth/TokenProviders.swift" "$ROOT/Sources/Floe/Auth/SpotifyOAuth.swift" "$ROOT/Sources/Floe/Auth/SpotifyClientID.swift" \
     "$ROOT/Sources/Floe/Auth/CredentialStore.swift" "$ROOT/Sources/Floe/Auth/LoopbackRedirectServer.swift" \
     "$ROOT/Sources/Floe/Support/Localization.swift" "$ROOT/Sources/Floe/Playback/ConnectModel.swift" \
     "$ROOT/Tests/Phase5Tests.swift" -o "$TEMP/phase5-tests"

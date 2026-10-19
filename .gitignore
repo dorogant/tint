@@ -12,8 +12,10 @@ Package.resolved
 .env
 credentials.json
 
-# Per-machine signing certificate (name or SHA-1), see README
+# Per-machine build settings, see README: signing certificate (name or SHA-1) and
+# the Spotify Web API client ID built into the app
 /.signing-identity
+/.spotify-client-id
 
 # macOS
 .DS_Store

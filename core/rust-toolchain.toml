@@ -1,0 +1,7 @@
+# The Rust release Tint is built and tested with, so a fresh clone (and CI) builds
+# the pinned librespot with the same compiler. rustup installs it on first use.
+# Bump it on purpose, like the librespot rev in Cargo.toml.
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+targets = ["aarch64-apple-darwin"]

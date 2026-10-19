@@ -16,7 +16,7 @@ final class CredentialStore: Sendable {
     enum Account: String, Sendable {
         /// Reusable librespot credentials (JSON).
         case playbackSession = "librespot-session"
-        /// Web API tokens for Tint's own client ID (JSON: access + refresh token).
+        /// Web API tokens for the user's developer app (JSON: access + refresh token, client ID).
         case webAPI = "web-api"
     }
 

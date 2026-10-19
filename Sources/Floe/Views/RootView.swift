@@ -43,58 +43,71 @@ struct MainView: View {
     var body: some View {
         VStack(spacing: Theme.margin) {
             PlaybackStatusView()
-            Group {
-                switch navigator.surface {
-                case .library:
-                    HStack(spacing: Theme.margin) {
-                        SidebarView().frame(width: 240).glassPanel()
-                        ZStack {
-                            // Every page starts on the same guides: content on the
-                            // gutter, plates and full-bleed shelves reaching past it.
-                            ScrollView {
-                                page.padding(.horizontal, Theme.gutter).padding(.top, Theme.gutter - 1).padding(.bottom, 32)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            // A scroll view touching the toolbar's edge reaches up under
-                            // it and insets its content to match. When a banner or a
-                            // transition moved the panel, that inset changed mid-flight
-                            // and left the page resting a few points scrolled. One point
-                            // of room (taken back from the top padding) keeps it out.
-                            .padding(.top, 1)
-                            .id(navigator.current)
-                            // A fade only: the page's sections rise in on their own
-                            // (`reveal`), and moving the scroll view itself left it
-                            // resting a few points scrolled, off the page's guides.
-                            .transition(.opacity)
-                        }
-                        // Shelves scroll to the panel's edge; keep them inside its corners.
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
-                        .glassPanel()
-                        .floeAnimation(value: navigator.current)
-                    }
-                case .nowPlaying:
-                    NowPlayingView().glassPanel()
-                case .lyrics:
-                    LyricsView().frame(maxWidth: 780).frame(maxWidth: .infinity).glassPanel()
+            ZStack {
+                // Library stays mounted under Now Playing and Lyrics, so raising one never
+                // rebuilds it, and coming back is instant and keeps its scroll position.
+                libraryPanel
+                    .opacity(navigator.surface == .library ? 1 : 0)
+                    .allowsHitTesting(navigator.surface == .library)
+                    .accessibilityHidden(navigator.surface != .library)
+                if navigator.surface != .library {
+                    raisedSurface
+                        .id(navigator.surface)
+                        .transition(SurfaceTransition(still: still))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .id(navigator.surface)
-            .transition(SurfaceTransition(raised: navigator.surface != .library))
             if navigator.surface != .nowPlaying {
                 MiniPlayerView().frame(height: 76).glassPanel()
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(still ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .padding([.horizontal, .bottom], Theme.margin)
         .environment(\.heroNamespace, hero)
-        .floeAnimation(value: navigator.surface, duration: 0.45, bounce: 0.12)
+        .animation(still ? FloeMotion.fade : FloeMotion.surface, value: navigator.surface)
         // A status banner's room opens on the same spring it drops in on.
         .animation(still ? nil : FloeMotion.enter, value: PlaybackStatusView.key(player))
         .toolbar { toolbarContent }
         // The one search field: the toolbar's own, trailing, so it's there on every surface.
         .modifier(ToolbarSearch())
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+    }
+
+    private var libraryPanel: some View {
+        HStack(spacing: Theme.margin) {
+            SidebarView().frame(width: 240).glassPanel()
+            ZStack {
+                // Every page starts on the same guides: content on the
+                // gutter, plates and full-bleed shelves reaching past it.
+                ScrollView {
+                    page.padding(.horizontal, Theme.gutter).padding(.top, Theme.gutter - 1).padding(.bottom, 32)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // A scroll view touching the toolbar's edge reaches up under
+                // it and insets its content to match. When a banner or a
+                // transition moved the panel, that inset changed mid-flight
+                // and left the page resting a few points scrolled. One point
+                // of room (taken back from the top padding) keeps it out.
+                .padding(.top, 1)
+                .id(navigator.current)
+                // A fade only: the page's sections rise in on their own
+                // (`reveal`), and moving the scroll view itself left it
+                // resting a few points scrolled, off the page's guides.
+                .transition(.opacity)
+            }
+            // Shelves scroll to the panel's edge; keep them inside its corners.
+            .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+            .glassPanel()
+            .floeAnimation(value: navigator.current)
+        }
+    }
+
+    @ViewBuilder private var raisedSurface: some View {
+        switch navigator.surface {
+        case .library: EmptyView()
+        case .nowPlaying: NowPlayingView().glassPanel()
+        case .lyrics: LyricsView().frame(maxWidth: 780).frame(maxWidth: .infinity).glassPanel()
+        }
     }
 
     /// A standard unified toolbar: macOS supplies the glass grouping, overflow
@@ -186,7 +199,7 @@ private struct SurfaceSwitcher: View {
             }
         }
         .padding(Self.inset)
-        .animation(still ? FloeMotion.fade : FloeMotion.glide, value: selection)
+        .animation(still ? FloeMotion.fade : FloeMotion.surface, value: selection)
         .accessibilityRepresentation {
             Picker("View", selection: $selection) {
                 ForEach(Navigator.Surface.allCases, id: \.self) { surface in

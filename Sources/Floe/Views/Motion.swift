@@ -8,12 +8,13 @@ private struct FloeAnimation<Value: Equatable>: ViewModifier {
     @ReducedMotion private var reduceMotion
 
     func body(content: Content) -> some View {
-        content.animation(reduceMotion ? nil : .spring(duration: duration, bounce: bounce), value: value)
+        content.animation(reduceMotion ? FloeMotion.fade : .spring(duration: duration, bounce: bounce), value: value)
     }
 }
 
 extension View {
     /// A spring that settles in `duration`; a little `bounce` suits larger moves.
+    /// With Reduce Motion it falls back to a fade.
     func floeAnimation<Value: Equatable>(value: Value, duration: Double = 0.24, bounce: Double = 0) -> some View {
         modifier(FloeAnimation(value: value, duration: duration, bounce: bounce))
     }
@@ -30,8 +31,10 @@ enum FloeMotion {
     static let hoverOut = Animation.spring(duration: 0.24, bounce: 0)
     static let press = Animation.spring(duration: 0.14, bounce: 0)
     static let release = Animation.spring(duration: 0.3, bounce: 0.12)
-    static let glide = Animation.spring(duration: 0.4, bounce: 0.12)
+    static let glide = Animation.spring(duration: 0.3, bounce: 0.08)
     static let reveal = Animation.spring(duration: 0.42, bounce: 0)
+    /// Library ↔ Now Playing ↔ Lyrics, and the toolbar pill that names them.
+    static let surface = Animation.spring(duration: 0.32, bounce: 0)
     /// Things that arrive (banners, a new song's title) and leave; exits are quicker.
     static let enter = Animation.spring(duration: 0.4, bounce: 0.1)
     static let exit = Animation.spring(duration: 0.22, bounce: 0)
@@ -130,20 +133,18 @@ private struct HeroCover: ViewModifier {
     }
 }
 
-/// Library sits underneath: Now Playing and Lyrics rise over it like a sheet,
-/// and the library recedes and softens while they're up. It comes back by
-/// sharpening in place: scaling its scroll views on the way in left pages and
-/// shelves resting a few points scrolled, off the page's guides.
+/// Now Playing and Lyrics rise a little over the Library as they fade in and
+/// sink back as they leave. No blur: blurring a whole panel re-rendered it
+/// offscreen every frame. With Reduce Motion they only fade.
 struct SurfaceTransition: Transition {
-    var raised: Bool
+    var still: Bool
 
     func body(content: Content, phase: TransitionPhase) -> some View {
-        let scale: CGFloat = raised ? 0.97 : (phase == .didDisappear ? 0.95 : 1)
+        let moved = !phase.isIdentity && !still
         content
             .opacity(phase.isIdentity ? 1 : 0)
-            .scaleEffect(phase.isIdentity ? 1 : scale)
-            .offset(y: phase.isIdentity || !raised ? 0 : 40)
-            .blur(radius: phase.isIdentity || raised ? 0 : 10)
+            .scaleEffect(moved ? 0.98 : 1)
+            .offset(y: moved ? 16 : 0)
     }
 }
 

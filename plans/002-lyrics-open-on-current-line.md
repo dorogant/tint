@@ -1,6 +1,6 @@
 # 002 — Lyrics open on the current line; lighter lyrics swap
 
-- **Status**: TODO
+- **Status**: DONE
 - **Commit**: e102e24
 - **Severity**: MEDIUM
 - **Category**: Performance / Purpose

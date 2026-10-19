@@ -188,7 +188,11 @@ struct LayoutRender {
                 navigator.select(.home)
                 window.setContentSize(CGSize(width: 1220, height: 800))
             }),
-            ("home-minimum-size", { window.setContentSize(CGSize(width: 940, height: 600)) }),
+            // RootView's minimum, which grows with the interface size.
+            ("home-minimum-size", {
+                let scale = settings.interfaceSize.scale
+                window.setContentSize(CGSize(width: scale(940), height: scale(600)))
+            }),
         ]
         for (name, setUp) in scenarios where only?.contains(name) ?? true {
             await setUp()

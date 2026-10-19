@@ -1,6 +1,6 @@
 # 001 — Keep Library mounted and make the surface switch light
 
-- **Status**: TODO
+- **Status**: DONE
 - **Commit**: e102e24
 - **Severity**: HIGH
 - **Category**: Performance / Interruptibility / Easing & duration

@@ -46,6 +46,7 @@ struct TrackListView: View {
     /// Called when the last row appears (load the next page).
     var onReachEnd: (() -> Void)?
     @Environment(\.interfaceScale) private var scale
+    @ViewState private var motion = ListMotion()
 
     var body: some View {
         LazyVStack(spacing: 0) {
@@ -65,6 +66,9 @@ struct TrackListView: View {
         }
         // Row plates reach past the page gutter; the columns stay on it.
         .padding(.horizontal, -scale.plate)
+        // The list moving in the window is the page scrolling.
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in motion.moved() }
+        .environment(\.listMotion, motion)
     }
 
     private var header: some View {
@@ -87,6 +91,56 @@ struct TrackListView: View {
     }
 }
 
+/// Whether a track list is scrolling. Mid-scroll every animation frame costs
+/// an update of the whole window, so while the list moves its rows hold back
+/// hover: rows passing under a resting pointer would each light up and fade.
+/// Not observed: reading it redraws nothing.
+@MainActor final class ListMotion {
+    /// Still this long after the last movement means at rest.
+    static let settle = Duration.milliseconds(150)
+    private var lastMove = ContinuousClock.now - .seconds(1)
+    /// Rows the pointer settled on mid-scroll, lit once the list stops.
+    private var held: [Int: () -> Void] = [:]
+    private var settling: Task<Void, Never>?
+
+    var isMoving: Bool { ContinuousClock.now - lastMove < Self.settle }
+
+    func moved() {
+        lastMove = .now
+        #if SCROLL_BENCHMARK
+        ScrollProbe.moves += 1
+        #endif
+    }
+
+    /// Runs `light` once the list settles, unless the row is released first.
+    func hold(_ row: Int, _ light: @escaping () -> Void) {
+        held[row] = light
+        guard settling == nil else { return }
+        settling = Task { [weak self] in
+            while let self, self.isMoving { try? await Task.sleep(for: Self.settle) }
+            guard let self else { return }
+            let lights = held.values
+            held = [:]
+            settling = nil
+            lights.forEach { $0() }
+        }
+    }
+
+    func release(_ row: Int) { held[row] = nil }
+}
+
+private struct ListMotionKey: EnvironmentKey {
+    static var defaultValue: ListMotion? { nil }
+}
+
+extension EnvironmentValues {
+    /// The enclosing track list's motion; nil outside one.
+    var listMotion: ListMotion? {
+        get { self[ListMotionKey.self] }
+        set { self[ListMotionKey.self] = newValue }
+    }
+}
+
 struct TrackRow: View {
     @Environment(\.coverPalette) private var palette
     let entry: TrackEntry
@@ -99,6 +153,7 @@ struct TrackRow: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.listMotion) private var motion
     /// Rows round like the sidebar's plates (Compact points).
     static let radius: CGFloat = 10
     /// With Reduce Motion the row still lights up, it just doesn't move or scale.
@@ -177,15 +232,15 @@ struct TrackRow: View {
         .opacity(playable ? 1 : 0.4)
         .background { highlight(isCurrent: isCurrent) }
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover(perform: pointer)
         #if SCROLL_BENCHMARK
         // The benchmark's stand-in for a pointer resting over the list.
         .onGeometryChange(for: Bool.self) { proxy in
             ScrollProbe.pointer.map { proxy.frame(in: .global).contains($0) } ?? false
         } action: { under in
-            guard ScrollProbe.pointer != nil, under != hovering else { return }
-            hovering = under
-            ScrollProbe.hovers += 1
+            guard ScrollProbe.pointer != nil else { return }
+            pointer(under)
+            if under { ScrollProbe.hovers += 1 }
         }
         #endif
         // Quick in, a little slower out, so a fast sweep down the list leaves a
@@ -196,7 +251,18 @@ struct TrackRow: View {
         .contextMenu { TrackMenuItems(track: track) }
         .onAppear { library.requestLikedState(track.uri) }
         // A row scrolled away under a resting pointer may never hear the exit.
-        .onDisappear { hovering = false }
+        .onDisappear { pointer(false) }
+    }
+
+    /// Rows passing under a resting pointer mid-scroll stay dark; the one it
+    /// rests on lights up once the list stops. Leaving is never held back.
+    private func pointer(_ inside: Bool) {
+        if inside, let motion, motion.isMoving {
+            motion.hold(entry.id) { hovering = true }
+            return
+        }
+        motion?.release(entry.id)
+        if hovering != inside { hovering = inside }
     }
 
     /// The playing row keeps its selection; any other row fills in a soft wash,

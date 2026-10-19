@@ -136,7 +136,7 @@ struct ScrollBenchmark {
     struct Result {
         var frames: [Double] = []
         var cpu = 0.0, elapsed = 0.0, distance = 0.0
-        var layouts = 0, rowBodies = 0, likeBodies = 0, hoverChanges = 0
+        var layouts = 0, rowBodies = 0, likeBodies = 0, hoverChanges = 0, moves = 0
         var redraws: String?
 
         func line(_ name: String) -> String {
@@ -147,11 +147,12 @@ struct ScrollBenchmark {
             let over8 = frames.filter { $0 > 1.0 / 120 }.count, over16 = frames.filter { $0 > 1.0 / 60 }.count
             return String(format: "SCROLL %@: main thread busy %.0f%%, per frame p50 %.2f ms, p95 %.2f ms, max %.1f ms; "
                           + "%d of %d frames over 8.3 ms, %d over 16.7 ms; %.0f%% CPU; %.0f window layouts/s; "
-                          + "%.0f row bodies/s, %.0f like-button bodies/s, %d hover changes; %.0f pt",
+                          + "%.0f row bodies/s, %.0f like-button bodies/s, %d rows under the pointer; "
+                          + "list moved %.0f times/s, %.0f pt",
                           name, frames.reduce(0, +) / elapsed * 100, percentile(0.5), percentile(0.95),
                           (sorted.last ?? 0) * 1_000, over8, frames.count, over16, cpu / elapsed * 100,
                           Double(layouts) / elapsed, Double(rowBodies) / elapsed, Double(likeBodies) / elapsed,
-                          hoverChanges, distance)
+                          hoverChanges, Double(moves) / elapsed, distance)
         }
     }
 
@@ -199,6 +200,7 @@ struct ScrollBenchmark {
         result.rowBodies = after.rows - probe.rows
         result.likeBodies = after.likes - probe.likes
         result.hoverChanges = after.hovers - probe.hovers
+        result.moves = after.moves - probe.moves
         return result
     }
 
@@ -318,9 +320,9 @@ final class MainThreadMeter: @unchecked Sendable {
 /// An offscreen window never hears the real pointer, so `pointer` stands in for
 /// one resting over the list: a row under it takes the hover state.
 enum ScrollProbe {
-    nonisolated(unsafe) static var rows = 0, likes = 0, hovers = 0
+    nonisolated(unsafe) static var rows = 0, likes = 0, hovers = 0, moves = 0
     nonisolated(unsafe) static var pointer: CGPoint?
-    static func snapshot() -> (rows: Int, likes: Int, hovers: Int) { (rows, likes, hovers) }
+    static func snapshot() -> (rows: Int, likes: Int, hovers: Int, moves: Int) { (rows, likes, hovers, moves) }
 }
 
 /// Counts SwiftUI's passes over the window.

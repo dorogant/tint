@@ -191,7 +191,7 @@ struct Shelf<Item: Identifiable, Content: View>: View {
                         ForEach(items) { item in
                             // Cards ease in and out at the shelf's edges as it scrolls.
                             content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
-                                card.scaleEffect(phase.isIdentity ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
+                                card.scaleEffect(phase.isIdentity || reduceMotion ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
                             }
                         }
                     }

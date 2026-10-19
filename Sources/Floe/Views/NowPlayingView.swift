@@ -225,8 +225,8 @@ private struct FlowerCoverView: View {
             content, scale in content.scaleEffect(scale)
         } keyframes: { _ in
             KeyframeTrack {
-                CubicKeyframe(0.93, duration: 0.14)
-                SpringKeyframe(1, duration: 0.6, spring: .bouncy)
+                CubicKeyframe(0.97, duration: 0.1)
+                SpringKeyframe(1, duration: 0.35, spring: SwiftUI.Spring(duration: 0.35, bounce: 0.15))
             }
         }
         .heroCover()

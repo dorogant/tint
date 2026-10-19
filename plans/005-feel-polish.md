@@ -1,6 +1,6 @@
 # 005 — Feel polish: like star, mini-player extras, shelf cards, cover dip
 
-- **Status**: TODO
+- **Status**: DONE
 - **Commit**: e102e24
 - **Severity**: MEDIUM
 - **Category**: Purpose & frequency / Accessibility / Cohesion

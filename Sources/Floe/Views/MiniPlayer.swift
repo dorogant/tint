@@ -108,7 +108,7 @@ struct MiniPlayerView: View {
         .opacity(shown ? 1 : 0)
         .offset(x: shown || still ? 0 : 6)
         .allowsHitTesting(shown)
-        .animation(still ? FloeMotion.fade : (shown ? FloeMotion.enter : FloeMotion.exit), value: shown)
+        .floeHover(shown)
     }
 
     @ViewBuilder

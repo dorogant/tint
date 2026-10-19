@@ -8,7 +8,7 @@ Written by the improve-animations audit at commit e102e24 (2026-10-19). Each pla
 | 002 | [Lyrics open on the current line; lighter lyrics swap](002-lyrics-open-on-current-line.md) | MEDIUM | TODO |
 | 003 | [Resize the crawling cover without rebuilding its motion](003-crawling-cover-cheap-resize.md) | HIGH | DONE |
 | 004 | [With Reduce Motion, fade instead of cutting](004-reduce-motion-fades-not-cuts.md) | HIGH | TODO |
-| 005 | [Feel polish: like star, mini-player extras, shelf cards, cover dip](005-feel-polish.md) | MEDIUM | TODO |
+| 005 | [Feel polish: like star, mini-player extras, shelf cards, cover dip](005-feel-polish.md) | MEDIUM | DONE |
 
 **Order and dependencies:** 001 → 004 → 002 touch `Motion.swift`, `RootView.swift` and `LyricsView.swift` and run in that order (004 needs 001's `SurfaceTransition(still:)`). 003 and 005 touch other files and can run in parallel with them.
 

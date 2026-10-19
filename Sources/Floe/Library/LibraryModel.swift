@@ -25,8 +25,9 @@ final class LibraryModel {
     private(set) var likedRevision = 0
 
     @ObservationIgnored let api: WebAPI
-    /// Known liked state per track URI; missing means "not checked yet".
-    private var liked: [String: Bool] = [:]
+    /// Liked state per track URI, each observed on its own: a batch of answers
+    /// redraws only the rows whose star changed, not every visible row.
+    @ObservationIgnored private var liked: [String: LikedState] = [:]
     @ObservationIgnored private var likedQueue: Set<String> = []
     @ObservationIgnored private var likedFlush: Task<Void, Never>?
     @ObservationIgnored private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "library")
@@ -73,7 +74,7 @@ final class LibraryModel {
         recent = []
         topArtists = []
         savedAlbums = []
-        liked = [:]
+        for state in liked.values { state.value = nil }
     }
 
     func refresh() async {
@@ -146,15 +147,16 @@ final class LibraryModel {
     // MARK: - Liked songs
 
     /// nil until checked; rows call `requestLikedState` when they appear.
-    func isLiked(_ uri: String) -> Bool? { liked[uri] }
+    /// Reading it observes this track's state only.
+    func isLiked(_ uri: String) -> Bool? { likedState(uri).value }
 
     func markLiked(_ uris: [String]) {
-        for uri in uris { liked[uri] = true }
+        for uri in uris { setLiked(uri, true) }
     }
 
     /// Batches visible rows into `contains` calls (≤40 URIs each).
     func requestLikedState(_ uri: String) {
-        guard uri.hasPrefix("spotify:track:"), liked[uri] == nil, connection == .connected else { return }
+        guard uri.hasPrefix("spotify:track:"), liked[uri]?.value == nil, connection == .connected else { return }
         likedQueue.insert(uri)
         guard likedFlush == nil else { return }
         likedFlush = Task {
@@ -163,7 +165,7 @@ final class LibraryModel {
             likedQueue = []
             likedFlush = nil
             do {
-                for (uri, flag) in try await api.libraryContains(batch) { liked[uri] = flag }
+                for (uri, flag) in try await api.libraryContains(batch) { setLiked(uri, flag) }
             } catch {
                 log.error("Liked check failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -172,8 +174,8 @@ final class LibraryModel {
 
     /// Optimistic toggle; reverts if Spotify refuses.
     func toggleLike(_ uri: String) async {
-        let newValue = !(liked[uri] ?? false)
-        liked[uri] = newValue
+        let newValue = !(isLiked(uri) ?? false)
+        setLiked(uri, newValue)
         do {
             if newValue {
                 try await api.saveToLibrary([uri])
@@ -182,8 +184,35 @@ final class LibraryModel {
             }
             likedRevision += 1
         } catch {
-            liked[uri] = !newValue
+            setLiked(uri, !newValue)
             loadError = error.localizedDescription
         }
     }
+
+    private func likedState(_ uri: String) -> LikedState {
+        if let state = liked[uri] { return state }
+        let state = LikedState()
+        liked[uri] = state
+        return state
+    }
+
+    /// Writes only a change, so an answer that confirms what's shown redraws nothing.
+    private func setLiked(_ uri: String, _ value: Bool) {
+        let state = likedState(uri)
+        if state.value != value { state.value = value }
+    }
 }
+
+/// One track's liked state; nil until checked.
+@MainActor
+@Observable
+final class LikedState {
+    var value: Bool?
+}
+
+#if SCROLL_BENCHMARK
+extension LibraryModel {
+    /// The scroll benchmark checks liked state without a login.
+    func benchmarkConnect() { connection = .connected }
+}
+#endif

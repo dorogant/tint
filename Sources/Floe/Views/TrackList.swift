@@ -326,16 +326,20 @@ struct LikeButton: View {
     /// always shows. Their menus carry the same action for keyboard and VoiceOver.
     var revealed = true
     @Environment(LibraryModel.self) private var library
+    @ReducedMotion private var reduceMotion
+    /// Bounces on the user's click, not when liked state arrives or the track changes.
+    @ViewState private var presses = 0
 
     var body: some View {
         let liked = library.isLiked(uri) ?? false
         Button {
+            presses += 1
             Task { await library.toggleLike(uri) }
         } label: {
             Image(systemName: liked ? "star.fill" : "star")
                 .font(.system(size: size))
                 .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: liked)
+                .symbolEffect(.bounce, value: reduceMotion ? 0 : presses)
                 .foregroundStyle(liked ? palette.highlight : Theme.tertiary)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())

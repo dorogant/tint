@@ -21,6 +21,7 @@ struct SpectrumFrame: Equatable, Sendable {
         frame.layers.kick = max(layers.kick, earlier.layers.kick)
         frame.layers.snare = max(layers.snare, earlier.layers.snare)
         frame.layers.hat = max(layers.hat, earlier.layers.hat)
+        frame.layers.drop = max(layers.drop, earlier.layers.drop)
         return frame
     }
 }
@@ -48,6 +49,17 @@ struct MusicLayers: Equatable, Sendable {
     var tempo: Float = 0
     /// How regular the hits are, 0 (no pulse) to 1 (a steady four-on-the-floor).
     var confidence: Float = 0
+    /// The strongest pitch class in the harmony, 0..<12 with C at 0, smoothed
+    /// around the circle so it glides between neighbouring notes.
+    var pitchClass: Float = 0
+    /// How clearly that pitch class stands out from the other eleven, 0…1.
+    var tonality: Float = 0
+    /// Where the spectrum's weight sits, 0 (dark, bass-heavy) to 1 (bright, airy).
+    var brightness: Float = 0
+    /// Rising tension: a riser, a snare roll or a filter opening, 0…1.
+    var build: Float = 0
+    /// How hard the energy came back after a build on this frame, otherwise 0.
+    var drop: Float = 0
 
     static let bassBands = 0..<11
     static let lowMidBands = 11..<20

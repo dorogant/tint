@@ -45,6 +45,7 @@ struct TrackListView: View {
     let play: (TrackEntry) -> Void
     /// Called when the last row appears (load the next page).
     var onReachEnd: (() -> Void)?
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         LazyVStack(spacing: 0) {
@@ -63,26 +64,26 @@ struct TrackListView: View {
             }
         }
         // Row plates reach past the page gutter; the columns stay on it.
-        .padding(.horizontal, -Theme.plate)
+        .padding(.horizontal, -scale.plate)
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Text("#").frame(width: 28)
-            if showCover { Color.clear.frame(width: 40, height: 1) }
+        HStack(spacing: scale(12)) {
+            Text("#").frame(width: scale(28))
+            if showCover { Color.clear.frame(width: scale(40), height: 1) }
             Text("Title").frame(maxWidth: .infinity, alignment: .leading)
             if showAlbum { Text("Album").frame(maxWidth: .infinity, alignment: .leading) }
-            Color.clear.frame(width: 22, height: 1)
-            Image(systemName: "clock").frame(width: 44, alignment: .trailing)
-            Color.clear.frame(width: 22, height: 1)
+            Color.clear.frame(width: scale(22), height: 1)
+            Image(systemName: "clock").frame(width: scale(44), alignment: .trailing)
+            Color.clear.frame(width: scale(22), height: 1)
         }
-        .font(.system(size: 11, weight: .semibold))
+        .floeFont(size: 11, weight: .semibold)
         .foregroundStyle(Theme.tertiary)
-        .padding(.bottom, 8)
+        .padding(.bottom, scale(8))
         // The rule stays on the gutter like the text; only row plates reach past it.
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.panelStroke).frame(height: 1) }
-        .padding(.horizontal, Theme.plate)
-        .padding(.bottom, 4)
+        .padding(.horizontal, scale.plate)
+        .padding(.bottom, scale(4))
     }
 }
 
@@ -97,7 +98,8 @@ struct TrackRow: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
-    /// Rows round like the sidebar's plates.
+    @Environment(\.interfaceScale) private var scale
+    /// Rows round like the sidebar's plates (Compact points).
     static let radius: CGFloat = 10
     /// With Reduce Motion the row still lights up, it just doesn't move or scale.
     @ReducedMotion private var still
@@ -109,24 +111,24 @@ struct TrackRow: View {
         let isCurrent = player.displayTrack?.uri == track.uri
         let playable = track.isPlayable != false && track.isCatalogTrack
 
-        HStack(spacing: 12) {
-            leading(isCurrent: isCurrent, playable: playable).frame(width: 28)
+        HStack(spacing: scale(12)) {
+            leading(isCurrent: isCurrent, playable: playable).frame(width: scale(28))
             if showCover {
                 // The cover lifts a touch toward the pointer, as cards do; the
                 // shadow only deepens, so Reduce Motion keeps it.
-                ArtworkView(images: track.album?.images, size: 40, cornerRadius: 6)
+                ArtworkView(images: track.album?.images, size: scale(40), cornerRadius: scale(6))
                     .shadow(color: .black.opacity(hovering ? 0.45 : 0), radius: hovering ? 6 : 0, y: 2)
                     .scaleEffect(hovering && !still ? 1.03 : 1)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: scale(3)) {
+                HStack(spacing: scale(5)) {
                     Text(track.name)
-                        .font(.system(size: 13, weight: .medium))
+                        .floeFont(size: 13, weight: .medium)
                         .foregroundStyle(isCurrent ? palette.highlight : .white)
                         .lineLimit(1)
                     if track.explicit == true {
-                        Text("E").font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 3)
+                        Text("E").floeFont(size: 9, weight: .bold)
+                            .padding(.horizontal, scale(3))
                             .background(Theme.tertiary, in: RoundedRectangle(cornerRadius: 2))
                             .foregroundStyle(.black)
                     }
@@ -147,9 +149,9 @@ struct TrackRow: View {
             }
             LikeButton(uri: track.uri, revealed: hovering)
             Text(Format.duration(ms: Double(track.durationMs)))
-                .font(.system(size: 12).monospacedDigit())
+                .monospacedDigit().floeFont(size: 12)
                 .foregroundStyle(hovering ? litSecondary : Theme.secondary)
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: scale(44), alignment: .trailing)
             Group {
                 // Built only while hovered: a menu per visible row costs layout.
                 if hovering {
@@ -165,10 +167,10 @@ struct TrackRow: View {
                     Color.clear
                 }
             }
-            .frame(width: 22)
+            .frame(width: scale(22))
         }
-        .padding(.horizontal, Theme.plate)
-        .frame(height: 56)
+        .padding(.horizontal, scale.plate)
+        .frame(height: scale(56))
         .opacity(playable ? 1 : 0.4)
         .background { highlight(isCurrent: isCurrent) }
         .contentShape(Rectangle())
@@ -188,7 +190,7 @@ struct TrackRow: View {
     /// tinted lightly toward the cover, that settles in from just under full size.
     /// A top-lit hairline acknowledges the pointer on either.
     private func highlight(isCurrent: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: TrackRow.radius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: scale(TrackRow.radius), style: .continuous)
         let tint = palette.accent.mix(with: .white, by: 0.55)
         return ZStack {
             shape.fill(Theme.selection).opacity(isCurrent ? 1 : 0)
@@ -220,9 +222,9 @@ struct TrackRow: View {
                 let pauses = isCurrent && player.isPlaying
                 Button(action: isCurrent ? player.togglePlayPause : play) {
                     Image(systemName: pauses ? "pause.fill" : "play.fill")
-                        .font(.system(size: 12))
+                        .floeFont(size: 12)
                         .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 24, height: 24)
+                        .frame(width: scale(24), height: scale(24))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.floe)
@@ -241,10 +243,10 @@ struct TrackRow: View {
         if loading {
             ProgressView().controlSize(.mini)
         } else if isCurrent && player.isPlaying {
-            LoopingSymbol.playing(pointSize: 11, color: palette.highlight, running: !still)
+            LoopingSymbol.playing(pointSize: scale.text(11), color: palette.highlight, running: !still)
         } else {
             Text("\(number)")
-                .font(.system(size: 12).monospacedDigit())
+                .monospacedDigit().floeFont(size: 12)
                 .foregroundStyle(isCurrent ? palette.highlight : Theme.tertiary)
         }
     }
@@ -256,10 +258,12 @@ private let litSecondary = Color.white.opacity(0.82)
 /// "Artist, Artist" where each name opens the artist page.
 struct ArtistLinks: View {
     let artists: [ArtistRef]
-    var font: Font = .system(size: 12)
+    /// 12 pt (Compact) unless given.
+    var font: Font? = nil
     /// Set while the surrounding row is hovered.
     var lit = false
     @Environment(Navigator.self) private var navigator
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         HStack(spacing: 0) {
@@ -270,7 +274,7 @@ struct ArtistLinks: View {
                 }
             }
         }
-        .font(font)
+        .font(font ?? scale.font(size: 12))
         .lineLimit(1)
     }
 }
@@ -321,6 +325,7 @@ struct TitleLink: View {
 struct LikeButton: View {
     @Environment(\.coverPalette) private var palette
     let uri: String
+    /// The symbol's size in Compact points; the button scales it.
     var size: CGFloat = 13
     /// Track rows keep an empty star out of sight until hovered; a filled one
     /// always shows. Their menus carry the same action for keyboard and VoiceOver.
@@ -329,6 +334,7 @@ struct LikeButton: View {
     @ReducedMotion private var reduceMotion
     /// Bounces on the user's click, not when liked state arrives or the track changes.
     @ViewState private var presses = 0
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         let liked = library.isLiked(uri) ?? false
@@ -337,11 +343,11 @@ struct LikeButton: View {
             Task { await library.toggleLike(uri) }
         } label: {
             Image(systemName: liked ? "star.fill" : "star")
-                .font(.system(size: size))
+                .floeFont(size: size)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, value: reduceMotion ? 0 : presses)
                 .foregroundStyle(liked ? palette.highlight : Theme.tertiary)
-                .frame(width: 22, height: 22)
+                .frame(width: scale(22), height: scale(22))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

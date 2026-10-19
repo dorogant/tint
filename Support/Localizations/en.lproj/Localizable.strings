@@ -264,3 +264,10 @@
 "This app is built into this copy of Tint." = "This app is built into this copy of Tint.";
 "No app yet: Tint asks for one when you connect your library." = "No app yet: Tint asks for one when you connect your library.";
 "Changing the app disconnects your library; connect it again in the main window." = "Changing the app disconnects your library; connect it again in the main window.";
+/* Settings: interface size */
+"Size" = "Size";
+"Interface size" = "Interface size";
+"Compact" = "Compact";
+"Standard" = "Standard";
+"Large" = "Large";
+"Sets the size of text, artwork and spacing in the main window." = "Sets the size of text, artwork and spacing in the main window.";

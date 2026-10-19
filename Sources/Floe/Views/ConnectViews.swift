@@ -10,6 +10,7 @@ struct ConnectPanel: View {
     @Environment(ConnectModel.self) private var connect
     @Environment(PlayerModel.self) private var player
     @Environment(AppSettings.self) private var settings
+    @Environment(\.interfaceScale) private var scale
     let section: ConnectSection
     /// The device a transfer was requested for, until the device list confirms it.
     @ViewState private var pendingDevice: String?
@@ -17,10 +18,10 @@ struct ConnectPanel: View {
     @Namespace private var activeDevice
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: scale(16)) {
             HStack {
                 Text(LocalizedStringKey(section.title))
-                    .font(.system(size: 18, weight: .bold))
+                    .floeFont(size: 18, weight: .bold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if connect.isLoading {
@@ -51,18 +52,18 @@ struct ConnectPanel: View {
                 }
             }
         }
-        .padding(20).frame(width: 390)
+        .padding(scale(20)).frame(width: scale(390))
         .environment(\.locale, settings.locale)
         .floeState(value: connect.isLoading)
         .task(id: section == .queue ? player.track?.uri : "devices") { await connect.refresh(section) }
     }
 
     private func notice(systemImage: String, tint: Color, text: Text) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: scale(10)) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+                .floeFont(size: 13, weight: .semibold)
                 .foregroundStyle(tint)
-                .frame(width: 28, height: 28)
+                .frame(width: scale(28), height: scale(28))
                 .background(tint.opacity(0.14), in: Circle())
             text
                 .font(.callout)
@@ -72,35 +73,35 @@ struct ConnectPanel: View {
     }
 
     private var queueContents: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: scale(8)) {
             if let current = connect.current {
                 caption("Now playing")
                 QueueRow(track: current, current: true)
             }
-            caption("Up next").padding(.top, connect.current == nil ? 0 : 6)
+            caption("Up next").padding(.top, scale(connect.current == nil ? 0 : 6))
             if connect.queue.isEmpty && !connect.isLoading {
-                HStack(spacing: 10) {
+                HStack(spacing: scale(10)) {
                     Image(systemName: "text.badge.plus")
                         .foregroundStyle(Theme.tertiary)
-                        .frame(width: 36, height: 36)
-                        .background(Theme.well, in: RoundedRectangle(cornerRadius: 6))
+                        .frame(width: scale(36), height: scale(36))
+                        .background(Theme.well, in: RoundedRectangle(cornerRadius: scale(6)))
                     Text("No queued songs.").foregroundStyle(Theme.secondary)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, scale(8))
             }
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: scale(2)) {
                     ForEach(Array(connect.queue.enumerated()), id: \.offset) { _, track in QueueRow(track: track) }
                 }
             }
-            .frame(maxHeight: 340)
+            .frame(maxHeight: scale(340))
             Text("Only songs are shown.").font(.caption).foregroundStyle(Theme.tertiary)
         }
     }
 
     private var deviceContents: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(spacing: 2) {
+        VStack(alignment: .leading, spacing: scale(10)) {
+            VStack(spacing: scale(2)) {
                 ForEach(connect.devices, id: \.id) { device in
                     DeviceRow(device: device, pending: connect.transferring && pendingDevice == device.id,
                               namespace: activeDevice) {
@@ -114,7 +115,7 @@ struct ConnectPanel: View {
             }
             .floeGlide(value: connect.devices.first(where: \.isActive)?.id)
             if connect.devices.isEmpty && !connect.isLoading {
-                Text("No devices found.").foregroundStyle(Theme.secondary).padding(.horizontal, 8)
+                Text("No devices found.").foregroundStyle(Theme.secondary).padding(.horizontal, scale(8))
             }
             Divider().padding(.vertical, 4)
             Button("Play on Tint") { player.resume() }.disabled(!player.isConnected)
@@ -127,11 +128,11 @@ struct ConnectPanel: View {
 
     private func caption(_ text: LocalizedStringKey) -> some View {
         Text(text)
-            .font(.system(size: 10.5, weight: .semibold))
+            .floeFont(size: 10.5, weight: .semibold)
             .tracking(0.5)
             .textCase(.uppercase)
             .foregroundStyle(Theme.tertiary)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, scale(8))
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -142,26 +143,27 @@ private struct QueueRow: View {
     @Environment(\.coverPalette) private var palette
     let track: Track
     var current = false
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            ArtworkView(images: track.album?.images, size: 36, cornerRadius: 5)
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: scale(10)) {
+            ArtworkView(images: track.album?.images, size: scale(36), cornerRadius: scale(5))
+            VStack(alignment: .leading, spacing: scale(3)) {
                 Text(track.name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .floeFont(size: 12, weight: .semibold)
                     .foregroundStyle(current ? palette.highlight : .white)
                     .lineLimit(1)
-                Text(track.artistLine).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                Text(track.artistLine).floeFont(size: 11).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             Spacer()
             Text(Format.duration(ms: Double(track.durationMs)))
                 .font(.caption).monospacedDigit().foregroundStyle(Theme.secondary)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, scale(8))
+        .padding(.vertical, scale(5))
         .background {
-            let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: scale(8), style: .continuous)
             if current {
                 shape.fill(palette.accent.opacity(hovering ? 0.18 : 0.12))
             } else {
@@ -184,6 +186,7 @@ private struct DeviceRow: View {
     let pending: Bool
     let namespace: Namespace.ID
     let action: () -> Void
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     private var symbol: String {
@@ -201,35 +204,35 @@ private struct DeviceRow: View {
     var body: some View {
         let active = device.isActive
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: scale(12)) {
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .medium))
+                    .floeFont(size: 14, weight: .medium)
                     .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
-                    .frame(width: 32, height: 32)
+                    .frame(width: scale(32), height: scale(32))
                     .background(active ? palette.accent.opacity(0.2) : Color.white.opacity(0.07), in: Circle())
                 Text(device.name)
-                    .font(.system(size: 13, weight: active ? .semibold : .medium))
+                    .floeFont(size: 13, weight: active ? .semibold : .medium)
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: scale(8))
                 if pending {
                     ProgressView().controlSize(.small)
                 } else if active {
                     // Trailing, so rows keep their layout and only colour changes hands.
-                    HStack(spacing: 6) {
-                        Text("Active device").font(.system(size: 11, weight: .medium))
+                    HStack(spacing: scale(6)) {
+                        Text("Active device").floeFont(size: 11, weight: .medium)
                         Image(systemName: "checkmark.circle.fill")
                     }
                     .foregroundStyle(palette.highlight)
                     .transition(.opacity)
                 } else if device.isRestricted {
-                    Image(systemName: "lock.fill").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                    Image(systemName: "lock.fill").floeFont(size: 11).foregroundStyle(Theme.tertiary)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, scale(8))
+            .padding(.vertical, scale(6))
             .background {
-                let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+                let shape = RoundedRectangle(cornerRadius: scale(10), style: .continuous)
                 ZStack {
                     shape.fill(Theme.hover).opacity(hovering && !active ? 1 : 0)
                     if active {

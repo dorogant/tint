@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         ZStack {
@@ -25,7 +26,7 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .frame(minWidth: 940, minHeight: 600)
+        .frame(minWidth: scale(940), minHeight: scale(600))
     }
 }
 
@@ -39,9 +40,10 @@ struct MainView: View {
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
     @ReducedMotion private var still
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        VStack(spacing: Theme.margin) {
+        VStack(spacing: scale.margin) {
             PlaybackStatusView()
             ZStack {
                 // Library stays mounted under Now Playing and Lyrics, so raising one never
@@ -58,11 +60,11 @@ struct MainView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if navigator.surface != .nowPlaying {
-                MiniPlayerView().frame(height: 76).glassPanel()
+                MiniPlayerView().frame(height: scale(MiniPlayerView.height)).glassPanel()
                     .transition(still ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .padding([.horizontal, .bottom], Theme.margin)
+        .padding([.horizontal, .bottom], scale.margin)
         .environment(\.heroNamespace, hero)
         .animation(still ? FloeMotion.fade : FloeMotion.surface, value: navigator.surface)
         // A status banner's room opens on the same spring it drops in on.
@@ -74,13 +76,13 @@ struct MainView: View {
     }
 
     private var libraryPanel: some View {
-        HStack(spacing: Theme.margin) {
-            SidebarView().frame(width: 240).glassPanel()
+        HStack(spacing: scale.margin) {
+            SidebarView().frame(width: scale(240)).glassPanel()
             ZStack {
                 // Every page starts on the same guides: content on the
                 // gutter, plates and full-bleed shelves reaching past it.
                 ScrollView {
-                    page.padding(.horizontal, Theme.gutter).padding(.top, Theme.gutter - 1).padding(.bottom, 32)
+                    page.padding(.horizontal, scale.gutter).padding(.top, scale.gutter - 1).padding(.bottom, scale(32))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 // A scroll view touching the toolbar's edge reaches up under
@@ -96,7 +98,7 @@ struct MainView: View {
                 .transition(.opacity)
             }
             // Shelves scroll to the panel's edge; keep them inside its corners.
-            .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: scale.corner, style: .continuous))
             .glassPanel()
             .floeAnimation(value: navigator.current)
         }
@@ -106,7 +108,7 @@ struct MainView: View {
         switch navigator.surface {
         case .library: EmptyView()
         case .nowPlaying: NowPlayingView().glassPanel()
-        case .lyrics: LyricsView().frame(maxWidth: 780).frame(maxWidth: .infinity).glassPanel()
+        case .lyrics: LyricsView().frame(maxWidth: scale(780)).frame(maxWidth: .infinity).glassPanel()
         }
     }
 
@@ -217,13 +219,16 @@ private struct SurfaceSegment: View {
     let pill: Namespace.ID
     let pillID: String
     let action: () -> Void
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
         Button(action: action) {
             // The toolbar flattens translucent text colours, so dim with opacity.
+            // The platter keeps the system's height at every interface size, so
+            // the text grows only a little, staying well inside the pill.
             Text(title)
-                .font(.system(size: 12.5, weight: .medium))
+                .font(.system(size: min(scale.text(12.5), 13.5), weight: .medium))
                 .foregroundStyle(.white)
                 .opacity(selected ? 1 : (hovering ? 0.88 : 0.6))
                 .padding(.horizontal, 16)

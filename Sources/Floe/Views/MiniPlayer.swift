@@ -6,6 +6,7 @@ struct MiniPlayerView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
     @ViewState private var hovering = false
 
@@ -13,26 +14,28 @@ struct MiniPlayerView: View {
     /// window's centre line, under the toolbar's switcher. Just wider than
     /// the transport, so a narrow window leaves the song as much room as it can.
     private static let sideWidth: CGFloat = 200
+    /// The bar's height in Compact points.
+    static let height: CGFloat = 76
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: scale(16)) {
             // A 44 pt Play button leaves 16 pt above and below, the bar's side inset.
-            TransportControls(playSize: 44).frame(width: Self.sideWidth, alignment: .leading)
+            TransportControls(playSize: 44).frame(width: scale(Self.sideWidth), alignment: .leading)
             Spacer(minLength: 0)
-            nowPlaying.frame(maxWidth: 560)
+            nowPlaying.frame(maxWidth: scale(560))
             Spacer(minLength: 0)
-            VolumeControl().frame(width: Self.sideWidth, alignment: .trailing)
+            VolumeControl().frame(width: scale(Self.sideWidth), alignment: .trailing)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, scale(16))
     }
 
     @ViewBuilder
     private var nowPlaying: some View {
         if let track = player.displayTrack {
-            HStack(spacing: 12) {
+            HStack(spacing: scale(12)) {
                 MiniCover(url: track.coverURL) { navigator.surface = .nowPlaying }
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
+                VStack(alignment: .leading, spacing: scale(3)) {
+                    HStack(spacing: scale(4)) {
                         // A new song's details rise into place as the old ones lift away.
                         ZStack(alignment: .leading) {
                             details(track).id(track.uri).transition(.trackChange(still: still))
@@ -60,15 +63,15 @@ struct MiniPlayerView: View {
             .onChange(of: track.uri) { library.requestLikedState(track.uri) }
         } else {
             Text("Pick something to play")
-                .font(.system(size: 13))
+                .floeFont(size: 13)
                 .foregroundStyle(Theme.tertiary)
         }
     }
 
     private func details(_ track: TrackInfo) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: scale(8)) {
             TitleLink(text: track.name) { navigator.openAlbum(of: track, api: library.api) }
-                .font(.system(size: 13, weight: .semibold))
+                .floeFont(size: 13, weight: .semibold)
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .layoutPriority(1)
@@ -81,7 +84,7 @@ struct MiniPlayerView: View {
                     }
                 }
             }
-            .font(.system(size: 12))
+            .floeFont(size: 12)
             .lineLimit(1)
         }
     }
@@ -90,19 +93,19 @@ struct MiniPlayerView: View {
     /// pointer. They keep their room, so the title never reflows.
     private func extras(_ track: TrackInfo) -> some View {
         let shown = hovering
-        return HStack(spacing: 2) {
+        return HStack(spacing: scale(2)) {
             MiniAction(systemImage: "quote.bubble", active: navigator.surface == .lyrics,
                        help: navigator.surface == .lyrics ? "Hide lyrics" : "Show lyrics", action: toggleLyrics)
             Menu {
                 trackItems(track)
             } label: {
-                Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "ellipsis").floeFont(size: 12, weight: .semibold)
             }
             .menuStyle(.button)
             .buttonStyle(.borderless)
             .menuIndicator(.hidden)
             .foregroundStyle(Theme.secondary)
-            .frame(width: 22, height: 22)
+            .frame(width: scale(22), height: scale(22))
             .help("More")
         }
         .opacity(shown ? 1 : 0)
@@ -140,20 +143,21 @@ struct MiniPlayerView: View {
 private struct MiniCover: View {
     let url: URL?
     let open: () -> Void
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
         let lifted = hovering && !still
         Button(action: open) {
-            ArtworkView(url: url, size: 48, cornerRadius: 7)
+            ArtworkView(url: url, size: scale(48), cornerRadius: scale(7))
                 .heroCover()
                 .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: scale(7), style: .continuous)
                         .fill(.black.opacity(0.38))
                         .overlay {
                             Image(systemName: "chevron.up")
-                                .font(.system(size: 14, weight: .bold))
+                                .floeFont(size: 14, weight: .bold)
                                 .foregroundStyle(.white)
                                 .offset(y: lifted || still ? 0 : 2)
                         }
@@ -178,15 +182,16 @@ private struct MiniAction: View {
     let help: LocalizedStringKey
     let action: () -> Void
     @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: active ? "\(systemImage).fill" : systemImage)
-                .font(.system(size: 12, weight: .semibold))
+                .floeFont(size: 12, weight: .semibold)
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
-                .frame(width: 22, height: 22)
+                .frame(width: scale(22), height: scale(22))
                 .background(Circle().fill(Theme.hover).opacity(hovering ? 1 : 0))
                 .contentShape(Circle())
         }
@@ -210,6 +215,7 @@ struct ProgressBar: View {
     @ReducedMotion private var still
     @Environment(\.scenePhase) private var scenePhase
     @Environment(PlayerModel.self) private var player
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var dragFraction: Double?
     @ViewState private var hovering = false
 
@@ -233,22 +239,22 @@ struct ProgressBar: View {
             if large {
                 // The times sit about 6 pt under the track, inside its generous hit area.
                 VStack(spacing: -3) {
-                    track.frame(height: 22)
+                    track.frame(height: scale(22))
                     HStack {
                         elapsed
-                        Spacer(minLength: 8)
+                        Spacer(minLength: scale(8))
                         remaining
                     }
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .font(scale.font(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.secondary)
                 }
             } else {
-                HStack(spacing: 8) {
-                    elapsed.frame(width: 36, alignment: .trailing)
-                    track.frame(height: 12)
-                    remaining.frame(width: 40, alignment: .trailing)
+                HStack(spacing: scale(8)) {
+                    elapsed.frame(width: scale(36), alignment: .trailing)
+                    track.frame(height: scale(12))
+                    remaining.frame(width: scale(40), alignment: .trailing)
                 }
-                .font(.system(size: 10.5).monospacedDigit())
+                .font(scale.font(size: 10.5).monospacedDigit())
                 .foregroundStyle(Theme.tertiary)
             }
         }
@@ -301,16 +307,17 @@ struct VolumeControl: View {
     @ViewState private var hovering = false
     @ViewState private var speakerHovering = false
     @ViewState private var audibleVolume = 0.6
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: scale(8)) {
             Button(action: toggleMute) {
                 Image(systemName: player.volume > 0 ? "speaker.wave.3.fill" : "speaker.slash.fill",
                       variableValue: player.volume)
                     .contentTransition(.symbolEffect(.replace))
-                    .font(.system(size: 13))
+                    .floeFont(size: 13)
                     .foregroundStyle(speakerHovering ? .white : Theme.secondary)
-                    .frame(width: 22, height: 22)
+                    .frame(width: scale(22), height: scale(22))
                     .contentShape(Rectangle())
             }
             .buttonStyle(TactileButtonStyle())
@@ -330,7 +337,7 @@ struct VolumeControl: View {
                         }
                         .onEnded { _ in dragging = false })
             }
-            .frame(width: 110, height: 14)
+            .frame(width: scale(110), height: scale(14))
             .onHover { hovering = $0 }
             .floeHover(hovering || dragging)
         }

@@ -264,3 +264,10 @@
 "This app is built into this copy of Tint." = "Цей застосунок вбудовано в цю копію Tint.";
 "No app yet: Tint asks for one when you connect your library." = "Застосунку ще немає: Tint попросить його, коли ви підключатимете медіатеку.";
 "Changing the app disconnects your library; connect it again in the main window." = "Зміна застосунку відключає медіатеку; підключіть її знову в головному вікні.";
+/* Settings: interface size */
+"Size" = "Розмір";
+"Interface size" = "Розмір інтерфейсу";
+"Compact" = "Компактний";
+"Standard" = "Стандартний";
+"Large" = "Великий";
+"Sets the size of text, artwork and spacing in the main window." = "Визначає розмір тексту, обкладинок і відступів у головному вікні.";

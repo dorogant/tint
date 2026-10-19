@@ -24,6 +24,8 @@ struct LayoutRender {
         var defaults: [String: Any] = ["appLanguage": "en",
                                        "reduceMotion": environment["FLOE_LAYOUT_REDUCE_MOTION"] == "1"]
         if environment["FLOE_LAYOUT_REAL_GLASS"] != "1" { defaults["FloeSnapshotDir"] = output.path }
+        // FLOE_LAYOUT_SIZE=compact|standard|large picks the interface size (default: the app's).
+        if let size = environment["FLOE_LAYOUT_SIZE"] { defaults["interfaceSize"] = size }
         UserDefaults.standard.setVolatileDomain(defaults, forName: UserDefaults.argumentDomain)
 
         let app = NSApplication.shared
@@ -64,6 +66,7 @@ struct LayoutRender {
         .environment(visuals)
         .environment(settings)
         .environment(ConnectModel(api: api))
+        .environment(\.interfaceScale, settings.interfaceSize.scale)
         .environment(\.coverPalette, CoverPalette.fixed(settings.fixedAccent))
         // The harness can't activate without taking focus from whatever's in front;
         // FLOE_LAYOUT_ACTIVE=1 measures as if it were the frontmost app.
@@ -185,7 +188,11 @@ struct LayoutRender {
                 navigator.select(.home)
                 window.setContentSize(CGSize(width: 1220, height: 800))
             }),
-            ("home-minimum-size", { window.setContentSize(CGSize(width: 940, height: 600)) }),
+            // RootView's minimum, which grows with the interface size.
+            ("home-minimum-size", {
+                let scale = settings.interfaceSize.scale
+                window.setContentSize(CGSize(width: scale(940), height: scale(600)))
+            }),
         ]
         for (name, setUp) in scenarios where only?.contains(name) ?? true {
             await setUp()

@@ -4,18 +4,20 @@ import SwiftUI
 /// the pointer by itself: a hover wash, a press that squashes (previous and
 /// next lean the way they go), and a dot under shuffle and repeat while on.
 struct TransportControls: View {
+    /// In Compact points; the buttons scale themselves.
     var playSize: CGFloat = 42
     @Environment(PlayerModel.self) private var player
+    @Environment(\.interfaceScale) private var scale
 
     private var large: Bool { playSize >= 50 }
 
     var body: some View {
         let icon: CGFloat = large ? 17 : 15
-        HStack(spacing: large ? 10 : 4) {
+        HStack(spacing: scale(large ? 10 : 4)) {
             TransportButton(systemImage: "shuffle", size: icon - 1, active: player.shuffle, crossover: true,
                             label: "Shuffle") { player.toggleShuffle() }
             TransportButton(systemImage: "backward.fill", size: icon, nudge: -1, label: "Previous") { player.previous() }
-            PlayPauseButton(size: playSize)
+            PlayPauseButton(compactSize: playSize)
             TransportButton(systemImage: "forward.fill", size: icon, nudge: 1, label: "Next") { player.next() }
             TransportButton(systemImage: player.repeatMode == .track ? "repeat.1" : "repeat", size: icon - 1,
                             active: player.repeatMode != .off, label: "Repeat", value: repeatValue) {
@@ -37,6 +39,7 @@ struct TransportControls: View {
 /// rest give a short symbol bounce, or shuffle's crossover kick.
 private struct TransportButton: View {
     let systemImage: String
+    /// In Compact points.
     let size: CGFloat
     /// -1 leans left on press, 1 leans right.
     var nudge: CGFloat = 0
@@ -47,19 +50,20 @@ private struct TransportButton: View {
     var value: LocalizedStringKey?
     let action: () -> Void
     @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
     @ViewState private var hovering = false
     @ViewState private var presses = 0
 
     var body: some View {
         let on = active == true
-        let diameter = (size * 2.1).rounded()
+        let diameter = scale((size * 2.1).rounded())
         Button {
             presses += 1
             action()
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: size, weight: .medium))
+                .floeFont(size: size, weight: .medium)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, options: .speed(1.4), value: still || crossover || nudge != 0 ? 0 : presses)
                 .foregroundStyle(on ? palette.highlight : (hovering ? .white : Theme.secondary))
@@ -75,7 +79,7 @@ private struct TransportButton: View {
                     if active != nil {
                         // The "on" dot rises a couple of points into place.
                         Circle().fill(palette.highlight)
-                            .frame(width: 4, height: 4)
+                            .frame(width: scale(4), height: scale(4))
                             .opacity(on ? 1 : 0)
                             .offset(y: on || still ? 0 : 2)
                             .padding(.bottom, diameter * 0.07)
@@ -98,14 +102,17 @@ private struct TransportButton: View {
 /// The accent disc: its symbol morphs between play and pause, a soft glow
 /// gathers under the pointer, and a press squashes it slightly.
 private struct PlayPauseButton: View {
-    let size: CGFloat
+    /// In Compact points.
+    let compactSize: CGFloat
     @Environment(PlayerModel.self) private var player
     @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
         let busy = player.isPlaying || player.isLoading
+        let size = scale(compactSize)
         Button(action: player.togglePlayPause) {
             Group {
                 if player.isLoading {

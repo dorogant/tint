@@ -9,7 +9,7 @@ TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 VIEW="${1:-$ROOT/Sources/Floe/Views/LyricsView.swift}"
 swiftc -swift-version 6 -O \
-    "$ROOT/Sources/Floe/Support/ViewState.swift" \
+    "$ROOT/Sources/Floe/Support/ViewState.swift" "$ROOT/Sources/Floe/Support/InterfaceScale.swift" \
     "$ROOT/Sources/Floe/Views/Motion.swift" \
     "$ROOT/Sources/Floe/Views/LoopingSymbol.swift" "$ROOT/Sources/Floe/Lyrics/LRC.swift" "$VIEW" \
     "$ROOT/Tests/LyricsRenderingSupport.swift" \

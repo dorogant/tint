@@ -12,6 +12,7 @@ final class AppSettings {
     var language: String { didSet { defaults.set(language, forKey: "appLanguage") } }
     var glassOpacity: Double { didSet { defaults.set(glassOpacity, forKey: "glassOpacity") } }
     var fixedAccent: String { didSet { defaults.set(fixedAccent, forKey: "fixedAccent") } }
+    var interfaceSize: InterfaceSize { didSet { defaults.set(interfaceSize.rawValue, forKey: "interfaceSize") } }
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -27,6 +28,7 @@ final class AppSettings {
                            max(Self.glassOpacityRange.lowerBound, defaults.object(forKey: "glassOpacity") as? Double ?? 0.62))
         let accent = defaults.string(forKey: "fixedAccent") ?? "blue"
         fixedAccent = ["green", "blue", "violet", "amber"].contains(accent) ? accent : "blue"
+        interfaceSize = defaults.string(forKey: "interfaceSize").flatMap(InterfaceSize.init) ?? .standard
     }
 
     var playbackConfiguration: PlaybackConfiguration {
@@ -35,6 +37,21 @@ final class AppSettings {
 
     var locale: Locale {
         Locale(identifier: language == "system" ? L10n.language : language)
+    }
+}
+
+/// How large the main window draws its type, spacing and artwork. Compact is
+/// the original layout; Standard, the default, reads a size up.
+enum InterfaceSize: String, CaseIterable, Identifiable, Sendable {
+    case compact, standard, large
+    var id: Self { self }
+
+    var scale: InterfaceScale {
+        switch self {
+        case .compact: .compact
+        case .standard: .standard
+        case .large: .large
+        }
     }
 }
 

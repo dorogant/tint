@@ -50,13 +50,17 @@ struct MusicLayers: Equatable, Sendable {
     /// How regular the hits are, 0 (no pulse) to 1 (a steady four-on-the-floor).
     var confidence: Float = 0
     /// The strongest pitch class in the harmony, 0..<12 with C at 0, smoothed
-    /// around the circle so it glides between neighbouring notes.
+    /// around the circle so it glides between neighbouring notes. A chord reads
+    /// as its root (C major as C, not its louder fifth); it holds while nothing
+    /// is tonal, and stays 0 until the first harmony.
     var pitchClass: Float = 0
-    /// How clearly that pitch class stands out from the other eleven, 0…1.
+    /// How clearly that pitch class stands out from the other eleven, 0…1:
+    /// noise and drums near 0, a sustained chord or sung note 0.6–1.
     var tonality: Float = 0
     /// Where the spectrum's weight sits, 0 (dark, bass-heavy) to 1 (bright, airy).
     var brightness: Float = 0
-    /// Rising tension: a riser, a snare roll or a filter opening, 0…1.
+    /// Rising tension: a riser, a snare roll or a filter opening, 0…1. Climbs
+    /// over seconds while the kick sits out, falls back on a drop or as it fades.
     var build: Float = 0
     /// How hard the energy came back after a build on this frame, otherwise 0.
     var drop: Float = 0
@@ -304,8 +308,8 @@ struct LayerAnalyzer {
 }
 
 /// Hears the harmony: a 12-class chroma from the spectrum's tonal peaks,
-/// smoothed over about 0.4 s so it follows chord changes rather than every
-/// note, and the root that chroma implies.
+/// smoothed over about a third of a second so it follows chord changes rather
+/// than every note, and the root that chroma implies.
 struct HarmonyFollower {
     private static let binHertz = SpectrumAnalyzer.sampleRate / Float(SpectrumAnalyzer.size)
     /// 220 Hz–2.5 kHz: below it two bins span more than a semitone; above it

@@ -30,20 +30,28 @@ final class CrawlingCoverView: NSView {
     private let imageLayer = CALayer()
     private let maskLayer = CAShapeLayer()
     private let rimLayer = CAShapeLayer()
+    /// Hold the paths at the size they were built for and scale them to the
+    /// current size while a resize is in flight.
+    private let maskHost = CALayer()
+    private let rimHost = CALayer()
     private var image: CGImage?
     private var running = false
     private var epoch: CFTimeInterval?
     private var pathSize: CGSize = .zero
+    private var rimWidth: CGFloat = 0
+    private var settle: Task<Void, Never>?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.addSublayer(content)
         content.addSublayer(imageLayer)
-        content.addSublayer(rimLayer)
+        content.addSublayer(rimHost)
+        rimHost.addSublayer(rimLayer)
+        maskHost.addSublayer(maskLayer)
         imageLayer.contentsGravity = .resizeAspectFill
         imageLayer.masksToBounds = true
-        imageLayer.mask = maskLayer
+        imageLayer.mask = maskHost
         rimLayer.fillColor = nil
         rimLayer.lineJoin = .round
         // Start frozen; `update` sets the clock running.
@@ -76,10 +84,14 @@ final class CrawlingCoverView: NSView {
             self.image = image
         }
         rimLayer.strokeColor = rim.cgColor
-        rimLayer.lineWidth = rimWidth
+        self.rimWidth = rimWidth
+        rimLayer.lineWidth = rimWidth / hostScale
         CATransaction.commit()
         setRunning(running)
     }
+
+    /// How far the hosts currently stretch the paths (1 once they're rebuilt).
+    private var hostScale: CGFloat { rimHost.sublayerTransform.m11 }
 
     override func layout() {
         super.layout()
@@ -87,12 +99,25 @@ final class CrawlingCoverView: NSView {
         CATransaction.setDisableActions(true)
         content.frame = bounds
         imageLayer.frame = bounds
-        for shape in [maskLayer, rimLayer] {
-            shape.frame = bounds
-        }
-        if bounds.size != pathSize, bounds.width > 0 {
-            pathSize = bounds.size
-            installMotion()
+        for host in [maskHost, rimHost] { host.frame = bounds }
+        for shape in [maskLayer, rimLayer] { shape.position = CGPoint(x: bounds.width / 2, y: bounds.height / 2) }
+        if pathSize == .zero {
+            rebuild()
+        } else if bounds.width > 0, bounds.height > 0 {
+            // Scaling mid-flight is free on the render server; rebuilding the
+            // paths every frame of the hero flight or the lyrics toggle was
+            // main-thread work. Rebuild once the size has been still a moment.
+            let scale = CATransform3DMakeScale(
+                bounds.width / pathSize.width, bounds.height / pathSize.height, 1)
+            if !CATransform3DEqualToTransform(scale, rimHost.sublayerTransform) {
+                for host in [maskHost, rimHost] { host.sublayerTransform = scale }
+                rimLayer.lineWidth = rimWidth / hostScale
+                settle?.cancel()
+                settle = bounds.size == pathSize ? nil : Task { @MainActor [weak self] in
+                    guard (try? await Task.sleep(for: .seconds(0.15))) != nil else { return }
+                    self?.rebuild()
+                }
+            }
         }
         CATransaction.commit()
     }
@@ -100,7 +125,25 @@ final class CrawlingCoverView: NSView {
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         let scale = window?.backingScaleFactor ?? 2
-        for layer in [content, imageLayer, maskLayer, rimLayer] { layer.contentsScale = scale }
+        for layer in [content, imageLayer, maskHost, rimHost, maskLayer, rimLayer] { layer.contentsScale = scale }
+    }
+
+    /// Builds the paths at the current size and drops the stretch.
+    private func rebuild() {
+        settle?.cancel()
+        settle = nil
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pathSize = bounds.size
+        for host in [maskHost, rimHost] { host.sublayerTransform = CATransform3DIdentity }
+        for shape in [maskLayer, rimLayer] {
+            shape.bounds = CGRect(origin: .zero, size: pathSize)
+            shape.position = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        }
+        rimLayer.lineWidth = rimWidth
+        installMotion()
+        CATransaction.commit()
     }
 
     /// The petals turn with the mask (the image doesn't), and the ripple

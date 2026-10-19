@@ -1,6 +1,6 @@
 # 003 — Resize the crawling cover without rebuilding its motion every frame
 
-- **Status**: TODO
+- **Status**: DONE
 - **Commit**: e102e24
 - **Severity**: HIGH
 - **Category**: Performance

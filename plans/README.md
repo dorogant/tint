@@ -6,7 +6,7 @@ Written by the improve-animations audit at commit e102e24 (2026-10-19). Each pla
 |---|---|---|---|
 | 001 | [Keep Library mounted and make the surface switch light](001-mounted-library-light-surface-switch.md) | HIGH | TODO |
 | 002 | [Lyrics open on the current line; lighter lyrics swap](002-lyrics-open-on-current-line.md) | MEDIUM | TODO |
-| 003 | [Resize the crawling cover without rebuilding its motion](003-crawling-cover-cheap-resize.md) | HIGH | TODO |
+| 003 | [Resize the crawling cover without rebuilding its motion](003-crawling-cover-cheap-resize.md) | HIGH | DONE |
 | 004 | [With Reduce Motion, fade instead of cutting](004-reduce-motion-fades-not-cuts.md) | HIGH | TODO |
 | 005 | [Feel polish: like star, mini-player extras, shelf cards, cover dip](005-feel-polish.md) | MEDIUM | TODO |
 

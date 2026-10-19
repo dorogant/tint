@@ -34,6 +34,11 @@ actor LyricsService {
     private var busy = false
     private var nextRequest = Date.distantPast
 
+    /// LRCLIB asks clients to name themselves and link a homepage.
+    /// PLACEHOLDER: set the real repository URL before publishing.
+    static let homepage = "https://github.com/<owner>/tint"
+    static let userAgent = "Tint v0.1.0 (\(homepage))"
+
     init(session: URLSession? = nil) {
         if let session { self.session = session } else {
             let config = URLSessionConfiguration.ephemeral
@@ -55,7 +60,7 @@ actor LyricsService {
             url.queryItems?.append(URLQueryItem(name: "duration", value: String(signature.duration)))
         }
         var request = URLRequest(url: url.url!)
-        request.setValue("Tint v0.1.0 (personal macOS client; com.antonchurchyn.floe)", forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         return request
     }

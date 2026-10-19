@@ -14,7 +14,11 @@ final class LibraryModel {
     private(set) var playlists: [PlaylistRef] = []
     private(set) var pinnedIDs: [String]
     private(set) var recent: [PlayHistory] = []
+    /// Top artists as Spotify ranks them, hidden ones included.
     private(set) var topArtists: [Artist] = []
+    /// Artists the user hid from the Top Artists shelf. Spotify can't drop an
+    /// artist from its ranking, so this only filters Tint's shelf.
+    private(set) var hiddenArtists: [HiddenArtist]
     private(set) var savedAlbums: [AlbumRef] = []
     private(set) var loadError: String?
     /// Bumped when Liked Songs changes, so its page reloads.
@@ -30,6 +34,8 @@ final class LibraryModel {
     init(api: WebAPI) {
         self.api = api
         pinnedIDs = UserDefaults.standard.stringArray(forKey: "pinnedPlaylists") ?? []
+        hiddenArtists = UserDefaults.standard.data(forKey: Self.hiddenArtistsKey)
+            .flatMap { try? JSONDecoder().decode([HiddenArtist].self, from: $0) } ?? []
     }
 
     var pinnedPlaylists: [PlaylistRef] {
@@ -108,6 +114,33 @@ final class LibraryModel {
             pinnedIDs.append(id)
         }
         UserDefaults.standard.set(pinnedIDs, forKey: "pinnedPlaylists")
+    }
+
+    // MARK: - Hidden top artists
+
+    private static let hiddenArtistsKey = "hiddenTopArtists"
+    /// The shelf shows this many; more are fetched so hiding one leaves it full.
+    static let topArtistsShown = 12
+
+    /// The Top Artists shelf: Spotify's ranking without the hidden artists.
+    var shownTopArtists: [Artist] {
+        let hidden = Set(hiddenArtists.map(\.uri))
+        return Array(topArtists.filter { !hidden.contains($0.uri) }.prefix(Self.topArtistsShown))
+    }
+
+    func hide(_ artist: Artist) {
+        guard !hiddenArtists.contains(where: { $0.uri == artist.uri }) else { return }
+        hiddenArtists.append(HiddenArtist(uri: artist.uri, name: artist.name))
+        saveHiddenArtists()
+    }
+
+    func unhide(_ artist: HiddenArtist) {
+        hiddenArtists.removeAll { $0.uri == artist.uri }
+        saveHiddenArtists()
+    }
+
+    private func saveHiddenArtists() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(hiddenArtists), forKey: Self.hiddenArtistsKey)
     }
 
     // MARK: - Liked songs

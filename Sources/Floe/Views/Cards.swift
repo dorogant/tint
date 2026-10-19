@@ -3,7 +3,8 @@ import SwiftUI
 /// Cover + two lines; used on Home, search and artist pages. Under the pointer
 /// the artwork rises a few points with a deeper shadow and brightens slightly,
 /// and, given `play`, a Play button rises into its corner. The whole card dips
-/// on press. Play is also in the context menu and the VoiceOver actions.
+/// on press. Play is also in the context menu and the VoiceOver actions, after
+/// which come any extra `actions`.
 struct Card: View {
     @ReducedMotion private var reduceMotion
     let images: [SpotifyImage]?
@@ -12,6 +13,7 @@ struct Card: View {
     var subtitle = ""
     var circle = false
     var size: CGFloat = 156
+    var actions: [CardAction] = []
     let action: () -> Void
     /// Plays the item in place, without opening it.
     var play: (() -> Void)? = nil
@@ -58,8 +60,17 @@ struct Card: View {
         .onHover { hovering = $0 }
         .floeHover(hovering)
         .animation(reduceMotion ? FloeMotion.fade : FloeMotion.press(pressed), value: pressed)
-        .modifier(PlayMenu(play: play))
+        .modifier(PlayMenu(play: play, actions: actions))
     }
+}
+
+/// A context menu and VoiceOver action beyond Play.
+struct CardAction: Identifiable {
+    let title: LocalizedStringKey
+    let systemImage: String
+    let action: () -> Void
+    /// A card's actions differ in their symbols.
+    var id: String { systemImage }
 }
 
 extension View {
@@ -107,14 +118,25 @@ struct HoverPlayButton: View {
 }
 
 /// Play without the pointer: in the context menu and as a VoiceOver action.
+/// Any extra actions follow it in both.
 struct PlayMenu: ViewModifier {
     let play: (() -> Void)?
+    var actions: [CardAction] = []
 
     @ViewBuilder func body(content: Content) -> some View {
-        if let play {
+        if play != nil || !actions.isEmpty {
             content
-                .contextMenu { Button("Play", action: play) }
-                .accessibilityAction(named: Text("Play"), play)
+                .contextMenu {
+                    if let play { Button("Play", action: play) }
+                    if play != nil && !actions.isEmpty { Divider() }
+                    ForEach(actions) { item in
+                        Button(item.title, systemImage: item.systemImage, action: item.action)
+                    }
+                }
+                .accessibilityActions {
+                    if let play { Button("Play", action: play) }
+                    ForEach(actions) { item in Button(item.title, action: item.action) }
+                }
         } else {
             content
         }

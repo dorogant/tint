@@ -30,6 +30,7 @@ struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(VisualSettings.self) private var visuals
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
     @AppStorage("accentFromCover") private var accentFromCover = false
     @AppStorage("reduceMotion") private var reduceMotion = false
     @Environment(\.coverPalette) private var palette
@@ -202,6 +203,20 @@ struct SettingsView: View {
             Text("Language")
         } footer: {
             note("Song titles, artist names and lyrics stay in their original language.")
+        }
+        SwiftUI.Section {
+            if library.hiddenArtists.isEmpty {
+                Text("No hidden artists").foregroundStyle(.secondary)
+            }
+            ForEach(library.hiddenArtists) { artist in
+                LabeledContent(artist.name) {
+                    Button("Show") { library.unhide(artist) }
+                }
+            }
+        } header: {
+            Text("Hidden artists")
+        } footer: {
+            note("To hide an artist from Your top artists on Home, Control-click it. Spotify's own ranking doesn't change.")
         }
     }
 

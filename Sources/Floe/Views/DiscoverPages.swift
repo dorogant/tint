@@ -52,13 +52,16 @@ struct HomeView: View {
                 }
                 .reveal("recent", order: 2)
             }
-            Shelf(title: "Your top artists", items: library.topArtists.filter { !shown.contains($0.uri) }) { artist in
-                Card(images: artist.images, title: artist.name, circle: true, size: 128) {
+            Shelf(title: "Your top artists", items: library.shownTopArtists.filter { !shown.contains($0.uri) }) { artist in
+                Card(images: artist.images, title: artist.name, circle: true, size: 128, actions: [
+                    CardAction(title: "Hide from Top Artists", systemImage: "eye.slash") { library.hide(artist) },
+                ]) {
                     navigator.push(.artist(artist.id))
                 } play: {
                     player.play(PlayRequest(contextURI: artist.uri))
                 }
             }
+            .floeAnimation(value: library.hiddenArtists)
             .reveal("artists", order: 3)
             if !library.savedAlbums.isEmpty {
                 Shelf(title: "Saved albums", items: library.savedAlbums.filter { !shown.contains($0.uri) }) { album in

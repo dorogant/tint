@@ -136,8 +136,9 @@ extension WebAPI {
         return page.items
     }
 
+    /// More than the shelf shows, so it stays full when the user hides some.
     func topArtists() async throws -> [Artist] {
-        let page: Paging<Artist> = try await get("me/top/artists", ["limit": "12", "time_range": "short_term"])
+        let page: Paging<Artist> = try await get("me/top/artists", ["limit": "30", "time_range": "short_term"])
         return page.items
     }
 

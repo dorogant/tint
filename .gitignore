@@ -17,3 +17,6 @@ credentials.json
 
 # macOS
 .DS_Store
+
+# Agent worktrees and local Claude settings
+/.claude/

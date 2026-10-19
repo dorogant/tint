@@ -115,6 +115,7 @@ struct FloeApp: App {
                 .environment(settings)
                 .environment(visuals)
                 .environment(player)
+                .environment(library)
                 .environment(visualization)
                 .environment(\.locale, settings.locale)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))

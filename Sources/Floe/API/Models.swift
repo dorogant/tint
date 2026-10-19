@@ -122,6 +122,13 @@ struct Artist: Decodable, Sendable, Identifiable {
     let genres: [String]?
 }
 
+/// Enough of an artist to list and un-hide it in Settings without a request.
+struct HiddenArtist: Codable, Hashable, Identifiable {
+    let uri: String
+    let name: String
+    var id: String { uri }
+}
+
 struct Album: Decodable, Sendable {
     let id: String
     let uri: String

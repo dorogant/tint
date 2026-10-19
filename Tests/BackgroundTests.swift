@@ -26,6 +26,7 @@ struct BackgroundTests {
         settingsChecks()
         layerChecks()
         detectorChecks()
+        musicFeatureChecks()
         fluidChecks(device: device)
         beamChecks(device: device)
         mappingChecks(device: device)

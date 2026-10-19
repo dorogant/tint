@@ -14,6 +14,7 @@ swiftc -swift-version 6 -O \
     "$ROOT/Sources/Floe/Visualization/SpectrumAnalyzer.swift" \
     "$ROOT/Sources/Floe/Visualization/VisualSettings.swift" \
     "$ROOT/Sources/Floe/Images/CoverPalette.swift" \
-    "$ROOT/Tests/BackgroundTestSupport.swift" "$ROOT/Tests/BackgroundTests.swift" "$ROOT/Tests/AllocationCounter.swift" \
+    "$ROOT/Tests/BackgroundTestSupport.swift" "$ROOT/Tests/BackgroundTests.swift" "$ROOT/Tests/MusicFeatureTests.swift" \
+    "$ROOT/Tests/AllocationCounter.swift" \
     -o "$TEMP/background-tests"
 "$TEMP/background-tests"

@@ -11,7 +11,10 @@ struct SidebarView: View {
         let metrics = SidebarMetrics(scale)
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: scale(2)) {
+                // Lazy, so only rows on screen exist: with hundreds of playlists every
+                // row's buttons were AppKit views that each mouse move and window
+                // update walked, slowing scrolling everywhere in the window.
+                LazyVStack(alignment: .leading, spacing: scale(2)) {
                     NavRow(title: "Home", systemImage: "house.fill", route: .home, selection: selection)
                     NavRow(title: "Songs", systemImage: "star.fill", route: .songs, selection: selection)
 

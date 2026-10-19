@@ -14,7 +14,9 @@ actor ArtworkCache {
     private let session: URLSession
 
     init(session: URLSession? = nil) {
-        memory.totalCostLimit = 24 * 1024 * 1024 // decoded bitmaps; the disk cache refills it
+        // Decoded bitmaps; the disk cache refills it. Room for a long shelf of
+        // Standard-size cards, so scrolling back doesn't re-decode and re-fade covers.
+        memory.totalCostLimit = 48 * 1024 * 1024
         if let session {
             self.session = session
             return

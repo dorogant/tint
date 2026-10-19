@@ -6,7 +6,7 @@ import Observation
 final class VisualSettings {
     enum Style: String, CaseIterable, Identifiable { case normal, circular; var id: Self { self } }
     enum Shape: String, CaseIterable, Identifiable { case bars, wave; var id: Self { self } }
-    enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams; var id: Self { self } }
+    enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams, bloom; var id: Self { self } }
     nonisolated static let speedRange = 0.25...2.0
     nonisolated static let glowRange = 0.0...2.0
     nonisolated static let punchRange = 0.0...2.0

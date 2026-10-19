@@ -1,7 +1,7 @@
 /// Compiled with Metal at runtime so the CLT-only build needs no Metal compiler.
-/// One library holds both live backgrounds; each gets its own pipeline, built once.
+/// One library holds every live background; each gets its own pipeline, built once.
 enum ReactiveShader {
-    static let source = prelude + fluid + beams
+    static let source = prelude + fluid + beams + bloom
 
     /// The full-screen triangle, value noise, anti-aliased lines, dithering and
     /// the legibility limiter.
@@ -247,6 +247,163 @@ enum ReactiveShader {
         color = 1 - exp(-color * 1.15); // highlights roll off toward white instead of clipping
         float alpha = clamp(0.86 + dot(color, float3(0.33)) * 0.3, 0.0f, 0.97f);
         return float4(color * alpha + dither(in.position.xy), alpha); // premultiplied, over the cover backdrop
+    }
+    """#
+
+    /// A Julia set drawn by its distance estimate: the outline glows as thin
+    /// filaments with a soft halo in the water around them. Inside, the set's
+    /// own conformal coordinate (Koenigs') lays a lace of rings and spokes that
+    /// wraps every bulb, and the heart's light (the mids) fills it; outside, the
+    /// escape time draws faint equipotential ripples. Orbits passing the hat
+    /// constellation glint. Each frame is kept, fading, in a second target, so
+    /// dust a kick scatters leaves trails.
+    private static let bloom = #"""
+    // c: c, then the plane per screen half-height (a complex scale and turn). view: centre, iterations, filament width (px).
+    // size: width, height, trail fade, trail drift. light: glow, heart (mids), glint (hats), beat.
+    // traps: constellation turn (cos, sin), radius, palette walk. wave: drop ring radius, strength, level, neutral.
+    // flags: no trails yet, detail (highs), log of the fixed point's multiplier |λ|, its turn θ.
+    // previous: the trails' centre and span, as drawn last frame.
+    struct BloomUniforms {
+        float4 colors[5]; float4 c; float4 view; float4 size; float4 light; float4 traps; float4 wave; float4 flags;
+        float4 previous;
+    };
+    struct BloomOutput { float4 color [[color(0)]]; float4 trails [[color(1)]]; };
+    static float2 complexMultiply(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+    /// The palette as a loop, eased from colour to colour.
+    static float3 paletteLoop(constant float4 *colors, float t) {
+        t = fract(t) * 5;
+        int i = int(t);
+        float f = t - float(i);
+        f = f * f * (3 - 2 * f);
+        return mix(colors[i % 5].rgb, colors[(i + 1) % 5].rgb, f);
+    }
+    /// A palette colour as light: dark slots are lifted to full strength, so a
+    /// navy reads as blue neon rather than mud. Greys stay grey.
+    static float3 lightTint(constant float4 *colors, float t) {
+        float3 c = paletteLoop(colors, t);
+        return c / max(max(c.r, max(c.g, c.b)), 0.08f);
+    }
+    /// Anti-aliased lines at the integers of `x`, faded out where they crowd
+    /// closer than a few pixels. Works across a wrap of `x` by a whole number.
+    static float contour(float x, float sharpness) {
+        float width = min(fwidth(x), fwidth(fract(x + 0.5)));
+        float across = abs(fract(x + 0.5) - 0.5);
+        float line = 1 - smoothstep(0.0, 1.2 * width + 0.02 / sharpness, across);
+        return line * (1 - smoothstep(0.08, 0.3, width));
+    }
+    fragment BloomOutput floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
+                                           texture2d<float> trails [[texture(0)]]) {
+        float aspect = u.size.x / max(u.size.y, 1.0f);
+        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
+        float2 axis = u.c.zw;
+        float2 z = u.view.xy + complexMultiply(axis, v);
+        float2 point = z;
+        // The cover's colours lie round the set, so each side of it takes its own.
+        float around = atan2(z.y, z.x) * 0.15915494;
+        float pixel = 2 * length(axis) / max(u.size.y, 1.0f);
+        float2 c = u.c.xy;
+        float logRho = u.flags.z, theta = u.flags.w;
+        float2 fixed = 0.5 * exp(logRho) * float2(cos(theta), sin(theta)); // α, whose multiplier is λ = 2α
+        // Inside the cardioid every orbit in the heart settles onto α: stop once it's close.
+        float settle = logRho < -0.004 ? 0.0036 : -1.0;
+        float2 dz = float2(1, 0);
+        float r2 = dot(z, z);
+        // Hats: three trap points turning round the origin.
+        float2 t0 = u.traps.xy * u.traps.z;
+        float2 t1 = complexMultiply(t0, float2(-0.5, 0.8660254));
+        float2 t2 = complexMultiply(t0, float2(-0.5, -0.8660254));
+        float trap = 1e4;
+        int n = int(u.view.z);
+        int i = 0;
+        int state = 0; // 0: still going (on the set's edge, or dust), 1: escaped, 2: settled in the heart
+        for (; i < n; i++) {
+            dz = 2 * complexMultiply(z, dz);
+            z = float2(z.x * z.x - z.y * z.y, 2 * z.x * z.y) + c;
+            r2 = dot(z, z);
+            if (r2 > 1024) { state = 1; break; }
+            if (distance_squared(z, fixed) < settle) { state = 2; break; }
+            trap = min(trap, min(distance_squared(z, t0), min(distance_squared(z, t1), distance_squared(z, t2))));
+        }
+        float steps = float(i + 1);
+        float glow = u.light.x;
+        float hue = u.traps.w;
+
+        // Outside: distance to the set in pixels, and the smooth escape time. An
+        // orbit still going hasn't escaped to measure from; how hard it is still
+        // stretching stands in, so only points right on the edge (or dust) light up.
+        float lr = 0.5 * log(max(r2, 1.0001f));
+        float stretch = rsqrt(max(dot(dz, dz), 1e-30f));
+        float px = (state == 1 ? sqrt(r2) * lr * stretch : stretch) / pixel;
+        float mu = steps - log2(max(lr, 1e-4f));
+        // Inside: Koenigs' coordinate φ = (z − α) / λⁿ, as log-radius and turns.
+        float2 w = z - fixed;
+        float ring = 0.5 * log(max(dot(w, w), 1e-12f)) - steps * logRho;
+        float spoke = (atan2(w.y, w.x) - steps * theta) * 0.15915494;
+        float ripples = contour(mu * 0.5, 1);
+        float lace = max(contour(ring * 1.4, 1), contour(spoke * 6, 2));
+
+        // An orbit still going that has stopped stretching is in the heart, just
+        // settling slowly (near the cardioid's edge); one still stretching is on the edge.
+        // Only a settled orbit has a true φ to draw the lace and light the centres with.
+        bool settled = state == 2;
+        if (state == 0 && dot(dz, dz) < 1e6) state = 2;
+        float3 light = 0;
+        // Only the filaments themselves leave trails: halos and the heart would smear into mud.
+        float3 ink = 0;
+        float heart = u.light.y;
+        if (state != 2) {
+            float3 tint = lightTint(u.colors, hue + around + 0.02 * mu);
+            float width = u.view.w;
+            float core = exp(-0.5 * px * px / (width * width));
+            float halo = exp(-px / (4 + 6 * glow)) * 0.45 * glow + 0.07 * glow / (1 + 0.025 * px);
+            float field = state == 1 ? ripples * 0.07 * exp(-0.008 * px) : 0.0;
+            // Shattered, the outline is spread over a cloud of dust: each grain
+            // gets less of its light, so a kick changes the shape, not the brightness.
+            // Just past the edge the heart turns to a fine fur of dust that takes
+            // ages to escape: it stays dim, so the outline still reads.
+            float spread = 1 / (1 + 60 * max(0.0f, logRho)) / (1 + max(0.0f, mu - 30) / 12);
+            ink = (tint * 1.2 + 0.45) * core * spread;
+            light = ink + tint * halo * spread * spread + lightTint(u.colors, hue + around + 0.5) * field;
+        } else {
+            // The heart: light gathers at the centre of every bulb, where φ is small,
+            // and the lace of φ's rings and spokes glows through the rest.
+            float3 tint = lightTint(u.colors, hue + 0.45 + 0.04 * ring);
+            float centre = settled ? exp(-exp(2 * ring) * 30) : 0.0;
+            lace = settled ? lace : 0.0;
+            light = tint * (0.012 + 0.03 * heart + lace * (0.06 + 0.3 * heart) + centre * (0.05 + 0.6 * heart));
+        }
+        light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9;
+        // The drop's single wave runs out from the middle, lighting the filaments it passes.
+        float wave = exp(-pow((length(v) - u.wave.x) / 0.18, 2.0f)) * u.wave.y;
+        float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 2.2 * wave);
+        light *= level;
+        ink *= level;
+
+        // Trails: last frame, faded and drifting outward a little, under this one.
+        // They're read where this point of the plane was drawn last frame, so they
+        // stay on the set as the view turns and zooms: only the set's own changes smear.
+        float3 kept = 0;
+        if (u.flags.x < 0.5) {
+            constexpr sampler filtered(filter::linear, address::clamp_to_edge);
+            float2 span = u.previous.zw;
+            float2 was = complexMultiply(point - u.previous.xy, float2(span.x, -span.y)) / max(dot(span, span), 1e-12f);
+            float2 st = float2(was.x / aspect * 0.5 + 0.5, 0.5 - was.y * 0.5); // textures run top-down
+            st = 0.5 + (st - 0.5) * (1 - u.size.w);
+            kept = trails.sample(filtered, st).rgb * u.size.z;
+        }
+        float3 total = max(ink, kept);
+        // Trails are kept at full strength but shown softer than the live outline.
+        float3 shown = max(light, kept * 0.6);
+
+        float3 average = (u.colors[0].rgb + u.colors[1].rgb + u.colors[2].rgb + u.colors[3].rgb + u.colors[4].rgb) * 0.2;
+        float3 color = float3(0.008, 0.009, 0.013) + average * 0.02 + shown;
+        color = 1 - exp(-color * 1.2); // highlights roll off instead of clipping
+        color = limitLuma(color, 0.38, 0.6);
+        float alpha = 0.92;
+        BloomOutput out;
+        out.color = float4(color * alpha + dither(in.position.xy), alpha); // premultiplied, over the cover backdrop
+        out.trails = float4(total, 1);
+        return out;
     }
     """#
 }

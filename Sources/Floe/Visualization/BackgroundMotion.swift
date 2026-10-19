@@ -51,6 +51,29 @@ struct BeamUniforms {
     var tints: Heads
 }
 
+/// Matches `BloomUniforms` in `ReactiveShader`.
+struct BloomUniforms {
+    var colors: Palette
+    /// c, then the plane's span per screen half-height as a complex scale and turn.
+    var c: SIMD4<Float>
+    /// The plane's centre, iterations, filament width in pixels.
+    var view: SIMD4<Float>
+    /// Drawable width and height, the trails' fade this frame, their outward drift.
+    var size: SIMD4<Float>
+    /// Glow, the heart's light (the mids), hat glints, the beat's swell.
+    var light: SIMD4<Float>
+    /// The hat constellation's turn (cosine, sine), its radius, the palette's walk.
+    var traps: SIMD4<Float>
+    /// The drop's wave (radius, strength), overall level, 1 for a neutral cover.
+    var wave: SIMD4<Float>
+    /// 1 when there are no trails to read yet, fine detail (the highs), the log of
+    /// the fixed point's multiplier |λ| (the shape's radius, kick included), its turn θ.
+    var flags: SIMD4<Float>
+    /// The trails' view: the centre and span (as in `c`) the kept frame was drawn
+    /// with, so they stay on the set as the view turns and zooms.
+    var previous: SIMD4<Float>
+}
+
 /// The live background's state between frames, apart from Metal so tests can
 /// step it frame by frame: the beat detector, the palette crossfade and each
 /// kind's motion. Analysis frames arrive at 30 Hz through `receive`; `step`
@@ -68,6 +91,7 @@ struct BackgroundAnimator {
     private(set) var colors = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
     private(set) var fluid = FluidMotion()
     private(set) var beams = BeamRig()
+    private(set) var bloom = BloomRig()
     static let crossfade: Float = 1.6
     /// The analysis rate, which is the detector's time step whatever the display does.
     static let analysisInterval: Float = 1 / 30
@@ -97,6 +121,7 @@ struct BackgroundAnimator {
         switch configuration.kind {
         case .fluid: fluid.receive(pulse, configuration: configuration)
         case .beams: beams.receive(pulse, configuration: configuration)
+        case .bloom: bloom.receive(pulse, layers: frame.layers, configuration: configuration)
         }
     }
 
@@ -110,6 +135,7 @@ struct BackgroundAnimator {
         switch configuration.kind {
         case .fluid: fluid.step(by: dt, pulse: pulse, configuration: configuration)
         case .beams: beams.step(by: dt, configuration: configuration)
+        case .bloom: bloom.step(by: dt, configuration: configuration)
         }
     }
 
@@ -155,6 +181,32 @@ struct BackgroundAnimator {
                             haze: SIMD4(haze, configuration.neutral ? 1 : 0),
                             floorColors: (SIMD4(palette[pair.bass], 0), SIMD4(palette[pair.treble], 0)),
                             heads: rig.heads, tints: rig.tints)
+    }
+
+    func bloomUniforms(width: Float, height: Float) -> BloomUniforms {
+        let rig = bloom
+        let c = rig.c
+        // The view fits the set at rest; a build dives toward the edge point β,
+        // which glides in from where it sits toward the middle of the screen
+        // (its distance from the middle shrinks as the zoom grows).
+        let span: Float = 1.3
+        let turn = SIMD2(cos(rig.turn.position), sin(rig.turn.position))
+        let axis = turn * (span / rig.zoom)
+        let center = rig.focus * (1 - 1 / (rig.zoom * rig.zoom))
+        let detail = rig.detail
+        let iterations = (56 + 40 * detail + 28 * rig.dive.position).rounded()
+        let line = 1.15 - 0.45 * detail
+        let frames = rig.lastStep * 60
+        let wave = rig.wave.strength * expf(-rig.wave.age / 0.6)
+        return BloomUniforms(colors: Self.palette(colors),
+                             c: SIMD4(lowHalf: c, highHalf: axis),
+                             view: SIMD4(center.x, center.y, iterations, line),
+                             size: SIMD4(width, height, powf(0.9, frames), 0.0015 * frames),
+                             light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
+                             traps: SIMD4(cos(rig.traps), sin(rig.traps), 0.42, rig.hue),
+                             wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, configuration.neutral ? 1 : 0),
+                             flags: SIMD4(0, detail, logf(rig.rho), rig.theta.position),
+                             previous: SIMD4(center.x, center.y, axis.x, axis.y))
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

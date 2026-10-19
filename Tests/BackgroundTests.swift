@@ -20,6 +20,14 @@ struct BackgroundTests {
         guard let device = MTLCreateSystemDefaultDevice() else {
             fail("Metal device is required for the background regression check")
         }
+        // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
+        if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
+            bloomRenders(device: device)
+            bloomPerformance(device: device)
+            bloomChecks(device: device)
+            print("PASS: \(checks) Bloom checks")
+            return
+        }
         rendererChecks(device: device)
         pausedSwiftUIResize()
         paletteChecks()
@@ -32,8 +40,11 @@ struct BackgroundTests {
         crispnessChecks(device: device)
         smokeChecks(device: device)
         presetPreviews(device: device)
+        bloomChecks(device: device)
+        bloomRenders(device: device)
         performanceReport(device: device)
-        print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
+        bloomPerformance(device: device)
+        print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, Bloom, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
     }
 
@@ -918,7 +929,7 @@ struct BackgroundTests {
             getrusage(RUSAGE_SELF, &usage)
             return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
         }
-        for kind in [VisualSettings.BackgroundKind.beams, .fluid] {
+        for kind in VisualSettings.BackgroundKind.allCases {
             let fixture = Fixture(device: device, bounds: CGRect(x: 0, y: 0, width: 1500, height: 950))
             fixture.view.framebufferOnly = true
             let configuration = BackgroundConfiguration(kind: kind, colors: Covers.palette(Covers.sunset), beamCount: 8)
@@ -1011,7 +1022,7 @@ struct BackgroundTests {
                      Double(analysis) / 300, kept.rms.isNaN ? "!" : ""))
 
         guard let renderer = try? OffscreenRenderer(device: device, width: 1600, height: 1000) else { return }
-        for kind in [VisualSettings.BackgroundKind.beams, .fluid] {
+        for kind in VisualSettings.BackgroundKind.allCases {
             var animator = BackgroundAnimator()
             animator.configure(BackgroundConfiguration(kind: kind, colors: Covers.palette(Covers.sunset), beamCount: 8), animated: false)
             // Mid-crossfade, so the palette is blended as it is after a song change.
@@ -1023,8 +1034,11 @@ struct BackgroundTests {
                     animator.receive(frame)
                     for _ in 0..<2 {
                         animator.step(by: 1 / 60)
-                        sink += kind == .beams ? animator.beamUniforms(width: 1600, height: 1000).heads.0.x
-                                               : animator.fluidUniforms(width: 1600, height: 1000).motion.x
+                        switch kind {
+                        case .beams: sink += animator.beamUniforms(width: 1600, height: 1000).heads.0.x
+                        case .fluid: sink += animator.fluidUniforms(width: 1600, height: 1000).motion.x
+                        case .bloom: sink += animator.bloomUniforms(width: 1600, height: 1000).c.x
+                        }
                     }
                 }
             }

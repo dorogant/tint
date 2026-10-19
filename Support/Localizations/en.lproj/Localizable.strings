@@ -232,7 +232,6 @@
 "%@ · from the sound" = "%@ · from the sound";
 "%@ · no genre found" = "%@ · no genre found";
 "Bass punch" = "Bass punch";
-"Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.";
 "Hide from Top Artists" = "Hide from Top Artists";
 "Hidden artists" = "Hidden artists";
 "No hidden artists" = "No hidden artists";
@@ -271,3 +270,5 @@
 "Standard" = "Standard";
 "Large" = "Large";
 "Sets the size of text, artwork and spacing in the main window." = "Sets the size of text, artwork and spacing in the main window.";
+"Bloom" = "Bloom";
+"Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bloom is a fractal the music plays: the harmony picks its shape, kicks shatter it into dust that knits back, snares turn it, hi-hats make it glint, vocals light its heart, and a build dives into its edge until the drop. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bloom is a fractal the music plays: the harmony picks its shape, kicks shatter it into dust that knits back, snares turn it, hi-hats make it glint, vocals light its heart, and a build dives into its edge until the drop. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.";

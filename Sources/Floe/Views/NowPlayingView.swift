@@ -5,6 +5,7 @@ struct NowPlayingView: View {
     @Environment(VisualSettings.self) private var settings
     @ReducedMotion private var still
     @AppStorage("nowPlayingLyrics") private var showLyrics = true
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var ringShown = false
 
     var body: some View {
@@ -12,18 +13,18 @@ struct NowPlayingView: View {
             GeometryReader { geometry in
                 let circular = settings.showVisualizer && settings.style == .circular
                 let normal = settings.showVisualizer && settings.style == .normal
-                let compact = geometry.size.height < 600
+                let compact = geometry.size.height < scale(600)
                 // Reserve room for a wrapped title, transport and optional bottom strip;
                 // the circular ring scales with the cover, as in the reference.
-                let controlsHeight: CGFloat = compact ? 310 : 390
+                let controlsHeight = scale(compact ? 310 : 390)
                 let ring = circular ? VisualizerView.ringScale : 1
-                let available = (geometry.size.height - controlsHeight - (normal ? 96 : 0)) / ring
-                let lyricsWidth = showLyrics ? max(330, geometry.size.width * 0.42) : 0
-                let columnWidth = geometry.size.width - 2 * Theme.margin - lyricsWidth - (showLyrics ? 20 : 0)
-                let coverWidth = (columnWidth - (compact ? 24 : 40)) / ring
-                let coverSize = min(showLyrics ? 330 : 420, max(100, min(available, coverWidth)))
-                VStack(spacing: 12) {
-                    HStack(spacing: 20) {
+                let available = (geometry.size.height - controlsHeight - (normal ? scale(96) : 0)) / ring
+                let lyricsWidth = showLyrics ? max(scale(330), geometry.size.width * 0.42) : 0
+                let columnWidth = geometry.size.width - 2 * scale.margin - lyricsWidth - (showLyrics ? scale(20) : 0)
+                let coverWidth = (columnWidth - scale(compact ? 24 : 40)) / ring
+                let coverSize = min(scale(showLyrics ? 330 : 420), max(scale(100), min(available, coverWidth)))
+                VStack(spacing: scale(12)) {
+                    HStack(spacing: scale(20)) {
                         // Cover, words, then controls: the wider gaps separate the
                         // groups and the narrower ones hold each group together.
                         VStack(spacing: 0) {
@@ -38,30 +39,30 @@ struct NowPlayingView: View {
                                     .transition(.trackChange(distance: 14, still: still))
                             }
                             .animation(still ? FloeMotion.fade : FloeMotion.enter, value: track.uri)
-                            .padding(.top, compact ? 14 : 26)
-                            VStack(spacing: compact ? 4 : 8) {
-                                ProgressBar(large: true).frame(maxWidth: 480)
+                            .padding(.top, scale(compact ? 14 : 26))
+                            VStack(spacing: scale(compact ? 4 : 8)) {
+                                ProgressBar(large: true).frame(maxWidth: scale(480))
                                 TransportControls(playSize: 58)
-                                VolumeControl().padding(.top, compact ? 2 : 4)
+                                VolumeControl().padding(.top, scale(compact ? 2 : 4))
                             }
-                            .padding(.top, compact ? 10 : 18)
+                            .padding(.top, scale(compact ? 10 : 18))
                             Spacer(minLength: 0)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(compact ? 12 : 20)
+                        .padding(scale(compact ? 12 : 20))
                         if showLyrics {
                             LyricsView().frame(width: lyricsWidth)
-                                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.corner - Theme.margin, style: .continuous))
+                                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: scale.corner - scale.margin, style: .continuous))
                                 .transition(lyricsTransition)
                         }
                     }
                     .frame(maxHeight: .infinity)
-                    if normal { VisualizerView().frame(height: 84).padding(.horizontal, 24) }
+                    if normal { VisualizerView().frame(height: scale(84)).padding(.horizontal, scale(24)) }
                 }
-                .padding(Theme.margin)
+                .padding(scale.margin)
                 .animation(still ? nil : FloeMotion.enter, value: showLyrics)
             }
-            .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(2 * Theme.margin) }
+            .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(2 * scale.margin) }
             .onAppear {
                 // The ring fades in once the cover has flown into place.
                 withAnimation(still ? nil : .easeOut(duration: 0.4).delay(0.35)) {
@@ -131,11 +132,12 @@ private struct TrackTitle: View {
     @Environment(\.coverPalette) private var palette
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         VStack(spacing: 0) {
             Text(track.name)
-                .font(.system(size: compact ? 24 : 28, weight: .bold))
+                .floeFont(size: compact ? 24 : 28, weight: .bold)
                 .tracking(compact ? -0.2 : -0.35)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
@@ -147,19 +149,19 @@ private struct TrackTitle: View {
                     }
                 }
             }
-            .font(.system(size: compact ? 14 : 15, weight: .medium))
+            .floeFont(size: compact ? 14 : 15, weight: .medium)
             .foregroundStyle(palette.highlight.mix(with: .white, by: 0.45))
             .lineLimit(1)
-            .padding(.top, compact ? 4 : 6)
+            .padding(.top, scale(compact ? 4 : 6))
             if let album = track.album, !album.isEmpty {
                 TitleLink(text: album) { navigator.openAlbum(of: track, api: library.api) }
                     .floeFont(size: 12.5)
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
-                    .padding(.top, 3)
+                    .padding(.top, scale(3))
             }
         }
-        .frame(maxWidth: 520)
+        .frame(maxWidth: scale(520))
     }
 }
 
@@ -168,19 +170,20 @@ private struct TrackTitle: View {
 private struct LyricsToggle: View {
     @Binding var on: Bool
     @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
         Button { on.toggle() } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: scale(6)) {
                 Image(systemName: on ? "quote.bubble.fill" : "quote.bubble")
                     .contentTransition(.symbolEffect(.replace))
                 Text("Lyrics")
             }
             .floeFont(size: 12, weight: .semibold)
             .foregroundStyle(on ? palette.highlight.mix(with: .white, by: 0.3) : (hovering ? .white : Theme.secondary))
-            .padding(.horizontal, 12)
-            .frame(height: 30)
+            .padding(.horizontal, scale(12))
+            .frame(height: scale(30))
             .glassControl(tint: on ? palette.accent.opacity(0.22) : nil, in: .capsule)
             .contentShape(Capsule())
         }

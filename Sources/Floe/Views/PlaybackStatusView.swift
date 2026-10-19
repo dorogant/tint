@@ -6,6 +6,7 @@ import SwiftUI
 /// springs the content below aside to make room (see `key`).
 struct PlaybackStatusView: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
 
     /// Which banner is up, so the window can animate the room it takes.
@@ -16,17 +17,17 @@ struct PlaybackStatusView: View {
 
     var body: some View {
         if player.hasConnected && !player.isConnected {
-            HStack(spacing: 12) {
+            HStack(spacing: scale(12)) {
                 Image(systemName: "wifi.exclamationmark")
                 Text("Playback connection lost. Tint will try to reconnect.").font(.callout)
                 Spacer()
                 Button("Reconnect now") { player.reconnectPlayback() }
                 Button("Sign in again") { player.logIn() }.disabled(player.session == .authorizing)
             }
-            .padding(12).glassPanel().foregroundStyle(.orange)
+            .padding(scale(12)).glassPanel().foregroundStyle(.orange)
             .transition(banner)
         } else if let error = player.lastError {
-            HStack(spacing: 12) {
+            HStack(spacing: scale(12)) {
                 Image(systemName: "exclamationmark.triangle")
                 Text(error).font(.callout)
                 Spacer()
@@ -34,7 +35,7 @@ struct PlaybackStatusView: View {
                 Button { player.dismissError() } label: { Image(systemName: "xmark") }
                     .help("Dismiss")
             }
-            .padding(12).glassPanel().foregroundStyle(.orange)
+            .padding(scale(12)).glassPanel().foregroundStyle(.orange)
             .transition(banner)
         }
     }

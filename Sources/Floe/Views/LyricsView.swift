@@ -3,6 +3,7 @@ import SwiftUI
 struct LyricsView: View {
     @Environment(LyricsModel.self) private var lyrics
     @Environment(PlayerModel.self) private var player
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var follow = true
 
     var body: some View {
@@ -15,7 +16,7 @@ struct LyricsView: View {
         }
         // Synced lines rest at 40% of the height under a faded edge, so only
         // messages and untimed lyrics need this inset from the panel's top.
-        .padding(.vertical, 24)
+        .padding(.vertical, scale(24))
         .overlay(alignment: .bottom) {
             if !follow, case .loaded(.synced) = lyrics.state {
                 Button { follow = true } label: {
@@ -23,7 +24,7 @@ struct LyricsView: View {
                 }
                 .buttonStyle(.glass)
                 .controlSize(.large)
-                .padding(.bottom, 48)
+                .padding(.bottom, scale(48))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -47,12 +48,12 @@ struct LyricsView: View {
             MessageView(systemImage: "text.quote", message: L10n.string("No lyrics found for this song."))
         case let .loaded(.plain(text)):
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: scale(16)) {
                     Text("These lyrics have no timing.").floeFont(size: 12).foregroundStyle(Theme.tertiary)
-                    Text(text).floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(10)
+                    Text(text).floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(scale(10))
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, 24)
+                }.padding(.horizontal, scale(24))
             }
         case let .loaded(.synced(lines)):
             SyncedLyricsView(lines: lines, follow: $follow)
@@ -77,6 +78,7 @@ private struct SyncedLyricsView: View {
     let lines: [LyricLine]
     @Binding var follow: Bool
     @Environment(PlayerModel.self) private var player
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
     @Namespace private var pill
     @ViewState private var active: Int?
@@ -89,9 +91,9 @@ private struct SyncedLyricsView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let fontSize = min(34, max(22, geometry.size.width / 18))
+            let fontSize = min(scale.text(34), max(scale.text(22), geometry.size.width * scale.factor / 18))
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: scale(2)) {
                     ForEach(lines) { line in
                         // Decoder rounding can report a position just before the tag when paused.
                         // Only a gap's "…" cares whether music plays. Equatable rows
@@ -105,7 +107,7 @@ private struct SyncedLyricsView: View {
                     }
                 }
                 .scrollTargetLayout()
-                .padding(.horizontal, 12)
+                .padding(.horizontal, scale(12))
                 .padding(.top, geometry.size.height * Self.anchor.y)
                 .padding(.bottom, geometry.size.height * (1 - Self.anchor.y))
             }
@@ -185,6 +187,7 @@ private struct LyricRow: View, Equatable {
     let pill: Namespace.ID
     let seek: () -> Void
     @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     /// `seek` is left out: it only ever seeks to `line`, and a closure never
@@ -196,7 +199,7 @@ private struct LyricRow: View, Equatable {
 
     var body: some View {
         let current = distance == 0
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: scale(18), style: .continuous)
         // The sung line glows softly, tinted toward the cover.
         let glow = palette.highlight.mix(with: .white, by: 0.6)
         Button(action: seek) {
@@ -208,8 +211,8 @@ private struct LyricRow: View, Equatable {
                 .multilineTextAlignment(.leading)
                 .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
+                .padding(.horizontal, scale(18))
+                .padding(.vertical, scale(11))
                 .scaleEffect(current || still ? 1 : (hovering ? 0.955 : 0.94), anchor: .leading)
                 .blur(radius: blur)
                 .background {
@@ -225,8 +228,8 @@ private struct LyricRow: View, Equatable {
                 .overlay(alignment: .topTrailing) {
                     if hovering {
                         seekTime
-                            .padding(.top, 11 + max(0, fontSize * 1.2 - 22) / 2)
-                            .padding(.trailing, 12)
+                            .padding(.top, scale(11) + max(0, fontSize * 1.2 - scale(22)) / 2)
+                            .padding(.trailing, scale(12))
                             .transition(.opacity.combined(with: .offset(x: still ? 0 : -4)))
                     }
                 }
@@ -245,10 +248,10 @@ private struct LyricRow: View, Equatable {
         let seconds = Int(line.time)
         return Label(String(format: "%d:%02d", seconds / 60, seconds % 60), systemImage: "play.fill")
             .labelStyle(SeekTimeLabelStyle())
-            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            .font(scale.font(size: 11, weight: .semibold).monospacedDigit())
             .foregroundStyle(.white.opacity(0.75))
-            .padding(.horizontal, 8)
-            .frame(height: 22)
+            .padding(.horizontal, scale(8))
+            .frame(height: scale(22))
             .background(.black.opacity(0.28), in: Capsule())
             .overlay(Capsule().strokeBorder(.white.opacity(0.08)))
             .allowsHitTesting(false)

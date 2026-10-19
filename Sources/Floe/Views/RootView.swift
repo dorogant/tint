@@ -59,7 +59,7 @@ struct MainView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if navigator.surface != .nowPlaying {
                 MiniPlayerView().frame(height: 76).glassPanel()
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(still ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .padding([.horizontal, .bottom], Theme.margin)

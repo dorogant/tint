@@ -1,6 +1,6 @@
 # 004 — With Reduce Motion, fade instead of cutting
 
-- **Status**: TODO
+- **Status**: DONE
 - **Commit**: e102e24
 - **Severity**: HIGH
 - **Category**: Accessibility

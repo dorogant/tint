@@ -8,12 +8,13 @@ private struct FloeAnimation<Value: Equatable>: ViewModifier {
     @ReducedMotion private var reduceMotion
 
     func body(content: Content) -> some View {
-        content.animation(reduceMotion ? nil : .spring(duration: duration, bounce: bounce), value: value)
+        content.animation(reduceMotion ? FloeMotion.fade : .spring(duration: duration, bounce: bounce), value: value)
     }
 }
 
 extension View {
     /// A spring that settles in `duration`; a little `bounce` suits larger moves.
+    /// With Reduce Motion it falls back to a fade.
     func floeAnimation<Value: Equatable>(value: Value, duration: Double = 0.24, bounce: Double = 0) -> some View {
         modifier(FloeAnimation(value: value, duration: duration, bounce: bounce))
     }

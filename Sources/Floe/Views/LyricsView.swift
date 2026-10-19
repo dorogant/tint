@@ -4,6 +4,7 @@ struct LyricsView: View {
     @Environment(LyricsModel.self) private var lyrics
     @Environment(PlayerModel.self) private var player
     @ViewState private var follow = true
+    @ReducedMotion private var still
 
     var body: some View {
         ZStack {
@@ -11,7 +12,7 @@ struct LyricsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // New content gets a fresh line clock; it never reuses the old lines.
                 .id(phaseKey)
-                .transition(.blurReplace)
+                .transition(still ? .opacity : AnyTransition(.blurReplace))
         }
         // Synced lines rest at 40% of the height under a faded edge, so only
         // messages and untimed lyrics need this inset from the panel's top.
@@ -24,7 +25,7 @@ struct LyricsView: View {
                 .buttonStyle(.glass)
                 .controlSize(.large)
                 .padding(.bottom, 48)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(still ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
         .floeAnimation(value: phaseKey, duration: 0.45)

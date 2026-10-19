@@ -81,6 +81,13 @@ if [[ -n "$CLIENT_ID" && ! "$CLIENT_ID" =~ ^[0-9a-f]{32}$ ]]; then
     fail "the Spotify client ID \"$CLIENT_ID\" isn't 32 lowercase hex characters (FLOE_SPOTIFY_CLIENT_ID or .spotify-client-id)."
 fi
 
+SIGN_IDENTITY="$(setting FLOE_SIGN_IDENTITY .signing-identity)"
+# Self-signed certificates count too, though macOS calls them untrusted (no -v).
+has_identity() { security find-identity -p codesigning 2>/dev/null | grep -qF -e "\"$1\"" -e " $1 "; }
+if [[ -n "${FLOE_DEVELOPER_ID:-}" ]] && ! has_identity "$FLOE_DEVELOPER_ID"; then
+    fail "no \"$FLOE_DEVELOPER_ID\" certificate in the keychain (FLOE_DEVELOPER_ID)."
+fi
+
 step "Rust core (cargo build --release)"
 # Run from core/ so rustup picks up core/rust-toolchain.toml.
 (cd "$ROOT/core" && cargo build --release)
@@ -127,11 +134,7 @@ fi
 # Ad-hoc signatures change on every build. Tint keeps its logins in files, not the
 # Keychain, so that only matters for macOS privacy prompts; a stable certificate
 # keeps those answered across rebuilds.
-SIGN_IDENTITY="$(setting FLOE_SIGN_IDENTITY .signing-identity)"
-# Self-signed certificates count too, though macOS calls them untrusted (no -v).
-has_identity() { security find-identity -p codesigning 2>/dev/null | grep -qF -e "\"$1\"" -e " $1 "; }
 if [[ -n "${FLOE_DEVELOPER_ID:-}" ]]; then
-    has_identity "$FLOE_DEVELOPER_ID" || fail "no \"$FLOE_DEVELOPER_ID\" certificate in the keychain (FLOE_DEVELOPER_ID)."
     step "Sign (Developer ID: $FLOE_DEVELOPER_ID, hardened runtime)"
     codesign --force --sign "$FLOE_DEVELOPER_ID" --options runtime --timestamp "$APP"
 elif [[ -n "$SIGN_IDENTITY" ]] && has_identity "$SIGN_IDENTITY"; then

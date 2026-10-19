@@ -3,7 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo test --release --manifest-path "$ROOT/core/Cargo.toml" analysis::tests
+# From core/, so rustup uses the Rust release pinned in core/rust-toolchain.toml.
+(cd "$ROOT/core" && cargo test --release analysis::tests)
 TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 swiftc -swift-version 6 -O "$ROOT/Sources/Floe/Visualization/SpectrumAnalyzer.swift" \

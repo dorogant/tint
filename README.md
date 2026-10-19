@@ -11,7 +11,7 @@ module, the Rust `floe_core` crate, and the `-Floe…` development flags.
 
 **Status:** Phase 5 settings and polish implemented. The gear button or **⌘,**
 opens a native settings window with Visualizer, Background, Playback, Downloads,
-Appearance and About. English and Ukrainian interface text is bundled; choose a
+Appearance, Account and About. English and Ukrainian interface text is bundled; choose a
 language in Appearance. Queue and Devices have dedicated toolbar panels and an
 opt-in Spotify permission flow. Playback quality, normalization and gapless
 settings now reach librespot, and reconnecting preserves the song, position and
@@ -55,58 +55,147 @@ The live background defaults off.
 
 ## Requirements
 
-- macOS 26+ on Apple Silicon
-- Xcode **Command Line Tools** (full Xcode is not needed): `xcode-select --install`
-- Rust via [rustup](https://rustup.rs) (1.85+)
+- A Mac with Apple Silicon and macOS 26 or later. Intel Macs aren't supported.
+- Xcode **Command Line Tools** with Swift 6.2+ and the macOS 26 SDK. Full Xcode is not
+  needed. Install them with `xcode-select --install`; Software Update keeps them current.
+- Rust via [rustup](https://rustup.rs). The first build installs the Rust release pinned
+  in `core/rust-toolchain.toml` by itself.
+- **Spotify Premium**, and a free Spotify developer app for your library (see below).
+
+`scripts/build-app.sh` checks the tools first and says what's missing.
 
 ## Build and run
 
 ```sh
-scripts/build-app.sh          # -> build/Tint.app (release, ad-hoc signed)
-scripts/build-app.sh --open   # build, then launch
-scripts/build-app.sh --install # install/update Applications + Desktop icon
+scripts/build-app.sh            # -> build/Tint.app (release)
+scripts/build-app.sh --open     # build, then launch
+scripts/build-app.sh --install  # also copy it to ~/Applications/Tint.app
+scripts/build-app.sh --zip      # also pack build/Tint-<version>.zip to share
 ```
 
 The script runs `cargo build --release` for the Rust core, `swift build` for the app,
-assembles the bundle (Info.plist, generated native icon) and signs it (see below).
+assembles the bundle (Info.plist, generated native icon) and signs it (see
+[Signing](#signing)). The first build fetches librespot and takes a few minutes.
+`scripts/build-app.sh --help` lists the options and settings.
 
-### Desktop launch icon
+Universal builds aren't supported: `swift build` needs full Xcode for more than one
+`--arch`, and the Rust core would need a second target and `lipo`.
 
-Double-click **Tint** on the Desktop to open the app without a terminal. The icon
-points to `~/Applications/Tint.app`, a signed copy of the native macOS app bundle.
-Rebuild with `scripts/build-app.sh --install` to update that copy while keeping the
-same Desktop icon. To install an already-built app, run `scripts/install-app.sh`.
-The installer verifies its signature before replacing an existing Tint bundle and
-does not overwrite unrelated items with the same name.
+### Spotify developer app
 
-Tint keeps your Spotify login in private files (see *Credentials* under How it
-works), so rebuilds don't ask for your password. Builds before that used the
-Keychain: the first launch after updating may ask once for each of the two saved
-logins while Tint moves them out. Enter your password and choose **Allow**; it
-doesn't ask again. The installer does not read or change credentials.
+Tint reads your library (playlists, saved music, history) through the Spotify Web API,
+which needs a developer app. Spotify only lets the app's owner and the accounts they
+add sign in to it, so everyone uses their own. It's free and takes a minute:
 
-On first launch Tint asks for two approvals in the browser: **playback** (librespot,
-Spotify's own client ID) and **library** (the Web API, through your own developer app).
+1. Open [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and
+   choose **Create app**. Any name and description will do.
+2. Under **Redirect URIs**, add exactly `http://127.0.0.1:8898/callback`.
+3. Tick **Web API**, accept the terms and save.
+4. Copy the **Client ID** from the app's Basic Information. Tint never needs the
+   Client secret.
+
+Paste the Client ID into Tint on first launch, in step 2. To change it later, open
+Settings → Account; that disconnects the library until you connect it again.
+
+To build your Client ID into the app instead, put it in a git-ignored
+`.spotify-client-id` file at the repo root (or set `FLOE_SPOTIFY_CLIENT_ID`). Onboarding
+then folds the field away. A Client ID is public, not a secret. The one Tint uses is
+the one pasted in the app, then the built-in one.
+
+### First launch
+
+Tint asks for two approvals in the browser: **Playback** (librespot, with Spotify's own
+client ID, nothing to set up) and **Library** (the Web API, through your developer app).
+If the browser shows `INVALID_CLIENT`, the Client ID or the redirect URI doesn't match
+the dashboard. Press **Cancel** in Tint, fix it and connect again.
+
+Tint keeps both logins in private files (see *Credentials* under How it works), not
+the Keychain, so rebuilds and changing signatures never ask for your password. Builds
+before that used the Keychain: the first launch after updating may ask once for each
+of the two saved logins while Tint moves them out. Choose **Allow**; it doesn't ask
+again.
+
+### Install
+
+`scripts/build-app.sh --install` copies the app to `~/Applications/Tint.app`;
+`scripts/install-app.sh` does the same for an already-built app. The installer verifies
+the signature before replacing an existing Tint bundle and does not overwrite unrelated
+items with the same name. `scripts/install-app.sh --desktop-icon` also puts a Tint icon
+on the Desktop that keeps pointing at the installed app after updates. The installer
+does not read or change credentials.
 
 ### Signing
 
-The build script signs with a local code-signing certificate when there is one, so
-every build keeps the same code identity; an ad-hoc signature changes on every build.
-Tint's login no longer depends on it, but the certificate lets Tint delete its old
-Keychain items without asking. Create it once; the build script uses it
-automatically (or set `FLOE_SIGN_IDENTITY`):
+Without a certificate the script signs ad-hoc, which is fine on your own Mac. An ad-hoc
+signature changes on every build; Tint's logins don't depend on it.
+
+A local certificate keeps the same code identity across builds, and lets Tint delete
+the Keychain items of builds from before the files without asking. Create it once:
 
 1. Open **Keychain Access** (Spotlight, or `/System/Library/CoreServices/Applications/`).
 2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
-3. Name `Floe Local Signing`, Identity Type **Self-Signed Root**, Certificate Type
-   **Code Signing** → **Create**. It is stored in your login keychain.
+3. Any name, Identity Type **Self-Signed Root**, Certificate Type **Code Signing** →
+   **Create**. It is stored in your login keychain.
+4. Put its name or SHA-1 (from `security find-identity -p codesigning`) in a git-ignored
+   `.signing-identity` file at the repo root, or set `FLOE_SIGN_IDENTITY`.
 
 The first build after that asks whether `codesign` may use the key (choose **Always
-Allow**). Without the certificate the script falls back to ad-hoc signing.
+Allow**). If the certificate isn't in the keychain, the script says so and signs ad-hoc.
 
-If the certificate has another name (Keychain Access pre-fills your full name), put
-its name or SHA-1 (from `security find-identity -p codesigning`) in a git-ignored
-`.signing-identity` file at the repo root.
+With a paid Apple Developer account, the build can be signed with Developer ID and
+notarized, so it opens on other Macs without a warning. Both steps are skipped unless
+their variables are set:
+
+```sh
+xcrun notarytool store-credentials tint-notary --apple-id you@example.com --team-id TEAMID
+FLOE_DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" \
+FLOE_NOTARY_PROFILE=tint-notary scripts/build-app.sh --zip
+```
+
+That signs with the hardened runtime, sends the zip to Apple, staples the ticket to
+the app and packs the zip again.
+
+### Sharing a build
+
+`scripts/build-app.sh --zip` packs `build/Tint-<version>.zip` (`scripts/package-app.sh`
+does it for an already-built app). Send that file. The other person needs an Apple
+Silicon Mac with macOS 26 and Spotify Premium.
+
+If your Client ID is built in, their library signs in through your developer app. Add
+their Spotify account's email in the dashboard under **User Management**, or they
+choose **Use your own Spotify developer app** in onboarding and paste their own. Without
+a built-in Client ID they always paste their own.
+
+A build that isn't notarized is blocked the first time it opens. To open it anyway:
+
+1. Unzip it, move **Tint** to Applications and double-click it. macOS says it can't
+   verify the app; choose **Done**.
+2. Open **System Settings → Privacy & Security**, scroll to **Security** and click
+   **Open Anyway** next to the message about Tint. Confirm with your password.
+
+That's needed once per copy. Control-click → Open no longer skips the check on macOS 15
+and later. As a last resort, `xattr -dr com.apple.quarantine /Applications/Tint.app` in
+Terminal removes the download mark.
+
+### Build settings
+
+All optional. Each is an environment variable; the first two can also live in a
+git-ignored one-line file at the repo root.
+
+| Variable | File | What it does |
+|---|---|---|
+| `FLOE_SPOTIFY_CLIENT_ID` | `.spotify-client-id` | Client ID built into the app; without one, Tint asks |
+| `FLOE_SIGN_IDENTITY` | `.signing-identity` | local signing certificate (name or SHA-1); else ad-hoc |
+| `FLOE_DEVELOPER_ID` | | Developer ID identity; signs with the hardened runtime |
+| `FLOE_NOTARY_PROFILE` | | `notarytool` keychain profile; notarizes with `--zip` |
+| `FLOE_BUNDLE_ID` | | bundle ID, default `com.antonchurchyn.floe` |
+
+The default bundle ID is the original one, so existing settings carry over. With
+another bundle ID Tint starts with fresh settings; saved logins in
+`~/Library/Application Support/Floe` are shared.
+
+`.github/workflows/build.yml` builds the app on GitHub Actions (ad-hoc signed) and runs
+the offline tests: no Spotify account, network login or audio device involved.
 
 ### Self-test
 
@@ -438,7 +527,8 @@ Sources/Floe/         SwiftUI app
   Views/              UI
 Support/Localizations/ English/Ukrainian interface strings and plural rules
 Support/Info.plist    bundle metadata
-scripts/              build-app.sh, make-icon.swift
+scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.swift, test-*.sh
+.github/workflows/    CI: build and offline tests
 ```
 
 ## How it works
@@ -466,8 +556,9 @@ scripts/              build-app.sh, make-icon.swift
   (`streaming` scope): Spotify rejects third-party client IDs there. Tint runs the PKCE
   flow in the browser with a one-shot listener on `127.0.0.1:5588/login`, gets
   reusable credentials back from librespot, and stores only those. The Web API uses
-  Tint's own client ID with PKCE on `127.0.0.1:8898/callback`; its refresh token is
-  stored too. No client secret is used or stored anywhere.
+  the client ID of your own developer app (pasted in the app, else built in) with PKCE
+  on `127.0.0.1:8898/callback`; its refresh token is stored too, with the client ID that
+  issued it. No client secret is used or stored anywhere.
 - **Credentials.** Both logins are files in `~/Library/Application Support/Floe/Credentials`
   (folder 0700, files 0600, written atomically, excluded from backups). Any process
   running as you can read them, as with Spotify's own desktop client; FileVault

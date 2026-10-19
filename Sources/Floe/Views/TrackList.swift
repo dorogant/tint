@@ -93,8 +93,8 @@ struct TrackListView: View {
 
 /// Whether a track list is scrolling. Mid-scroll every animation frame costs
 /// an update of the whole window, so while the list moves its rows hold back
-/// hover: rows passing under a resting pointer would each light up and fade.
-/// Not observed: reading it redraws nothing.
+/// hover (rows passing under a resting pointer would each light up and fade)
+/// and covers that arrive skip their fade. Not observed: reading it redraws nothing.
 @MainActor final class ListMotion {
     /// Still this long after the last movement means at rest.
     static let settle = Duration.milliseconds(150)

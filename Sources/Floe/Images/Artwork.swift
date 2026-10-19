@@ -90,6 +90,7 @@ struct ArtworkView: View {
     var circle = false
 
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.listMotion) private var listMotion
     @ViewState private var loaded: CGImage?
     @ViewState private var loadedURL: URL?
 
@@ -133,8 +134,14 @@ struct ArtworkView: View {
             var image = ArtworkCache.shared.cached(url, pixels: pixels)
             if image == nil { image = await ArtworkCache.shared.image(for: url, pixels: pixels) }
             guard !Task.isCancelled else { return }
-            loaded = image
-            loadedURL = url
+            // In a scrolling list a cover just appears: its fade would be an
+            // animation, and each animation frame mid-scroll updates the whole window.
+            var transaction = Transaction()
+            transaction.disablesAnimations = listMotion?.isMoving == true
+            withTransaction(transaction) {
+                loaded = image
+                loadedURL = url
+            }
         }
     }
 }

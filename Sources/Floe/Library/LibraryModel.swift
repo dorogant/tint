@@ -187,3 +187,10 @@ final class LibraryModel {
         }
     }
 }
+
+#if SCROLL_BENCHMARK
+extension LibraryModel {
+    /// The scroll benchmark checks liked state without a login.
+    func benchmarkConnect() { connection = .connected }
+}
+#endif

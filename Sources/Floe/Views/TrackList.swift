@@ -110,6 +110,9 @@ struct TrackRow: View {
         let track = entry.track
         let isCurrent = player.displayTrack?.uri == track.uri
         let playable = track.isPlayable != false && track.isCatalogTrack
+        #if SCROLL_BENCHMARK
+        let _ = ScrollProbe.rows += 1
+        #endif
 
         HStack(spacing: scale(12)) {
             leading(isCurrent: isCurrent, playable: playable).frame(width: scale(28))
@@ -175,6 +178,16 @@ struct TrackRow: View {
         .background { highlight(isCurrent: isCurrent) }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        #if SCROLL_BENCHMARK
+        // The benchmark's stand-in for a pointer resting over the list.
+        .onGeometryChange(for: Bool.self) { proxy in
+            ScrollProbe.pointer.map { proxy.frame(in: .global).contains($0) } ?? false
+        } action: { under in
+            guard ScrollProbe.pointer != nil, under != hovering else { return }
+            hovering = under
+            ScrollProbe.hovers += 1
+        }
+        #endif
         // Quick in, a little slower out, so a fast sweep down the list leaves a
         // short soft wake instead of flicker.
         .floeHover(hovering)
@@ -338,6 +351,9 @@ struct LikeButton: View {
 
     var body: some View {
         let liked = library.isLiked(uri) ?? false
+        #if SCROLL_BENCHMARK
+        let _ = ScrollProbe.likes += 1
+        #endif
         Button {
             presses += 1
             Task { await library.toggleLike(uri) }

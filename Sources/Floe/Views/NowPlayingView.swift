@@ -153,7 +153,7 @@ private struct TrackTitle: View {
             .padding(.top, compact ? 4 : 6)
             if let album = track.album, !album.isEmpty {
                 TitleLink(text: album) { navigator.openAlbum(of: track, api: library.api) }
-                    .font(.system(size: 12.5))
+                    .floeFont(size: 12.5)
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
                     .padding(.top, 3)
@@ -177,7 +177,7 @@ private struct LyricsToggle: View {
                     .contentTransition(.symbolEffect(.replace))
                 Text("Lyrics")
             }
-            .font(.system(size: 12, weight: .semibold))
+            .floeFont(size: 12, weight: .semibold)
             .foregroundStyle(on ? palette.highlight.mix(with: .white, by: 0.3) : (hovering ? .white : Theme.secondary))
             .padding(.horizontal, 12)
             .frame(height: 30)
@@ -216,7 +216,7 @@ private struct FlowerCoverView: View {
                               running: running, fade: !still)
             } else {
                 BlobShape(phase: 0).fill(.white.opacity(0.06))
-                    .overlay(Image(systemName: "music.note").font(.system(size: 60)).foregroundStyle(Theme.tertiary))
+                    .overlay(Image(systemName: "music.note").floeFont(size: 60).foregroundStyle(Theme.tertiary))
                     .overlay(BlobShape(phase: 0).stroke(rim, lineWidth: max(2, size * 0.014)))
             }
         }

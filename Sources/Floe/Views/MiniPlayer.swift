@@ -60,7 +60,7 @@ struct MiniPlayerView: View {
             .onChange(of: track.uri) { library.requestLikedState(track.uri) }
         } else {
             Text("Pick something to play")
-                .font(.system(size: 13))
+                .floeFont(size: 13)
                 .foregroundStyle(Theme.tertiary)
         }
     }
@@ -68,7 +68,7 @@ struct MiniPlayerView: View {
     private func details(_ track: TrackInfo) -> some View {
         HStack(spacing: 8) {
             TitleLink(text: track.name) { navigator.openAlbum(of: track, api: library.api) }
-                .font(.system(size: 13, weight: .semibold))
+                .floeFont(size: 13, weight: .semibold)
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .layoutPriority(1)
@@ -81,7 +81,7 @@ struct MiniPlayerView: View {
                     }
                 }
             }
-            .font(.system(size: 12))
+            .floeFont(size: 12)
             .lineLimit(1)
         }
     }
@@ -96,7 +96,7 @@ struct MiniPlayerView: View {
             Menu {
                 trackItems(track)
             } label: {
-                Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "ellipsis").floeFont(size: 12, weight: .semibold)
             }
             .menuStyle(.button)
             .buttonStyle(.borderless)
@@ -153,7 +153,7 @@ private struct MiniCover: View {
                         .fill(.black.opacity(0.38))
                         .overlay {
                             Image(systemName: "chevron.up")
-                                .font(.system(size: 14, weight: .bold))
+                                .floeFont(size: 14, weight: .bold)
                                 .foregroundStyle(.white)
                                 .offset(y: lifted || still ? 0 : 2)
                         }
@@ -183,7 +183,7 @@ private struct MiniAction: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: active ? "\(systemImage).fill" : systemImage)
-                .font(.system(size: 12, weight: .semibold))
+                .floeFont(size: 12, weight: .semibold)
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
                 .frame(width: 22, height: 22)
@@ -308,7 +308,7 @@ struct VolumeControl: View {
                 Image(systemName: player.volume > 0 ? "speaker.wave.3.fill" : "speaker.slash.fill",
                       variableValue: player.volume)
                     .contentTransition(.symbolEffect(.replace))
-                    .font(.system(size: 13))
+                    .floeFont(size: 13)
                     .foregroundStyle(speakerHovering ? .white : Theme.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())

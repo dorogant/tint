@@ -14,20 +14,22 @@ struct HomeView: View {
     @Environment(Navigator.self) private var navigator
     /// Tiles and song rows share these columns, so their artwork lines up.
     @ViewState private var columns = 4
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         let shortcuts = Array(HomeShortcut.recent(in: library).prefix(columns * 2))
         let shown = Set(shortcuts.map(\.id))
         let songs = recentSongs(excluding: shown)
-        VStack(alignment: .leading, spacing: Theme.sectionGap) {
-            VStack(alignment: .leading, spacing: 20) {
+        let factor = scale.factor
+        VStack(alignment: .leading, spacing: scale.sectionGap) {
+            VStack(alignment: .leading, spacing: scale(20)) {
                 Text(greeting)
-                    .font(.system(size: 32, weight: .heavy))
+                    .floeFont(size: 32, weight: .heavy)
                     .tracking(-0.6)
                     .accessibilityAddTraits(.isHeader)
                     .reveal("greeting")
                 if !shortcuts.isEmpty {
-                    LazyVGrid(columns: grid, spacing: 12) {
+                    LazyVGrid(columns: grid, spacing: scale(12)) {
                         ForEach(shortcuts) { item in
                             ShortcutTile(item: item) { navigator.push(item.route) } play: {
                                 player.play(PlayRequest(contextURI: item.id))
@@ -42,9 +44,9 @@ struct HomeView: View {
                             actionTitle: "Try Again") { Task { await library.refresh() } }
             }
             if !songs.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.headerGap) {
+                VStack(alignment: .leading, spacing: scale.headerGap) {
                     SectionHeader("Recently played")
-                    LazyVGrid(columns: grid, spacing: 2 * Theme.plate) {
+                    LazyVGrid(columns: grid, spacing: 2 * scale.plate) {
                         ForEach(songs, id: \.track.uri) { item in
                             SongTile(track: item.track) { play(item) }
                         }
@@ -86,14 +88,15 @@ struct HomeView: View {
             }
         }
         .revealScope()
-        .onGeometryChange(for: Int.self) { Self.columns(for: $0.size.width) } action: { columns = $0 }
+        // Larger tiles need more room per column, so measure in Compact points.
+        .onGeometryChange(for: Int.self) { Self.columns(for: $0.size.width / factor) } action: { columns = $0 }
     }
 
     private var grid: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .leading), count: columns)
+        Array(repeating: GridItem(.flexible(), spacing: scale(12), alignment: .leading), count: columns)
     }
 
-    /// Four across a wide window, three at the default size, two at the smallest.
+    /// Four across a wide window, three at the default size, two at the smallest (Compact points).
     nonisolated static func columns(for width: CGFloat) -> Int {
         width >= 1000 ? 4 : (width >= 640 ? 3 : 2)
     }
@@ -202,6 +205,7 @@ struct HomeShortcut: Identifiable {
 private struct ShortcutTile: View {
     @Environment(\.coverPalette) private var palette
     @Environment(PlayerModel.self) private var player
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
     let item: HomeShortcut
     let open: () -> Void
@@ -209,24 +213,27 @@ private struct ShortcutTile: View {
     @ViewState private var hovering = false
     @ViewState private var pressed = false
 
+    /// In Compact points.
     static let height: CGFloat = 56
+
+    private var height: CGFloat { scale(Self.height) }
 
     var body: some View {
         let playing = player.contextURI == item.id && player.isPlaying
-        let shape = RoundedRectangle(cornerRadius: Card.radius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: scale(Card.radius), style: .continuous)
         Button(action: open) {
-            HStack(spacing: 12) {
+            HStack(spacing: scale(12)) {
                 cover
                 Text(item.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .floeFont(size: 13, weight: .semibold)
                     .foregroundStyle(playing ? palette.highlight : .white)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
             // Room for the Play button, so the title never runs under it.
-            .padding(.trailing, 52)
-            .frame(height: Self.height)
+            .padding(.trailing, scale(52))
+            .frame(height: height)
             .background(.white.opacity(hovering ? 0.12 : 0.07))
             .clipShape(shape)
             .overlay(shape.strokeBorder(.white.opacity(hovering ? 0.08 : 0.04)))
@@ -236,15 +243,15 @@ private struct ShortcutTile: View {
         .overlay(alignment: .trailing) {
             ZStack {
                 if hovering {
-                    HoverPlayButton(diameter: 32, action: play)
+                    HoverPlayButton(diameter: scale(32), action: play)
                         .transition(HoverPlayButton.transition(still: still))
                 } else if playing {
-                    LoopingSymbol.playing(pointSize: 11, color: palette.highlight, running: !still)
+                    LoopingSymbol.playing(pointSize: scale.text(11), color: palette.highlight, running: !still)
                         .transition(.opacity)
                 }
             }
-            .frame(width: 32)
-            .padding(.trailing, 12)
+            .frame(width: scale(32))
+            .padding(.trailing, scale(12))
         }
         .scaleEffect(pressed && !still ? 0.98 : 1)
         .onHover { hovering = $0 }
@@ -257,13 +264,13 @@ private struct ShortcutTile: View {
     @ViewBuilder private var cover: some View {
         switch item.kind {
         case .liked:
-            LikedCover(size: Self.height, cornerRadius: 0)
+            LikedCover(size: height, cornerRadius: 0)
         case .artist:
             // Artists keep their round portrait, inset like an avatar.
-            ArtworkView(images: item.images, size: Self.height - 12, circle: true)
-                .frame(width: Self.height, height: Self.height)
+            ArtworkView(images: item.images, size: height - scale(12), circle: true)
+                .frame(width: height, height: height)
         case .playlist, .album:
-            ArtworkView(images: item.images, size: Self.height, cornerRadius: 0)
+            ArtworkView(images: item.images, size: height, cornerRadius: 0)
         }
     }
 }
@@ -276,33 +283,35 @@ private struct SongTile: View {
     @Environment(PlayerModel.self) private var player
     let track: Track
     let play: () -> Void
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     private static let radius: CGFloat = 6
 
     var body: some View {
         let current = player.displayTrack?.uri == track.uri
+        let radius = scale(Self.radius)
         Button(action: play) {
-            HStack(spacing: 12) {
-                ArtworkView(images: track.album?.images, size: 40, cornerRadius: Self.radius)
+            HStack(spacing: scale(12)) {
+                ArtworkView(images: track.album?.images, size: scale(40), cornerRadius: radius)
                     .overlay {
-                        RoundedRectangle(cornerRadius: Self.radius)
+                        RoundedRectangle(cornerRadius: radius)
                             .fill(.black.opacity(0.4))
-                            .overlay(Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white))
+                            .overlay(Image(systemName: "play.fill").floeFont(size: 13).foregroundStyle(.white))
                             .opacity(hovering ? 1 : 0)
                     }
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: scale(2)) {
                     Text(track.name)
-                        .font(.system(size: 13, weight: .medium))
+                        .floeFont(size: 13, weight: .medium)
                         .foregroundStyle(current ? palette.highlight : .white)
                     Text(track.artistLine)
-                        .font(.system(size: 12))
+                        .floeFont(size: 12)
                         .foregroundStyle(Theme.secondary)
                 }
                 .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .hoverPlate(hovering, radius: Self.radius)
+            .hoverPlate(hovering, radius: radius)
             .contentShape(Rectangle())
         }
         .buttonStyle(.floeRow)
@@ -323,15 +332,16 @@ struct ArtistView: View {
     @ViewState private var artist: Artist?
     @ViewState private var albums: [AlbumRef] = []
     @ViewState private var error: String?
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.sectionGap) {
+        VStack(alignment: .leading, spacing: scale.sectionGap) {
             if let artist {
                 // No "Popular" list: Development Mode removed top tracks. Playing the
                 // artist context still starts with them (Spirc resolves it).
                 PageHeader(badge: "Artist", title: artist.name,
                            detail: (artist.genres ?? []).prefix(3).map(\.localizedCapitalized).joined(separator: " · ")) {
-                    ArtworkView(images: artist.images, size: 200, circle: true).coverGlow(artist.images)
+                    ArtworkView(images: artist.images, size: scale(200), circle: true).coverGlow(artist.images)
                 } actions: {
                     PlayPill { player.play(PlayRequest(contextURI: artist.uri)) }
                 }

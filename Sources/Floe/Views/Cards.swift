@@ -6,12 +6,14 @@ import SwiftUI
 /// on press. Play is also in the context menu and the VoiceOver actions, after
 /// which come any extra `actions`.
 struct Card: View {
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var reduceMotion
     let images: [SpotifyImage]?
     let title: String
     /// Left out where the section already says what the items are (artists).
     var subtitle = ""
     var circle = false
+    /// Artwork width in Compact points; the card scales it.
     var size: CGFloat = 156
     var actions: [CardAction] = []
     let action: () -> Void
@@ -20,39 +22,40 @@ struct Card: View {
     @ViewState private var hovering = false
     @ViewState private var pressed = false
 
-    /// Artwork corners. The hover plate adds its inset, so the corners nest.
+    /// Artwork corners, in Compact points. The hover plate adds its inset, so the corners nest.
     static let radius: CGFloat = 8
 
     var body: some View {
         let lift: CGFloat = hovering && !reduceMotion ? -3 : 0
-        let plate = RoundedRectangle(cornerRadius: Self.radius + Theme.plate, style: .continuous)
+        let (side, radius) = (scale(size), scale(Self.radius))
+        let plate = RoundedRectangle(cornerRadius: radius + scale.plate, style: .continuous)
         Button(action: action) {
-            VStack(alignment: circle ? .center : .leading, spacing: 8) {
-                ArtworkView(images: images, size: size, cornerRadius: Self.radius, circle: circle)
+            VStack(alignment: circle ? .center : .leading, spacing: scale(8)) {
+                ArtworkView(images: images, size: side, cornerRadius: radius, circle: circle)
                     .brightness(hovering ? 0.04 : 0)
                     .shadow(color: .black.opacity(hovering ? 0.5 : 0.3),
                             radius: hovering ? 16 : 9, y: hovering ? 11 : 5)
                     .offset(y: lift)
-                VStack(alignment: circle ? .center : .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                VStack(alignment: circle ? .center : .leading, spacing: scale(2)) {
+                    Text(title).floeFont(size: 13, weight: .semibold).lineLimit(1)
                     if !subtitle.isEmpty {
-                        Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
+                        Text(subtitle).floeFont(size: 12).foregroundStyle(Theme.secondary).lineLimit(1)
                     }
                 }
-                .frame(width: size, alignment: circle ? .center : .leading)
+                .frame(width: side, alignment: circle ? .center : .leading)
             }
-            .padding(Theme.plate)
+            .padding(scale.plate)
             .background(Theme.hover.opacity(hovering ? 1 : 0), in: plate)
             .contentShape(plate)
         }
         .buttonStyle(CardPressStyle(pressed: $pressed))
         .overlay(alignment: .topLeading) {
             if let play, hovering {
-                HoverPlayButton(diameter: min(max(size * 0.26, 34), 44), action: play)
-                    .padding(8)
-                    .frame(width: size, height: size, alignment: .bottomTrailing)
+                HoverPlayButton(diameter: min(max(side * 0.26, scale(34)), scale(44)), action: play)
+                    .padding(scale(8))
+                    .frame(width: side, height: side, alignment: .bottomTrailing)
                     .offset(y: lift)
-                    .padding(Theme.plate)
+                    .padding(scale.plate)
                     .transition(HoverPlayButton.transition(still: reduceMotion))
             }
         }
@@ -74,14 +77,24 @@ struct CardAction: Identifiable {
 }
 
 extension View {
-    /// A hover plate that reaches `Theme.plate` past the content on every side
+    /// A hover plate that reaches `plate` past the content on every side
     /// without moving it, so the content stays on the page's guides. Its
-    /// corners nest around content rounded to `radius`.
+    /// corners nest around content rounded to `radius` (in points, already scaled).
     func hoverPlate(_ visible: Bool, radius: CGFloat) -> some View {
-        background {
-            RoundedRectangle(cornerRadius: radius + Theme.plate, style: .continuous)
+        modifier(HoverPlate(visible: visible, radius: radius))
+    }
+}
+
+private struct HoverPlate: ViewModifier {
+    let visible: Bool
+    let radius: CGFloat
+    @Environment(\.interfaceScale) private var scale
+
+    func body(content: Content) -> some View {
+        content.background {
+            RoundedRectangle(cornerRadius: radius + scale.plate, style: .continuous)
                 .fill(Theme.hover)
-                .padding(-Theme.plate)
+                .padding(-scale.plate)
                 .opacity(visible ? 1 : 0)
         }
     }
@@ -161,20 +174,21 @@ struct Shelf<Item: Identifiable, Content: View>: View {
     let title: LocalizedStringKey
     let items: [Item]
     @ViewBuilder let content: (Item) -> Content
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var reduceMotion
     @ViewState private var edges = ShelfEdges()
     @ViewState private var metrics = ShelfMetrics()
     @ViewState private var position = ScrollPosition()
 
     /// Cards bring their own plate inset, so the strip starts that much before the gutter.
-    private static var margin: CGFloat { Theme.gutter - Theme.plate }
+    private var margin: CGFloat { scale.gutter - scale.plate }
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.headerGap - Theme.plate) {
+            VStack(alignment: .leading, spacing: scale.headerGap - scale.plate) {
                 SectionHeader(title: title) {
                     if edges.back || edges.forward {
-                        HStack(spacing: 4) {
+                        HStack(spacing: scale(4)) {
                             IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1) }
                                 .disabled(!edges.back)
                             IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1) }
@@ -182,7 +196,7 @@ struct Shelf<Item: Identifiable, Content: View>: View {
                         }
                         .centeredOnSectionTitle()
                         // The glyphs, not their hover wells, end on the gutter.
-                        .padding(.trailing, -Theme.plate)
+                        .padding(.trailing, -scale.plate)
                         .transition(.opacity)
                     }
                 }
@@ -195,10 +209,10 @@ struct Shelf<Item: Identifiable, Content: View>: View {
                             }
                         }
                     }
-                    .padding(.horizontal, Self.margin)
+                    .padding(.horizontal, margin)
                 }
                 .scrollPosition($position)
-                .padding(.horizontal, -Theme.gutter)
+                .padding(.horizontal, -scale.gutter)
                 // Only the arrows' enabled state is view state; it changes at the ends.
                 .onScrollGeometryChange(for: ShelfEdges.self) { geometry in
                     ShelfEdges(back: geometry.contentOffset.x > 1,
@@ -214,7 +228,7 @@ struct Shelf<Item: Identifiable, Content: View>: View {
                 }
             }
             // The cards' plates overhang the section below; the gap is measured to the text.
-            .padding(.bottom, -Theme.plate)
+            .padding(.bottom, -scale.plate)
             .floeState(value: edges, duration: 0.2)
         }
     }
@@ -224,10 +238,10 @@ struct Shelf<Item: Identifiable, Content: View>: View {
     /// share a width, so positions follow from the content width.
     private func page(_ direction: Int) {
         let latest = metrics.latest
-        let card = (latest.contentWidth - 2 * Self.margin) / CGFloat(items.count)
+        let card = (latest.contentWidth - 2 * margin) / CGFloat(items.count)
         guard card > 0 else { return }
         let first = Int((latest.offset / card).rounded())
-        let step = max(Int((latest.width - 2 * Self.margin) / card) - 1, 1)
+        let step = max(Int((latest.width - 2 * margin) / card) - 1, 1)
         let target = min(max(first + direction * step, 0), items.count - 1)
         let x = min(CGFloat(target) * card, max(latest.contentWidth - latest.width, 0))
         withAnimation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0)) {

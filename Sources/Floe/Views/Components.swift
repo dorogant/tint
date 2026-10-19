@@ -223,14 +223,15 @@ struct PlayPill: View {
     @Environment(\.coverPalette) private var palette
     var title: LocalizedStringKey = "Play"
     let action: () -> Void
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: "play.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .padding(.horizontal, 20)
-                .padding(.vertical, 9)
+                .floeFont(size: 14, weight: .semibold)
+                .padding(.horizontal, scale(20))
+                .padding(.vertical, scale(9))
                 .foregroundStyle(palette.onAccent)
                 .glassControl(tint: palette.accent, in: .capsule)
                 .shadow(color: palette.accent.opacity(hovering ? 0.42 : 0.18),
@@ -248,8 +249,10 @@ struct PlayPill: View {
 struct IconButton: View {
     @Environment(\.coverPalette) private var palette
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var reduceMotion
     let systemImage: String
+    /// The symbol's size in Compact points; the button scales it.
     var size: CGFloat = 15
     var active = false
     var help: LocalizedStringKey? = nil
@@ -263,18 +266,19 @@ struct IconButton: View {
 
     var body: some View {
         let lit = hovering && enabled
+        let diameter = scale(size * 2.1)
         Button {
             presses += 1
             action()
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: size, weight: .medium))
+                .floeFont(size: size, weight: .medium)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion || systemImage == "shuffle" ? 0 : presses)
                 .foregroundStyle(active ? palette.highlight : (lit ? .white : Theme.secondary))
                 .modifier(ShufflePressFeedback(trigger: presses, enabled: animatedShuffle,
-                                               diameter: size * 2.1, tint: palette.highlight))
-                .frame(width: size * 2.1, height: size * 2.1)
+                                               diameter: diameter, tint: palette.highlight))
+                .frame(width: diameter, height: diameter)
                 .background {
                     Circle()
                         .fill(active ? palette.accent.opacity(0.16) : Color.white.opacity(0.09))
@@ -303,14 +307,15 @@ private struct HelpLabel: ViewModifier {
 /// Small uppercase badge, e.g. "PLAYLIST".
 struct Badge: View {
     let text: LocalizedStringKey
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .bold))
+            .floeFont(size: 10, weight: .bold)
             .tracking(0.9)
             .textCase(.uppercase)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3.5)
+            .padding(.horizontal, scale(8))
+            .padding(.vertical, scale(3.5))
             .background(.white.opacity(0.1), in: Capsule())
             .overlay(Capsule().strokeBorder(.white.opacity(0.06)))
             .foregroundStyle(Theme.secondary)
@@ -326,7 +331,7 @@ struct SectionHeader<Accessory: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
-                .font(.system(size: 20, weight: .bold))
+                .floeFont(size: 20, weight: .bold)
                 .tracking(-0.3)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
@@ -345,19 +350,30 @@ extension View {
     /// Centres a symbol button on a section title's capitals (half the cap
     /// height above its baseline) inside `SectionHeader`'s baseline-aligned row.
     func centeredOnSectionTitle() -> some View {
-        alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 7 }
+        modifier(SectionTitleCentering())
+    }
+}
+
+private struct SectionTitleCentering: ViewModifier {
+    @Environment(\.interfaceScale) private var scale
+
+    func body(content: Content) -> some View {
+        // 7 pt is half the cap height of the 20 pt title; it grows with the title.
+        let lift = 7 * scale.text(20) / 20
+        content.alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + lift }
     }
 }
 
 /// Small spinner for loads of unknown shape. It waits a moment before showing,
 /// so quick loads don't flash.
 struct LoadingView: View {
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var visible = false
 
     var body: some View {
         ProgressView().controlSize(.small)
             .opacity(visible ? 1 : 0)
-            .frame(maxWidth: .infinity, minHeight: 120)
+            .frame(maxWidth: .infinity, minHeight: scale(120))
             .task {
                 guard (try? await Task.sleep(for: .milliseconds(180))) != nil else { return }
                 withAnimation(FloeMotion.fade) { visible = true }
@@ -377,43 +393,44 @@ struct MessageView: View {
     var tint: Color? = nil
     var actionTitle: LocalizedStringKey? = nil
     var action: (() -> Void)? = nil
+    @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var reduceMotion
     @ViewState private var appeared = false
 
     var body: some View {
         VStack(spacing: 0) {
             Image(systemName: systemImage)
-                .font(.system(size: 21, weight: .medium))
+                .floeFont(size: 21, weight: .medium)
                 .foregroundStyle(tint ?? Theme.secondary)
-                .frame(width: 52, height: 52)
+                .frame(width: scale(52), height: scale(52))
                 .background((tint ?? .white).opacity(0.1), in: Circle())
                 .overlay(Circle().strokeBorder(.white.opacity(0.07)))
             if let title {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .padding(.top, 14)
+                    .floeFont(size: 15, weight: .semibold)
+                    .padding(.top, scale(14))
             }
             Text(message)
-                .font(.system(size: 13))
+                .floeFont(size: 13)
                 .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
-                .frame(maxWidth: 380)
+                .frame(maxWidth: scale(380))
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, title == nil ? 14 : 6)
+                .padding(.top, scale(title == nil ? 14 : 6))
             if let actionTitle, let action {
                 Button(action: action) {
                     Text(actionTitle)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
+                        .floeFont(size: 12.5, weight: .semibold)
+                        .padding(.horizontal, scale(14))
+                        .padding(.vertical, scale(6))
                         .glassControl(in: .capsule)
                 }
                 .buttonStyle(.floe)
-                .padding(.top, 14)
+                .padding(.top, scale(14))
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 160)
+        .frame(maxWidth: .infinity, minHeight: scale(160))
         .padding()
         .opacity(appeared ? 1 : 0)
         .scaleEffect(appeared || reduceMotion ? 1 : 0.97)

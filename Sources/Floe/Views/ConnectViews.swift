@@ -20,7 +20,7 @@ struct ConnectPanel: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text(LocalizedStringKey(section.title))
-                    .font(.system(size: 18, weight: .bold))
+                    .floeFont(size: 18, weight: .bold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if connect.isLoading {
@@ -60,7 +60,7 @@ struct ConnectPanel: View {
     private func notice(systemImage: String, tint: Color, text: Text) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+                .floeFont(size: 13, weight: .semibold)
                 .foregroundStyle(tint)
                 .frame(width: 28, height: 28)
                 .background(tint.opacity(0.14), in: Circle())
@@ -127,7 +127,7 @@ struct ConnectPanel: View {
 
     private func caption(_ text: LocalizedStringKey) -> some View {
         Text(text)
-            .font(.system(size: 10.5, weight: .semibold))
+            .floeFont(size: 10.5, weight: .semibold)
             .tracking(0.5)
             .textCase(.uppercase)
             .foregroundStyle(Theme.tertiary)
@@ -149,10 +149,10 @@ private struct QueueRow: View {
             ArtworkView(images: track.album?.images, size: 36, cornerRadius: 5)
             VStack(alignment: .leading, spacing: 3) {
                 Text(track.name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .floeFont(size: 12, weight: .semibold)
                     .foregroundStyle(current ? palette.highlight : .white)
                     .lineLimit(1)
-                Text(track.artistLine).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                Text(track.artistLine).floeFont(size: 11).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             Spacer()
             Text(Format.duration(ms: Double(track.durationMs)))
@@ -203,7 +203,7 @@ private struct DeviceRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .medium))
+                    .floeFont(size: 14, weight: .medium)
                     .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
                     .frame(width: 32, height: 32)
                     .background(active ? palette.accent.opacity(0.2) : Color.white.opacity(0.07), in: Circle())
@@ -217,13 +217,13 @@ private struct DeviceRow: View {
                 } else if active {
                     // Trailing, so rows keep their layout and only colour changes hands.
                     HStack(spacing: 6) {
-                        Text("Active device").font(.system(size: 11, weight: .medium))
+                        Text("Active device").floeFont(size: 11, weight: .medium)
                         Image(systemName: "checkmark.circle.fill")
                     }
                     .foregroundStyle(palette.highlight)
                     .transition(.opacity)
                 } else if device.isRestricted {
-                    Image(systemName: "lock.fill").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                    Image(systemName: "lock.fill").floeFont(size: 11).foregroundStyle(Theme.tertiary)
                 }
             }
             .padding(.horizontal, 8)

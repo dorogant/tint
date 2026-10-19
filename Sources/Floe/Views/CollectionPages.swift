@@ -8,11 +8,12 @@ struct ListTools: View {
     @Binding var sort: TrackSort
     var prompt: LocalizedStringKey = "Find in playlist"
     @FocusState private var focused: Bool
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
+        HStack(spacing: scale(10)) {
+            HStack(spacing: scale(6)) {
                 Image(systemName: "magnifyingglass").foregroundStyle(focused ? Theme.secondary : Theme.tertiary)
                 TextField(prompt, text: $filter).textFieldStyle(.plain).focused($focused)
                 if !filter.isEmpty {
@@ -21,9 +22,9 @@ struct ListTools: View {
                         .help("Clear")
                 }
             }
-            .font(.system(size: 12))
-            .padding(.horizontal, 10)
-            .frame(width: 220, height: 28)
+            .floeFont(size: 12)
+            .padding(.horizontal, scale(10))
+            .frame(width: scale(220), height: scale(28))
             .background(.white.opacity(focused ? 0.1 : (hovering ? 0.09 : 0.07)), in: Capsule())
             .overlay(Capsule().strokeBorder(focused ? palette.accent.opacity(0.5) : .clear))
             .onHover { hovering = $0 }
@@ -38,7 +39,7 @@ struct ListTools: View {
                 .pickerStyle(.inline)
             } label: {
                 Label(sort.label, systemImage: "arrow.up.arrow.down")
-                    .font(.system(size: 12))
+                    .floeFont(size: 12)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -84,9 +85,10 @@ struct PlaylistView: View {
     @ViewState private var retryable = true
     @ViewState private var filter = ""
     @ViewState private var sort = TrackSort.custom
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: scale(24)) {
             if let playlist {
                 header(playlist).reveal("header")
                 if !library.canListItems(of: playlist) {
@@ -150,10 +152,10 @@ struct PlaylistView: View {
     @ViewBuilder
     private func cover(_ playlist: PlaylistRef) -> some View {
         if let images = playlist.images, !images.isEmpty {
-            ArtworkView(images: images, size: 200, cornerRadius: 12).coverGlow(images)
+            ArtworkView(images: images, size: scale(200), cornerRadius: scale(12)).coverGlow(images)
         } else {
             let albums = entries.compactMap(\.track.album)
-            MosaicCover(albums: albums, size: 200).coverGlow(albums.first?.images)
+            MosaicCover(albums: albums, size: scale(200)).coverGlow(albums.first?.images)
         }
     }
 
@@ -217,13 +219,14 @@ struct PlaylistView: View {
 struct MosaicCover: View {
     let albums: [AlbumRef]
     let size: CGFloat
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         var seen = Set<String>()
         let unique = albums.filter { seen.insert($0.id).inserted }.prefix(4)
         return Group {
             if unique.count < 4 {
-                ArtworkView(images: unique.first?.images, size: size, cornerRadius: 12)
+                ArtworkView(images: unique.first?.images, size: size, cornerRadius: scale(12))
             } else {
                 let half = size / 2
                 VStack(spacing: 0) {
@@ -236,7 +239,7 @@ struct MosaicCover: View {
                         ArtworkView(images: unique[unique.startIndex + 3].images, size: half, cornerRadius: 0)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .clipShape(RoundedRectangle(cornerRadius: scale(12)))
             }
         }
     }
@@ -252,17 +255,18 @@ struct AlbumView: View {
     @ViewState private var album: Album?
     @ViewState private var entries: [TrackEntry] = []
     @ViewState private var error: String?
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: scale(24)) {
             if let album {
                 PageHeader(badge: album.albumType == "single" ? "Single" : "Album", title: album.name,
                            detail: detail(album)) {
-                    ArtworkView(images: album.images, size: 200, cornerRadius: 12).coverGlow(album.images)
+                    ArtworkView(images: album.images, size: scale(200), cornerRadius: scale(12)).coverGlow(album.images)
                 } byline: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: scale(4)) {
                         Text("By").foregroundStyle(Theme.secondary)
-                        ArtistLinks(artists: album.artists, font: .system(size: 13, weight: .semibold))
+                        ArtistLinks(artists: album.artists, font: scale.font(size: 13, weight: .semibold))
                     }
                 } actions: {
                     PlayPill { playFromStart(shuffled: false) }
@@ -341,16 +345,17 @@ struct SongsView: View {
     @ViewState private var error: String?
     @ViewState private var filter = ""
     @ViewState private var sort = TrackSort.custom
+    @Environment(\.interfaceScale) private var scale
 
     private var contextURI: String? {
         library.profile.map { "spotify:user:\($0.id):collection" }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: scale(24)) {
             PageHeader(badge: "Playlist", title: L10n.string("Liked Songs"),
                        detail: total.map { L10n.string("\($0) songs") } ?? " ") {
-                LikedCover(size: 200).coverGlow(color: LikedCover.violet)
+                LikedCover(size: scale(200)).coverGlow(color: LikedCover.violet)
             } actions: {
                 PlayPill { playFromStart(shuffled: false) }
                 IconButton(systemImage: "shuffle", size: 16, help: "Shuffle play") { playFromStart(shuffled: true) }
@@ -417,13 +422,15 @@ struct SongsView: View {
 
 struct LikedCover: View {
     @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
+    /// In points, already at the interface size.
     let size: CGFloat
     /// Defaults to the radius artwork of this size uses.
     var cornerRadius: CGFloat?
     static let violet = Color(red: 0.27, green: 0.2, blue: 0.75)
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius ?? (size > 60 ? 12 : 5))
+        RoundedRectangle(cornerRadius: cornerRadius ?? scale(size > scale(60) ? 12 : 5))
             .fill(LinearGradient(colors: [Self.violet, palette.accent.opacity(0.85)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
             .overlay(Image(systemName: "star.fill").font(.system(size: size * 0.32)).foregroundStyle(.white))

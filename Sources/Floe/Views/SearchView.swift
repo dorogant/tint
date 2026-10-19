@@ -7,15 +7,16 @@ struct SearchView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var navigator
     @Environment(SearchModel.self) private var search
+    @Environment(\.interfaceScale) private var scale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.sectionGap) {
+        VStack(alignment: .leading, spacing: scale.sectionGap) {
             if let error = search.error {
                 MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange)
             }
             if let results = search.results {
                 if !search.songs.isEmpty {
-                    VStack(alignment: .leading, spacing: Theme.headerGap) {
+                    VStack(alignment: .leading, spacing: scale.headerGap) {
                         SectionHeader(title: "Songs") {
                             if search.canLoadMoreSongs {
                                 ShowMoreButton(busy: search.isLoadingMore) {
@@ -61,7 +62,7 @@ struct SearchView: View {
                 LoadingView()
             } else {
                 MessageView(systemImage: "magnifyingglass", message: L10n.string("Search for songs, artists, albums and playlists."))
-                    .padding(.top, 96)
+                    .padding(.top, scale(96))
             }
         }
         .revealScope()
@@ -139,15 +140,16 @@ struct ToolbarSearch: ViewModifier {
 private struct ShowMoreButton: View {
     let busy: Bool
     let action: () -> Void
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
 
     var body: some View {
         Button(action: action) {
             Text("Show more")
-                .font(.system(size: 12, weight: .semibold))
+                .floeFont(size: 12, weight: .semibold)
                 .foregroundStyle(hovering ? .white : Theme.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, scale(12))
+                .padding(.vertical, scale(6))
                 .background(.white.opacity(hovering ? 0.12 : 0.07), in: Capsule())
         }
         .buttonStyle(.floe)

@@ -210,7 +210,7 @@ private struct SurfaceSegment: View {
         Button(action: action) {
             // The toolbar flattens translucent text colours, so dim with opacity.
             Text(title)
-                .font(.system(size: 12.5, weight: .medium))
+                .floeFont(size: 12.5, weight: .medium)
                 .foregroundStyle(.white)
                 .opacity(selected ? 1 : (hovering ? 0.88 : 0.6))
                 .padding(.horizontal, 16)

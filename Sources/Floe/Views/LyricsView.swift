@@ -48,8 +48,8 @@ struct LyricsView: View {
         case let .loaded(.plain(text)):
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("These lyrics have no timing.").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
-                    Text(text).font(.system(size: 22, weight: .semibold, design: .rounded)).lineSpacing(10)
+                    Text("These lyrics have no timing.").floeFont(size: 12).foregroundStyle(Theme.tertiary)
+                    Text(text).floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(10)
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(.horizontal, 24)
@@ -307,7 +307,7 @@ private struct LyricPressStyle: ButtonStyle {
 private struct SeekTimeLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 4) {
-            configuration.icon.font(.system(size: 7, weight: .bold))
+            configuration.icon.floeFont(size: 7, weight: .bold)
             configuration.title
         }
     }

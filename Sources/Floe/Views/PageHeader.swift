@@ -11,6 +11,7 @@ struct PageHeader<Cover: View, Byline: View, Actions: View>: View {
     let cover: Cover
     let byline: Byline
     let actions: Actions
+    @Environment(\.interfaceScale) private var scale
 
     init(badge: LocalizedStringKey, title: String, subtitle: String = "", detail: String = "",
          @ViewBuilder cover: () -> Cover, @ViewBuilder byline: () -> Byline,
@@ -25,39 +26,39 @@ struct PageHeader<Cover: View, Byline: View, Actions: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 24) {
+        HStack(alignment: .bottom, spacing: scale(24)) {
             cover
             VStack(alignment: .leading, spacing: 0) {
                 Badge(text: badge)
                 Text(title)
-                    .font(.system(size: 40, weight: .heavy))
+                    .floeFont(size: 40, weight: .heavy)
                     .tracking(-0.8)
                     .lineLimit(2)
                     .minimumScaleFactor(0.5)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 10)
+                    .padding(.top, scale(10))
                     .accessibilityAddTraits(.isHeader)
                 if Byline.self != EmptyView.self {
                     byline
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.top, 6)
+                        .floeFont(size: 13, weight: .semibold)
+                        .padding(.top, scale(6))
                 }
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 13))
+                        .floeFont(size: 13)
                         .foregroundStyle(Theme.secondary)
                         .lineLimit(2)
-                        .padding(.top, 8)
+                        .padding(.top, scale(8))
                 }
                 if !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 12, weight: .medium))
+                        .floeFont(size: 12, weight: .medium)
                         .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
-                        .padding(.top, subtitle.isEmpty ? 8 : 4)
+                        .padding(.top, scale(subtitle.isEmpty ? 8 : 4))
                 }
-                HStack(spacing: 10) { actions }
-                    .padding(.top, 18)
+                HStack(spacing: scale(10)) { actions }
+                    .padding(.top, scale(18))
             }
             Spacer(minLength: 0)
         }
@@ -107,20 +108,23 @@ private struct CoverGlow: ViewModifier {
 /// where the cover, title and actions will land, so the header arrives in place.
 struct PagePlaceholder: View {
     var circle = false
+    @Environment(\.interfaceScale) private var scale
     @ViewState private var visible = false
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 24) {
+        HStack(alignment: .bottom, spacing: scale(24)) {
             Group {
-                if circle { Circle().fill(Theme.well) } else { RoundedRectangle(cornerRadius: 12).fill(Theme.well) }
+                if circle { Circle().fill(Theme.well) } else { RoundedRectangle(cornerRadius: scale(12)).fill(Theme.well) }
             }
-            .frame(width: 200, height: 200)
+            .frame(width: scale(200), height: scale(200))
             .overlay { ProgressView().controlSize(.small) }
             VStack(alignment: .leading, spacing: 0) {
-                Capsule().fill(Theme.well).frame(width: 64, height: 17)
-                RoundedRectangle(cornerRadius: 7).fill(Theme.well).frame(width: 300, height: 36).padding(.top, 12)
-                RoundedRectangle(cornerRadius: 4).fill(Theme.well).frame(width: 190, height: 12).padding(.top, 12)
-                Capsule().fill(Theme.well).frame(width: 92, height: 36).padding(.top, 20)
+                Capsule().fill(Theme.well).frame(width: scale(64), height: scale(17))
+                RoundedRectangle(cornerRadius: scale(7)).fill(Theme.well).frame(width: scale(300), height: scale(36))
+                    .padding(.top, scale(12))
+                RoundedRectangle(cornerRadius: scale(4)).fill(Theme.well).frame(width: scale(190), height: scale(12))
+                    .padding(.top, scale(12))
+                Capsule().fill(Theme.well).frame(width: scale(92), height: scale(36)).padding(.top, scale(20))
             }
             Spacer(minLength: 0)
         }

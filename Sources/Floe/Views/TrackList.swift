@@ -417,6 +417,7 @@ struct LikeButton: View {
     /// Bounces on the user's click, not when liked state arrives or the track changes.
     @ViewState private var presses = 0
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.listMotion) private var listMotion
 
     var body: some View {
         let liked = library.isLiked(uri) ?? false
@@ -429,7 +430,9 @@ struct LikeButton: View {
         } label: {
             Image(systemName: liked ? "star.fill" : "star")
                 .floeFont(size: size)
-                .contentTransition(.symbolEffect(.replace))
+                // A symbol swap animates whatever the transaction says; mid-scroll,
+                // liked state arriving for each new row would start one per row.
+                .contentTransition(listMotion?.isMoving == true ? .identity : .symbolEffect(.replace))
                 .symbolEffect(.bounce, value: reduceMotion ? 0 : presses)
                 .foregroundStyle(liked ? palette.highlight : Theme.tertiary)
                 .frame(width: scale(22), height: scale(22))

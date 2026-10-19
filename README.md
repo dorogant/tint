@@ -15,7 +15,7 @@ Appearance, Account and About. English and Ukrainian interface text is bundled; 
 language in Appearance. Queue and Devices have dedicated toolbar panels and an
 opt-in Spotify permission flow. Playback quality, normalization and gapless
 settings now reach librespot, and reconnecting preserves the song, position and
-pause state. Tint has a new native flower-and-rhythm icon (version 0.2.0).
+pause state. Tint's icon is its scalloped cover shape as a glass disc holding a wash of colour.
 A design pass adds a standard macOS toolbar and Settings window, Liquid Glass
 controls, smooth transitions, redesigned lyrics and reference-style visualizers
 (see [Design and motion](#design-and-motion)).

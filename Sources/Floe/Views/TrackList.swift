@@ -233,9 +233,10 @@ struct TrackRow: View {
         .background { highlight(isCurrent: isCurrent) }
         .contentShape(Rectangle())
         .onHover(perform: pointer)
-        // No focus rings on the row's buttons: each is an AppKit view, and every
-        // view added as a row scrolls in makes AppKit re-walk the window's regions.
-        .focusEffectDisabled()
+        // No focus rings on the row's buttons unless Full Keyboard Access needs
+        // them: each is an AppKit view, and every view added as a row scrolls in
+        // makes AppKit re-walk the window's regions.
+        .focusEffectDisabled(!NSApplication.shared.isFullKeyboardAccessEnabled)
         #if SCROLL_BENCHMARK
         // The benchmark's stand-in for a pointer resting over the list.
         .onGeometryChange(for: Bool.self) { proxy in

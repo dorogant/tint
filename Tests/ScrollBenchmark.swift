@@ -42,7 +42,9 @@ struct ScrollBenchmark {
                                          isLocal: false, isPlayable: true))
         FloeCore.shared.deliver(.connected(username: Fixture.userID))
         FloeCore.shared.deliver(.track(nowPlaying))
-        FloeCore.shared.deliver(.paused(positionMs: 64_000))
+        // FLOE_SCROLL_PLAYING=1: the mini player's clock and progress run (no audio either way).
+        FloeCore.shared.deliver(environment["FLOE_SCROLL_PLAYING"] == "1" ? .playing(positionMs: 64_000)
+                                                                         : .paused(positionMs: 64_000))
         await appearance.load(nowPlaying.coverURL, blur: visuals.backgroundBlur)
 
         let root = ZStack {
@@ -215,19 +217,23 @@ struct ScrollBenchmark {
     /// AppKit views and layers in the window, by class: SwiftUI hosts some
     /// controls in views, and AppKit walks every view for window regions.
     static func viewCensus(_ window: NSWindow) -> String {
-        var views: [String: Int] = [:], layers = 0
+        var views: [String: Int] = [:], layers = 0, shadows = 0, invisibleShadows = 0
         func visit(_ view: NSView) {
             views["\(type(of: view))", default: 0] += 1
             view.subviews.forEach(visit)
         }
         func count(_ layer: CALayer) {
             layers += 1
+            if layer.shadowOpacity > 0 && layer.shadowPath == nil {
+                if (layer.shadowColor?.alpha ?? 0) == 0 { invisibleShadows += 1 } else { shadows += 1 }
+            }
             layer.sublayers?.forEach(count)
         }
         if let frame = window.contentView?.superview { visit(frame) }
         if let root = window.contentView?.superview?.layer { count(root) }
         let top = views.sorted { $0.value > $1.value }.prefix(6).map { "\($0.value) \($0.key)" }
-        return "views \(views.values.reduce(0, +)) (\(top.joined(separator: ", "))), layers \(layers)"
+        return "views \(views.values.reduce(0, +)) (\(top.joined(separator: ", "))), layers \(layers), "
+            + "\(shadows) shadows and \(invisibleShadows) invisible ones without a path"
     }
 
     /// The library page's scroll view: the tallest document in the window.

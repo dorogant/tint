@@ -28,7 +28,7 @@ struct LyricsView: View {
                 .transition(still ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .floeAnimation(value: phaseKey, duration: 0.45)
+        .floeAnimation(value: phaseKey, duration: 0.3)
         .floeAnimation(value: follow, duration: 0.3)
         .onChange(of: player.displayTrack?.uri) { follow = true }
     }
@@ -122,6 +122,12 @@ private struct SyncedLyricsView: View {
                     position.scrollTo(id: active, anchor: Self.anchor)
                 }
             }
+        }
+        // Open on the current line, so a newly shown list never lands on line 0
+        // and then jumps mid-transition.
+        .onAppear {
+            let now = player.positionMs(at: Date()) / 1000 + Self.lead
+            advance(to: LRC.activeIndex(in: lines, at: now), animated: false)
         }
         .task(id: player.playbackAnchor) { await followPlayback() }
     }

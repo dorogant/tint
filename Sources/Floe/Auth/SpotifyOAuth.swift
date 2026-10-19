@@ -10,21 +10,30 @@ enum SpotifyOAuth {
         let redirectURI: URL
         let scopes: [String]
 
-        /// Tint's own developer app, used for the Web API. The client ID
-        /// is public; PKCE needs no secret. The redirect is registered in that app.
-        static let webAPI = Config(
-            clientID: "YOUR_SPOTIFY_CLIENT_ID",
-            redirectURI: URL(string: "http://127.0.0.1:8898/callback")!,
-            scopes: [
-                "playlist-read-private", "playlist-read-collaborative",
-                "user-library-read", "user-library-modify",
-                "user-read-recently-played", "user-top-read", "user-follow-read",
-            ]
-        )
+        /// The Web API redirect. Every developer app Tint signs in through must
+        /// register exactly this URI; onboarding shows it to copy.
+        static let webAPIRedirectURI = URL(string: "http://127.0.0.1:8898/callback")!
+
+        /// The user's developer app (see `SpotifyClientID`), used for the Web API.
+        /// The client ID is public; PKCE needs no secret.
+        static func webAPI(clientID: String) -> Config {
+            Config(
+                clientID: clientID,
+                redirectURI: webAPIRedirectURI,
+                scopes: [
+                    "playlist-read-private", "playlist-read-collaborative",
+                    "user-library-read", "user-library-modify",
+                    "user-read-recently-played", "user-top-read", "user-follow-read",
+                ]
+            )
+        }
 
         /// Added only when the user connects Queue and Devices; never requested on restore.
-        static let playbackControls = Config(clientID: webAPI.clientID, redirectURI: webAPI.redirectURI,
-            scopes: webAPI.scopes + ["user-read-playback-state", "user-read-currently-playing", "user-modify-playback-state"])
+        static func playbackControls(clientID: String) -> Config {
+            let base = webAPI(clientID: clientID)
+            return Config(clientID: clientID, redirectURI: base.redirectURI,
+                scopes: base.scopes + ["user-read-playback-state", "user-read-currently-playing", "user-modify-playback-state"])
+        }
 
         /// librespot's session login: Spotify's own client ID, `streaming` scope.
         /// Its registered redirect is `http://127.0.0.1:<port>/login`; 5588 is librespot's default.

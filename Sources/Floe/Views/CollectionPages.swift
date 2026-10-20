@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Toolbar above a track list: "Find in playlist" and sort. The field
 /// brightens under the pointer and takes an accent ring while focused.
-struct ListTools: View {
+private struct ListTools: View {
     @Environment(\.coverPalette) private var palette
     @Binding var filter: String
     @Binding var sort: TrackSort
@@ -239,7 +239,7 @@ struct PlaylistView: View {
 }
 
 /// 2×2 grid of album covers, for playlists without their own image.
-struct MosaicCover: View {
+private struct MosaicCover: View {
     let albums: [AlbumRef]
     let size: CGFloat
     @Environment(\.interfaceScale) private var scale

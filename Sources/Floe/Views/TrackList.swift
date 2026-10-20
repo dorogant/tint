@@ -91,7 +91,7 @@ struct TrackListView: View {
     }
 }
 
-struct TrackRow: View {
+private struct TrackRow: View {
     @Environment(\.coverPalette) private var palette
     let entry: TrackEntry
     let number: Int

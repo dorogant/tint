@@ -134,7 +134,7 @@ struct HomeView: View {
 }
 
 /// Somewhere to jump back into: a playlist, album, artist or Liked Songs.
-struct HomeShortcut: Identifiable {
+private struct HomeShortcut: Identifiable {
     enum Kind { case playlist, album, artist, liked }
     /// The context URI, which is also what Play starts.
     let id: String

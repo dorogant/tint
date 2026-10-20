@@ -68,6 +68,10 @@ final class PlayerModel {
     /// False once another device took over, so Play transfers playback back.
     @ObservationIgnored private var isActiveDevice = false
     @ObservationIgnored private var idleTask: Task<Void, Never>?
+    /// Volumes sent to the core whose echo hasn't come back. The core reports
+    /// local changes too; a late echo of an earlier drag step must not pull
+    /// the slider back, nor redraw it a second time per step.
+    @ObservationIgnored private var sentVolumes: [UInt16] = []
     @ObservationIgnored private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "player")
 
     init() {
@@ -231,6 +235,8 @@ final class PlayerModel {
         volume = min(max(value, 0), 1)
         audio.volume = Self.amplitude(volume)
         UserDefaults.standard.set(volume, forKey: "volume")
+        // Spirc skips an unchanged volume, so not every one comes back; keep a few.
+        sentVolumes = sentVolumes.suffix(7) + [spotifyVolume]
         core.setVolume(spotifyVolume)
     }
 
@@ -411,6 +417,10 @@ final class PlayerModel {
         case let .repeatMode(mode):
             repeatMode = mode
         case let .volume(raw):
+            if let echo = sentVolumes.firstIndex(of: raw) {
+                sentVolumes.removeSubrange(...echo)
+                break
+            }
             volume = Double(raw) / 65535
             audio.volume = Self.amplitude(volume)
         }

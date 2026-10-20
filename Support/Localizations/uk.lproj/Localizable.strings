@@ -232,7 +232,6 @@
 "%@ · from the sound" = "%@ · за звучанням";
 "%@ · no genre found" = "%@ · жанр не знайдено";
 "Bass punch" = "Удар басу";
-"Both split the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Обидва розкладають музику на шари. Промені: бочка штовхає крайні промені, хай-хети запалюють середні, вокал наповнює дим кольором, а рухи повертають у такт. Рідина розливає кольори обкладинки, наче чорнило, і дихає разом із басом. Удар басу задає, наскільки сильно бочка рухає світло. Стробоскоп блимає не частіше ніж тричі на секунду.";
 "Hide from Top Artists" = "Сховати з улюблених виконавців";
 "Hidden artists" = "Приховані виконавці";
 "No hidden artists" = "Немає прихованих виконавців";
@@ -271,3 +270,5 @@
 "Standard" = "Стандартний";
 "Large" = "Великий";
 "Sets the size of text, artwork and spacing in the main window." = "Визначає розмір тексту, обкладинок і відступів у головному вікні.";
+"Bloom" = "Цвітіння";
+"Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bloom is a fractal the music plays: the harmony picks its shape, kicks shatter it into dust that knits back, snares turn it, hi-hats make it glint, vocals light its heart, and a build dives into its edge until the drop. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Кожен вид розкладає музику на шари. Промені: бочка штовхає крайні промені, хай-хети запалюють середні, вокал наповнює дим кольором, а рухи повертають у такт. Рідина розливає кольори обкладинки, наче чорнило, і дихає разом із басом. Цвітіння — фрактал, на якому грає музика: гармонія обирає його форму, бочка розбиває його на пил, що знову зростається, малий барабан повертає його, хай-хети розсипають іскри, вокал запалює його серце, а наростання занурює в його край аж до дропу. Удар басу задає, наскільки сильно бочка рухає світло. Стробоскоп блимає не частіше ніж тричі на секунду.";

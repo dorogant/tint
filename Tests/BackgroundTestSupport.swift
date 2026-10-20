@@ -260,6 +260,9 @@ struct RenderedFrame {
         buffer = device.makeBuffer(length: width * height * 4, options: .storageModeShared)!
     }
 
+    /// Starts Bloom's trails afresh, as a newly shown view does.
+    func forgetTrails() { targets.forgetTrails() }
+
     func render(_ animator: BackgroundAnimator) -> RenderedFrame {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture

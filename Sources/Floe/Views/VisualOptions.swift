@@ -36,6 +36,7 @@ struct BackgroundOptions: View {
             Picker("Kind", selection: $settings.backgroundKind) {
                 Text("Fluid").tag(VisualSettings.BackgroundKind.fluid)
                 Text("Beams").tag(VisualSettings.BackgroundKind.beams)
+                Text("Bloom").tag(VisualSettings.BackgroundKind.bloom)
             }.pickerStyle(.segmented)
             SettingsSlider("Reactivity", value: $settings.reactivity, range: 0...2,
                            displayedValue: percent(settings.reactivity))

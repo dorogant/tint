@@ -171,8 +171,11 @@ private struct HomeShortcut: Identifiable {
                 }
             }
         }
-        library.pinnedPlaylists.forEach { add(HomeShortcut($0)) }
-        library.playlists.forEach { add(HomeShortcut($0)) }
+        // Every playlist can be hundreds; stop as soon as the grid is full.
+        for playlist in [library.pinnedPlaylists, library.playlists].joined() {
+            guard result.count < limit else { break }
+            add(HomeShortcut(playlist))
+        }
         return result
     }
 

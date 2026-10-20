@@ -57,6 +57,24 @@ private func loadEveryPage(more: () -> Bool, busy: () -> Bool, next: () async ->
     }
 }
 
+/// The rows a long list shows, filtered and sorted. Worked out again only when
+/// the tracks, the filter or the order change, not on every redraw: sorting
+/// 5,000 liked songs by title takes ~20 ms, and the page redraws twice for each
+/// page that arrives while sorting loads them all. Not observed; reading it redraws nothing.
+@MainActor
+private final class ShownTracks {
+    private var key: (revision: Int, filter: String, sort: TrackSort)?
+    private var rows: [TrackEntry] = []
+
+    /// `revision` changes whenever `entries` do.
+    func rows(of entries: [TrackEntry], revision: Int, filter: String, sort: TrackSort) -> [TrackEntry] {
+        if let key, key == (revision, filter, sort) { return rows }
+        rows = sort.apply(entries.filtered(filter))
+        key = (revision, filter, sort)
+        return rows
+    }
+}
+
 extension [TrackEntry] {
     func filtered(_ text: String) -> [TrackEntry] {
         let query = text.trimmingCharacters(in: .whitespaces)
@@ -78,6 +96,9 @@ struct PlaylistView: View {
     @Environment(LibraryModel.self) private var library
     @ViewState private var playlist: PlaylistRef?
     @ViewState private var entries: [TrackEntry] = []
+    /// Bumped with every change to `entries`.
+    @ViewState private var revision = 0
+    @ViewState private var shown = ShownTracks()
     @ViewState private var nextOffset: Int? = 0
     @ViewState private var loadingPage = false
     @ViewState private var error: String?
@@ -112,8 +133,8 @@ struct PlaylistView: View {
             }
             if !entries.isEmpty {
                 ListTools(filter: $filter, sort: $sort).reveal("tools", order: 1)
-                TrackListView(entries: sort.apply(entries.filtered(filter)), play: play,
-                              onReachEnd: { Task { await loadNextPage() } })
+                TrackListView(entries: shown.rows(of: entries, revision: revision, filter: filter, sort: sort),
+                              play: play, onReachEnd: { Task { await loadNextPage() } })
                     .reveal("tracks", order: 2)
             } else if let playlist, library.canListItems(of: playlist), nextOffset == nil, error == nil {
                 MessageView(systemImage: "music.note.list", message: L10n.string("This playlist is empty."))
@@ -162,6 +183,7 @@ struct PlaylistView: View {
     private func load() async {
         playlist = nil
         entries = []
+        revision += 1
         nextOffset = 0
         error = nil
         retryable = true
@@ -192,6 +214,7 @@ struct PlaylistView: View {
             entries += page.items.enumerated().compactMap { index, item in
                 item.track.map { TrackEntry(id: start + index, track: $0, addedAt: item.addedAt) }
             }
+            revision += 1
             nextOffset = page.next == nil ? nil : offset + 100
         } catch {
             self.error = error.localizedDescription
@@ -339,6 +362,9 @@ struct SongsView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @ViewState private var entries: [TrackEntry] = []
+    /// Bumped with every change to `entries`.
+    @ViewState private var revision = 0
+    @ViewState private var shown = ShownTracks()
     @ViewState private var total: Int?
     @ViewState private var nextOffset: Int? = 0
     @ViewState private var loadingPage = false
@@ -367,8 +393,8 @@ struct SongsView: View {
             }
             if !entries.isEmpty {
                 ListTools(filter: $filter, sort: $sort, prompt: "Find in Liked Songs").reveal("tools", order: 1)
-                TrackListView(entries: sort.apply(entries.filtered(filter)), play: play,
-                              onReachEnd: { Task { await loadNextPage() } })
+                TrackListView(entries: shown.rows(of: entries, revision: revision, filter: filter, sort: sort),
+                              play: play, onReachEnd: { Task { await loadNextPage() } })
                     .reveal("tracks", order: 2)
             }
             if loadingPage { LoadingView() }
@@ -380,6 +406,7 @@ struct SongsView: View {
 
     private func reload() async {
         entries = []
+        revision += 1
         nextOffset = 0
         error = nil
         await loadNextPage()
@@ -396,6 +423,7 @@ struct SongsView: View {
             entries += page.items.enumerated().map { index, saved in
                 TrackEntry(id: start + index, track: saved.track, addedAt: saved.addedAt)
             }
+            revision += 1
             library.markLiked(page.items.map(\.track.uri))
             nextOffset = page.next == nil ? nil : offset + 50
         } catch {

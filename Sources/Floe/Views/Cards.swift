@@ -184,6 +184,8 @@ struct Shelf<Item: Identifiable, Content: View>: View {
     private var margin: CGFloat { scale.gutter - scale.plate }
 
     var body: some View {
+        // Read here: the scroll transition's closure isn't main-actor isolated.
+        let still = reduceMotion
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: scale.headerGap - scale.plate) {
                 SectionHeader(title: title) {
@@ -205,7 +207,7 @@ struct Shelf<Item: Identifiable, Content: View>: View {
                         ForEach(items) { item in
                             // Cards ease in and out at the shelf's edges as it scrolls.
                             content(item).scrollTransition(.interactive, axis: .horizontal) { card, phase in
-                                card.scaleEffect(phase.isIdentity || reduceMotion ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
+                                card.scaleEffect(phase.isIdentity || still ? 1 : 0.9).opacity(phase.isIdentity ? 1 : 0.5)
                             }
                         }
                     }

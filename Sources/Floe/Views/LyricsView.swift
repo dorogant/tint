@@ -48,14 +48,7 @@ struct LyricsView: View {
         case .loaded(.missing):
             MessageView(systemImage: "text.quote", message: L10n.string("No lyrics found for this song."))
         case let .loaded(.plain(text)):
-            ScrollView {
-                VStack(alignment: .leading, spacing: scale(16)) {
-                    Text("These lyrics have no timing.").floeFont(size: 12).foregroundStyle(Theme.tertiary)
-                    Text(text).floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(scale(10))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, scale(24))
-            }
+            PlainLyricsView(text: text)
         case let .loaded(.synced(lines)):
             SyncedLyricsView(lines: lines, follow: $follow)
         }
@@ -70,6 +63,33 @@ struct LyricsView: View {
         case .failed: "failed"
         }
         return "\(lyrics.trackURI ?? "")|\(phase)|\(lyrics.isSynthetic)"
+    }
+}
+
+/// Untimed lyrics, a row per line. As one `Text` the whole song drew into a
+/// single layer as tall as the song (30 MB for 80 lines); rows draw only
+/// what's on screen. Line spacing between rows matches the text's own.
+private struct PlainLyricsView: View {
+    let text: String
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        ScrollView {
+            VStack(alignment: .leading, spacing: scale(16)) {
+                Text("These lyrics have no timing.").floeFont(size: 12).foregroundStyle(Theme.tertiary)
+                LazyVStack(alignment: .leading, spacing: scale(10)) {
+                    ForEach(lines.indices, id: \.self) { index in
+                        // A blank line keeps its height, as it did inside the text.
+                        Text(lines[index].isEmpty ? " " : String(lines[index]))
+                            .floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(scale(10))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(.horizontal, scale(24))
+        }
     }
 }
 
@@ -89,6 +109,8 @@ private struct SyncedLyricsView: View {
     private static let lead: TimeInterval = 0.15
     /// The current line rests a little above the middle, leaving room to read ahead.
     private static let anchor = UnitPoint(x: 0.5, y: 0.4)
+    /// The list easing a new line into place, and back to it on Follow.
+    private static let glide = Animation.easeInOut(duration: 0.35)
 
     var body: some View {
         GeometryReader { geometry in
@@ -120,7 +142,7 @@ private struct SyncedLyricsView: View {
             }
             .onChange(of: follow) {
                 guard follow, let active else { return }
-                withAnimation(still ? nil : .easeInOut(duration: 0.35)) {
+                withAnimation(still ? nil : Self.glide) {
                     position.scrollTo(id: active, anchor: Self.anchor)
                 }
             }
@@ -171,7 +193,7 @@ private struct SyncedLyricsView: View {
     }
 
     private func advance(to index: Int?, animated: Bool) {
-        var transaction = Transaction(animation: animated && !still ? .easeInOut(duration: 0.35) : nil)
+        var transaction = Transaction(animation: animated && !still ? Self.glide : nil)
         transaction.disablesAnimations = !animated || still
         withTransaction(transaction) {
             active = index
@@ -196,6 +218,9 @@ private struct LyricRow: View, Equatable {
     @Environment(\.coverPalette) private var palette
     @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
+
+    /// With Reduce Motion, hover and press only fade.
+    fileprivate static let stillFade = Animation.easeOut(duration: 0.15)
 
     /// `seek` is left out: it only ever seeks to `line`, and a closure never
     /// compares equal, which made every visible row redraw on each line change.
@@ -245,8 +270,7 @@ private struct LyricRow: View, Equatable {
         .buttonStyle(LyricPressStyle(still: still))
         .onHover { hovering = $0 }
         .animation(rowAnimation, value: distance)
-        .animation(still ? .easeOut(duration: 0.15) : .spring(duration: hovering ? 0.16 : 0.24, bounce: 0),
-                   value: hovering)
+        .animation(still ? Self.stillFade : FloeMotion.hover(hovering), value: hovering)
         .help("Seek to this line")
     }
 
@@ -308,7 +332,7 @@ private struct LyricPressStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed && !still ? 0.98 : 1, anchor: .leading)
             .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(still ? .easeOut(duration: 0.15)
+            .animation(still ? LyricRow.stillFade
                        : .spring(duration: configuration.isPressed ? 0.14 : 0.3, bounce: configuration.isPressed ? 0 : 0.15),
                        value: configuration.isPressed)
     }

@@ -134,7 +134,7 @@ struct HomeView: View {
 }
 
 /// Somewhere to jump back into: a playlist, album, artist or Liked Songs.
-struct HomeShortcut: Identifiable {
+private struct HomeShortcut: Identifiable {
     enum Kind { case playlist, album, artist, liked }
     /// The context URI, which is also what Play starts.
     let id: String
@@ -171,8 +171,11 @@ struct HomeShortcut: Identifiable {
                 }
             }
         }
-        library.pinnedPlaylists.forEach { add(HomeShortcut($0)) }
-        library.playlists.forEach { add(HomeShortcut($0)) }
+        // Every playlist can be hundreds; stop as soon as the grid is full.
+        for playlist in [library.pinnedPlaylists, library.playlists].joined() {
+            guard result.count < limit else { break }
+            add(HomeShortcut(playlist))
+        }
         return result
     }
 

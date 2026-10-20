@@ -153,7 +153,7 @@ struct SurfaceTransition: Transition {
 /// Remembers which sections of a page have already made their entrance, so a
 /// refresh that rebuilds one shows it in place instead of replaying it.
 @MainActor
-final class RevealLedger {
+private final class RevealLedger {
     private var shown: Set<String> = []
     func contains(_ key: String) -> Bool { shown.contains(key) }
     func claim(_ key: String) { shown.insert(key) }
@@ -163,7 +163,7 @@ private struct RevealLedgerKey: EnvironmentKey {
     static var defaultValue: RevealLedger? { nil }
 }
 
-extension EnvironmentValues {
+private extension EnvironmentValues {
     var revealLedger: RevealLedger? {
         get { self[RevealLedgerKey.self] }
         set { self[RevealLedgerKey.self] = newValue }

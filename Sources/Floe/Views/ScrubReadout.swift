@@ -132,8 +132,7 @@ final class ScrubReadoutView: NSView {
         guard enabled, durationMs > 0,
               let fraction = scrub ?? pointer.map({ Double(min(max($0 / width, 0), 1)) })
         else { setShown(false); return }
-        let seconds = Int(fraction * durationMs / 1000)
-        let text = String(format: "%d:%02d", seconds / 60, seconds % 60)
+        let text = Format.duration(ms: fraction * durationMs)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if text != self.text {

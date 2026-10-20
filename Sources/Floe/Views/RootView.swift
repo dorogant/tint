@@ -52,6 +52,7 @@ struct MainView: View {
                     .opacity(navigator.surface == .library ? 1 : 0)
                     .allowsHitTesting(navigator.surface == .library)
                     .accessibilityHidden(navigator.surface != .library)
+                    .environment(\.isOnstage, navigator.surface == .library)
                 if navigator.surface != .library {
                     raisedSurface
                         .id(navigator.surface)

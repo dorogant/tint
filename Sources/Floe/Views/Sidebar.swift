@@ -9,6 +9,7 @@ struct SidebarView: View {
 
     var body: some View {
         let metrics = SidebarMetrics(scale)
+        let pinned = library.pinnedPlaylists
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 // Lazy, so only rows on screen exist: with hundreds of playlists every
@@ -18,9 +19,9 @@ struct SidebarView: View {
                     NavRow(title: "Home", systemImage: "house.fill", route: .home, selection: selection)
                     NavRow(title: "Songs", systemImage: "star.fill", route: .songs, selection: selection)
 
-                    if !library.pinnedPlaylists.isEmpty {
+                    if !pinned.isEmpty {
                         GroupTitle(title: "Pinned Playlists", systemImage: "pin.fill")
-                        ForEach(library.pinnedPlaylists) {
+                        ForEach(pinned) {
                             PlaylistRow(playlist: $0, selection: selection, showsSelection: true)
                         }
                     }

@@ -7,26 +7,8 @@ enum Theme {
     static let selection = Color.white.opacity(0.1)
     static let secondary = Color.white.opacity(0.62)
     static let tertiary = Color.white.opacity(0.4)
-    static let corner = InterfaceScale.compact.corner
     /// Placeholder blocks and quiet fills (skeletons, icon wells).
     static let well = Color.white.opacity(0.06)
-
-    // One spacing scale, in multiples of 4, and the guides every page shares.
-    // These are the Compact sizes; views read them through `InterfaceScale`.
-
-    /// Window margin and the gap between panels. Panels round to `corner`, so
-    /// they stay concentric with the window's own corners.
-    static let margin = InterfaceScale.compact.margin
-    /// From a page panel's edge to its content: titles, section headers,
-    /// covers, card artwork and list columns all start on this line.
-    static let gutter = InterfaceScale.compact.gutter
-    /// How far a hover or selection plate reaches past what it holds. Plates
-    /// round to their content's radius plus this, so the corners nest.
-    static let plate = InterfaceScale.compact.plate
-    /// Between the sections of a page.
-    static let sectionGap = InterfaceScale.compact.sectionGap
-    /// From a section header to its content.
-    static let headerGap = InterfaceScale.compact.headerGap
 }
 
 /// Cover art is blurred once at thumbnail resolution, then stretched behind glass.

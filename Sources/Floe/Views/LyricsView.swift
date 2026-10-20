@@ -109,6 +109,8 @@ private struct SyncedLyricsView: View {
     private static let lead: TimeInterval = 0.15
     /// The current line rests a little above the middle, leaving room to read ahead.
     private static let anchor = UnitPoint(x: 0.5, y: 0.4)
+    /// The list easing a new line into place, and back to it on Follow.
+    private static let glide = Animation.easeInOut(duration: 0.35)
 
     var body: some View {
         GeometryReader { geometry in
@@ -140,7 +142,7 @@ private struct SyncedLyricsView: View {
             }
             .onChange(of: follow) {
                 guard follow, let active else { return }
-                withAnimation(still ? nil : .easeInOut(duration: 0.35)) {
+                withAnimation(still ? nil : Self.glide) {
                     position.scrollTo(id: active, anchor: Self.anchor)
                 }
             }
@@ -191,7 +193,7 @@ private struct SyncedLyricsView: View {
     }
 
     private func advance(to index: Int?, animated: Bool) {
-        var transaction = Transaction(animation: animated && !still ? .easeInOut(duration: 0.35) : nil)
+        var transaction = Transaction(animation: animated && !still ? Self.glide : nil)
         transaction.disablesAnimations = !animated || still
         withTransaction(transaction) {
             active = index
@@ -216,6 +218,9 @@ private struct LyricRow: View, Equatable {
     @Environment(\.coverPalette) private var palette
     @Environment(\.interfaceScale) private var scale
     @ViewState private var hovering = false
+
+    /// With Reduce Motion, hover and press only fade.
+    fileprivate static let stillFade = Animation.easeOut(duration: 0.15)
 
     /// `seek` is left out: it only ever seeks to `line`, and a closure never
     /// compares equal, which made every visible row redraw on each line change.
@@ -265,8 +270,7 @@ private struct LyricRow: View, Equatable {
         .buttonStyle(LyricPressStyle(still: still))
         .onHover { hovering = $0 }
         .animation(rowAnimation, value: distance)
-        .animation(still ? .easeOut(duration: 0.15) : .spring(duration: hovering ? 0.16 : 0.24, bounce: 0),
-                   value: hovering)
+        .animation(still ? Self.stillFade : FloeMotion.hover(hovering), value: hovering)
         .help("Seek to this line")
     }
 
@@ -328,7 +332,7 @@ private struct LyricPressStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed && !still ? 0.98 : 1, anchor: .leading)
             .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(still ? .easeOut(duration: 0.15)
+            .animation(still ? LyricRow.stillFade
                        : .spring(duration: configuration.isPressed ? 0.14 : 0.3, bounce: configuration.isPressed ? 0 : 0.15),
                        value: configuration.isPressed)
     }

@@ -188,5 +188,93 @@ extension BackgroundTests {
         let breakdownBuild = breakdown.map(\.build).max()!
         print(String(format: "Build: a breakdown and back builds to at most %.2f, %d drops", breakdownBuild, hits(breakdown, \.drop).count))
         check(breakdownBuild < 0.3 && hits(breakdown, \.drop).isEmpty, "a breakdown without a riser must not build or drop")
+        songBuildChecks()
+    }
+
+    /// Builds as songs write them: a house build that keeps its kick under the
+    /// riser, and a pop pre-chorus that only gets louder and brighter. A fade-in
+    /// and a verse cutting to a louder chorus aren't builds.
+    static func songBuildChecks() {
+        let house = houseBuild()
+        let houseDrops = hits(house, \.drop)
+        let housePeak = house[240..<480].map(\.build).max()!
+        print(String(format: "Build: a house build over a steady kick reaches %.2f (%.2f halfway); drops at %@ s",
+                     housePeak, house[360].build, houseDrops.map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", ")))
+        check(housePeak > 0.5, "a riser and snare roll must build even with the kick going (\(housePeak))")
+        // Over a held kick, a drop is only sure once its bass stays up between the kicks.
+        check(houseDrops.count == 1 && houseDrops.allSatisfy { (480...490).contains($0) },
+              "the house build's drop must fire once, within a third of a second of landing (\(houseDrops))")
+        check(house.prefix(240).map(\.build).max()! < 0.2, "the groove before the build must not build")
+
+        let pop = popSong(preChorus: 8)
+        let popPeak = pop[300..<540].map(\.build).max()!
+        print(String(format: "Build: a pop pre-chorus reaches %.2f; the verse at most %.2f; the chorus %.2f, %.2f, %.2f 1, 3, 5 s in; drops at %@ s",
+                     popPeak, pop.prefix(300).map(\.build).max()!, pop[570].build, pop[630].build, pop[690].build,
+                     hits(pop, \.drop).map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", ")))
+        check(popPeak > 0.35, "a pre-chorus getting louder and brighter must build (\(popPeak))")
+        check(pop.prefix(300).map(\.build).max()! < 0.2, "a steady verse must not build")
+        let popDrops = hits(pop, \.drop)
+        check(popDrops.count == 1 && popDrops.allSatisfy { (540...552).contains($0) } && pop[630].build < 0.2,
+              "the chorus must release the pre-chorus's build once, as it lands (\(popDrops), \(pop[630].build) 3 s in)")
+
+        let cut = popSong(preChorus: 0)
+        let cutBuild = cut.map(\.build).max()!
+        print(String(format: "Build: a verse cutting to a louder chorus builds to at most %.2f, %d drops", cutBuild, hits(cut, \.drop).count))
+        check(cutBuild < 0.2 && hits(cut, \.drop).isEmpty, "a verse cutting to a louder chorus isn't a build (\(cutBuild))")
+
+        let groove = SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.12, snare: 0.3, vocal: 0.12)
+        var noise = DrumNoise()
+        let fade = analyze(16) { t in min(1, t / 8) * groove.sample(at: t, noise: &noise) }
+        let fadeBuild = fade.map(\.build).max()!
+        print(String(format: "Build: an 8 s fade-in builds to at most %.2f, %d drops", fadeBuild, hits(fade, \.drop).count))
+        check(fadeBuild < 0.2 && hits(fade, \.drop).isEmpty, "a fade-in isn't a build (\(fadeBuild))")
+    }
+
+    /// 8 s of groove; an 8 s build where the kick keeps going, the bass thins
+    /// out, a riser opens on top and the snares roll in steps (four a second,
+    /// then eight); then the drop, louder.
+    static func houseBuild() -> [MusicLayers] {
+        var random = SeededRandom(seed: 5)
+        var noise = DrumNoise()
+        var filtered: Float = 0
+        let groove = SyntheticTrack(kick: 0.9, bass: 0.2, pad: 0.15, hats: 0.12, snare: 0.3)
+        let drop = SyntheticTrack(kick: 0.95, bass: 0.35, pad: 0.25, hats: 0.14, snare: 0.35)
+        return analyze(22) { t in
+            if t < 8 { return groove.sample(at: t, noise: &noise) }
+            if t >= 16 { return drop.sample(at: t, noise: &noise) }
+            let into = (t - 8) / 8
+            var track = groove
+            track.bass = 0.2 * (1 - into)
+            track.snare = into < 0.25 ? 0.3 : 0
+            var value = track.sample(at: t, noise: &noise)
+            let cutoff = 300 * powf(27, into)
+            filtered += (random.next() * 2 - 1 - filtered) * (1 - expf(-2 * .pi * cutoff / SpectrumAnalyzer.sampleRate))
+            value += (0.05 + 0.2 * into) * filtered
+            if into >= 0.25 {
+                let interval: Float = into < 0.75 ? 0.25 : 0.125
+                let since = (t - 8).truncatingRemainder(dividingBy: interval)
+                value += (0.2 + 0.15 * into) * min(1, since / 0.002) * noise.rattle() * expf(-since / 0.04)
+            }
+            return value
+        }
+    }
+
+    /// A 10 s verse; a pre-chorus of `preChorus` seconds where hats come in, a
+    /// bright pad swells and the mix gets about 3 dB louder, with the beat
+    /// unchanged; then 6 s of a louder chorus.
+    static func popSong(preChorus: Float) -> [MusicLayers] {
+        var noise = DrumNoise()
+        let verse = SyntheticTrack(kick: 0.6, bass: 0.12, pad: 0.12, snare: 0.25, vocal: 0.12)
+        let chorus = SyntheticTrack(kick: 0.8, bass: 0.25, pad: 0.2, hats: 0.12, snare: 0.3, vocal: 0.18, gain: 1.4)
+        let bright = { (t: Float) in (1...12).reduce(Float(0)) { $0 + sinf(2 * .pi * 330 * Float($1) * t) / Float($1) } / 3 }
+        return analyze(16 + preChorus) { t in
+            if t < 10 { return verse.sample(at: t, noise: &noise) }
+            if t >= 10 + preChorus { return chorus.sample(at: t, noise: &noise) + 0.06 * bright(t) }
+            let into = (t - 10) / preChorus
+            var track = verse
+            track.hats = 0.12 * into
+            track.gain = 1 + 0.4 * into
+            return track.sample(at: t, noise: &noise) + 0.06 * into * bright(t)
+        }
     }
 }

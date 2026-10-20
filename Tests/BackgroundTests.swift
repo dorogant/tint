@@ -26,6 +26,12 @@ struct BackgroundTests {
             if ProcessInfo.processInfo.environment["FLOE_STUDY_LONG"] != nil { bloomLongSongRenders(device: device, directory: directory) }
             return
         }
+        // FLOE_BUILD_ONLY=1: just the build and drop checks, for tuning them.
+        if ProcessInfo.processInfo.environment["FLOE_BUILD_ONLY"] != nil {
+            buildChecks()
+            print("PASS: \(checks) build checks")
+            return
+        }
         // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
             bloomRenders(device: device)

@@ -453,8 +453,7 @@ struct BrightnessFollower {
 /// highs climbing over the rest of the mix and the spectrum's centre rising
 /// (a riser, a filter opening), the snares speeding up (a roll), or, well into
 /// a song, the whole mix swelling (a pre-chorus). A kick that sits out or thins
-/// adds to it, but many builds keep theirs. The drop is the frame the bass and
-/// the loudness slam back after one.
+/// adds to it, but many builds keep theirs. `DropFollower` hears the drop.
 struct TensionFollower {
     /// Three one-second segments: a rise has to show across all three, so a
     /// sudden change (a song starting, a new section) isn't a build.
@@ -472,22 +471,13 @@ struct TensionFollower {
     /// Frames the music has been sounding, and the silent ones since it last did.
     private var sounding = 0
     private var silent = 0
-    private var bassAverage: Float = 0
-    private var levelAverage: Float = 0
-    /// The bass and the loudness between hits: follow them down at once and up slowly.
-    private var bassFloor: Float = 0
-    private var levelFloor: Float = 0
     private var kickHeld = false
     /// Frames the evidence has held without a break, frames since it last
     /// counted, and whether the build is holding at its peak.
     private var rising = 0
     private var sinceRise = 999
     private var plateau = false
-    /// Frames from a possible drop over a held kick until it's confirmed (or
-    /// not), the lowest bass and loudness over its last four, their floors
-    /// before it, and its strength.
-    private static let confirming = 7
-    private var pending: (since: Int, low: SIMD2<Float>, floor: SIMD2<Float>, strength: Float)?
+    private var drops = DropFollower()
     /// Frames a drop can still land after the build was last above 0.4.
     private var armed = 0
     /// Frames left of the fast fall after a drop.
@@ -496,6 +486,31 @@ struct TensionFollower {
 
     /// Feeds one frame; returns the drop's strength on the frame it lands, otherwise 0.
     mutating func update(high: Float, centroid: Float, snare: Bool, kick: Bool, bass: Float, level: Float) -> Float {
+        record(high: high, centroid: centroid, snare: snare, kick: kick, level: level)
+        let push = evidence()
+        let drop = drops.update(bass: bass, level: level, kick: kick, armed: armed > 0, kickHeld: kickHeld)
+        if drop > 0 {
+            // The build's history is spent: the next one starts from scratch.
+            filled = 0
+            rising = 0
+            sinceRise = 999
+            plateau = false
+            armed = 0
+            falling = 30
+        }
+        if falling > 0 {
+            // Disarmed until the next build: one build, one drop.
+            falling -= 1
+            build *= 0.85
+        } else {
+            // Climbs over about three seconds of steady evidence; fades over about three without.
+            build += 0.03 * push * (1 - build) - 0.011 * (1 - push) * build
+            if build > 0.4 { armed = 45 } else if armed > 0 { armed -= 1 }
+        }
+        return drop
+    }
+
+    private mutating func record(high: Float, centroid: Float, snare: Bool, kick: Bool, level: Float) {
         // Highs against the whole mix, so a fade-in, where everything rises together, isn't a riser.
         tilts[write] = high - level
         centroids[write] = centroid
@@ -512,6 +527,10 @@ struct TensionFollower {
             // A second of silence: a new song, or a long pause, starts over.
             if silent > 30 { sounding = 0 }
         }
+    }
+
+    /// How hard the last three seconds push the build up, 0…1.
+    private mutating func evidence() -> Float {
         var push: Float = 0
         if filled == Self.length {
             let h = sums(tilts), c = sums(centroids), l = sums(levels), s = sums(snares), k = sums(kicks)
@@ -539,52 +558,7 @@ struct TensionFollower {
         rising = push > 0.05 ? rising + 1 : 0
         if rising <= 36 { push = 0 }
         sinceRise = push > 0 ? 0 : sinceRise + 1
-        if plateau { push = max(push, 0.5) }
-
-        var drop: Float = 0
-        let bassJump = bass - bassAverage, loudJump = level - levelAverage
-        if var candidate = pending {
-            // Over a build that kept its kick, every kick slams like a drop. A
-            // drop's bass, or a chorus's loudness, stays up between its kicks; a
-            // kick's tail dies away.
-            candidate.since += 1
-            if candidate.since > Self.confirming - 4 { candidate.low = simd_min(candidate.low, SIMD2(bass, level)) }
-            pending = candidate
-            if candidate.since == Self.confirming {
-                pending = nil
-                let held = candidate.low - candidate.floor
-                if held.x > 0.2 || held.y > 0.05 { drop = candidate.strength }
-            }
-        } else if armed > 0, kickHeld, bass > bassFloor + 0.25 || level > levelFloor + 0.06 {
-            let strength = min(1, 0.5 + max(0, bass - bassFloor - 0.25) + 2 * max(0, level - levelFloor - 0.06))
-            pending = (0, SIMD2(1, 1), SIMD2(bassFloor, levelFloor), strength)
-        } else if armed > 0, bassJump > 0.2, loudJump > 0.04, kick || bassJump > 0.35 {
-            drop = min(1, 0.5 + bassJump + loudJump)
-        }
-        if drop > 0 {
-            armed = 0
-            falling = 30
-            // The build's history is spent: the next one starts from scratch.
-            filled = 0
-            rising = 0
-            sinceRise = 999
-            plateau = false
-        }
-        bassAverage += (bass - bassAverage) * 0.1
-        levelAverage += (level - levelAverage) * 0.1
-        bassFloor += (bass - bassFloor) * (bass < bassFloor ? 0.3 : 0.01)
-        levelFloor += (level - levelFloor) * (level < levelFloor ? 0.3 : 0.01)
-
-        if falling > 0 {
-            // Disarmed until the next build: one build, one drop.
-            falling -= 1
-            build *= 0.85
-        } else {
-            // Climbs over about three seconds of steady evidence; fades over about three without.
-            build += 0.03 * push * (1 - build) - 0.011 * (1 - push) * build
-            if build > 0.4 { armed = 45 } else if armed > 0 { armed -= 1 }
-        }
-        return drop
+        return plateau ? max(push, 0.5) : push
     }
 
     /// Each segment's sum, oldest first.
@@ -592,6 +566,57 @@ struct TensionFollower {
         var result = SIMD3<Float>.zero
         for i in 0..<Self.length { result[i / Self.segment] += ring[(write + i) % Self.length] }
         return result
+    }
+}
+
+/// Hears the drop that ends a build: the frame the bass and the loudness slam
+/// back. Over a build that kept its kick every kick slams like that, so there a
+/// drop is only sure once its bass, or a chorus's loudness, stays up between
+/// the kicks, where a kick's tail dies away.
+struct DropFollower {
+    /// A possible drop over a held kick, waiting to be confirmed or not.
+    private struct Candidate {
+        var since = 0
+        /// The lowest bass and loudness over its last four frames.
+        var low = SIMD2<Float>(1, 1)
+        /// The bass and the loudness floors before it.
+        let floor: SIMD2<Float>
+        let strength: Float
+    }
+    /// Frames from a candidate until it's confirmed or not.
+    private static let confirming = 7
+    private var bassAverage: Float = 0
+    private var levelAverage: Float = 0
+    /// The bass and the loudness between hits: follow them down at once and up slowly.
+    private var floor = SIMD2<Float>.zero
+    private var candidate: Candidate?
+
+    /// Feeds one frame; returns the drop's strength on the frame it's sure, otherwise 0.
+    /// `armed` is whether a build has just been heard, `kickHeld` whether it kept its kick.
+    mutating func update(bass: Float, level: Float, kick: Bool, armed: Bool, kickHeld: Bool) -> Float {
+        var drop: Float = 0
+        let now = SIMD2(bass, level)
+        if var waiting = candidate {
+            waiting.since += 1
+            if waiting.since > Self.confirming - 4 { waiting.low = simd_min(waiting.low, now) }
+            candidate = waiting
+            if waiting.since == Self.confirming {
+                candidate = nil
+                let held = waiting.low - waiting.floor
+                if held.x > 0.2 || held.y > 0.05 { drop = waiting.strength }
+            }
+        } else if armed, kickHeld, bass > floor.x + 0.25 || level > floor.y + 0.06 {
+            let strength = min(1, 0.5 + max(0, bass - floor.x - 0.25) + 2 * max(0, level - floor.y - 0.06))
+            candidate = Candidate(floor: floor, strength: strength)
+        } else if armed {
+            let bassJump = bass - bassAverage, loudJump = level - levelAverage
+            if bassJump > 0.2, loudJump > 0.04, kick || bassJump > 0.35 { drop = min(1, 0.5 + bassJump + loudJump) }
+        }
+        bassAverage += (bass - bassAverage) * 0.1
+        levelAverage += (level - levelAverage) * 0.1
+        floor.replace(with: floor + (now - floor) * 0.3, where: now .< floor)
+        floor.replace(with: floor + (now - floor) * 0.01, where: now .>= floor)
+        return drop
     }
 }
 

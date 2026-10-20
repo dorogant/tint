@@ -153,6 +153,11 @@ extension BackgroundTests {
         }
     }
 
+    /// Frame indices as seconds, for the reports.
+    static func times(_ frames: [Int]) -> String {
+        frames.map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", ")
+    }
+
     /// Builds rise through a riser and fire one drop when the kick returns;
     /// steady music and a breakdown without a riser don't.
     static func buildChecks() {
@@ -161,7 +166,7 @@ extension BackgroundTests {
         let peak = song.prefix(240).map(\.build).max()!
         let after = song.suffix(60).map(\.build).max()!
         print(String(format: "Build: the riser builds to %.2f (%.2f at 4 s, %.2f at 6 s); drops at %@ s (strength %@); build %.2f two seconds later",
-                     peak, song[120].build, song[180].build, drops.map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", "),
+                     peak, song[120].build, song[180].build, times(drops),
                      drops.map { String(format: "%.2f", song[$0].drop) }.joined(separator: ", "), after))
         check(peak > 0.6, "an 8 s riser must build above 0.6 (\(peak))")
         check(drops.count == 1, "exactly one drop must fire (\(drops))")
@@ -172,7 +177,7 @@ extension BackgroundTests {
         let paused = riser(gap: 0.5, seconds: 12)
         let pausedDrops = hits(paused, \.drop)
         print(String(format: "Build: with half a second of silence before it, the drop lands at %@ s (build %.2f just before)",
-                     pausedDrops.map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", "), paused[254].build))
+                     times(pausedDrops), paused[254].build))
         check(pausedDrops.count == 1 && pausedDrops.allSatisfy { (255...258).contains($0) },
               "a drop after a pause must still fire once, as the music returns (\(pausedDrops))")
 
@@ -199,7 +204,7 @@ extension BackgroundTests {
         let houseDrops = hits(house, \.drop)
         let housePeak = house[240..<480].map(\.build).max()!
         print(String(format: "Build: a house build over a steady kick reaches %.2f (%.2f halfway); drops at %@ s",
-                     housePeak, house[360].build, houseDrops.map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", ")))
+                     housePeak, house[360].build, times(houseDrops)))
         check(housePeak > 0.5, "a riser and snare roll must build even with the kick going (\(housePeak))")
         // Over a held kick, a drop is only sure once its bass stays up between the kicks.
         check(houseDrops.count == 1 && houseDrops.allSatisfy { (480...490).contains($0) },
@@ -210,7 +215,7 @@ extension BackgroundTests {
         let popPeak = pop[300..<540].map(\.build).max()!
         print(String(format: "Build: a pop pre-chorus reaches %.2f; the verse at most %.2f; the chorus %.2f, %.2f, %.2f 1, 3, 5 s in; drops at %@ s",
                      popPeak, pop.prefix(300).map(\.build).max()!, pop[570].build, pop[630].build, pop[690].build,
-                     hits(pop, \.drop).map { String(format: "%.2f", Float($0) / 30) }.joined(separator: ", ")))
+                     times(hits(pop, \.drop))))
         check(popPeak > 0.35, "a pre-chorus getting louder and brighter must build (\(popPeak))")
         check(pop.prefix(300).map(\.build).max()! < 0.2, "a steady verse must not build")
         let popDrops = hits(pop, \.drop)

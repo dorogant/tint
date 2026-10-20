@@ -37,8 +37,10 @@ struct BloomRig {
         (0.44, 0.975), (0.87, 0.96), (1.31, 0.98), (1.75, 0.965), (2.27, 0.975), (2.88, 0.96),
         (3.40, 0.98), (3.84, 0.965), (4.45, 0.975), (4.97, 0.96), (5.41, 0.98), (5.85, 0.965),
     ]
-    /// How far a full snare twists the plane at its point, at the peak.
+    /// How far a full snare twists the plane at its point, at the peak, and how
+    /// far round that point the twist reaches, in screen units.
     static let facet = Float.pi / 6
+    static let twistReach: Float = 0.6
     /// The deepest a build dives toward the set's edge, beyond the lens.
     static let maximumZoom: Float = 4
     /// The lens's magnification while music plays; silence widens it to 1.
@@ -57,17 +59,42 @@ struct BloomRig {
     private var wander = shapes[0].theta
     /// One kick's shatter, added to the radius around its epicentre.
     struct Kick {
-        var shatter = Spring()
+        private(set) var shatter = Spring()
         /// In screen units: y runs −1…1, x the same scaled by the aspect ratio.
-        var epicentre = SIMD2<Float>(0, 0)
+        private(set) var epicentre = SIMD2<Float>(0, 0)
         /// How far it reaches as it lands; it spreads further as it ages.
-        var reach: Float = 0.5
-        var age: Float = 10
-        /// The outward push lands a moment after the small inward pull.
-        var pending: (delay: Float, strength: Float)?
+        private var reach: Float = 0.5
+        private(set) var age: Float = 10
+        /// A push still to come, and when.
+        private var pending: (delay: Float, velocity: Float)?
 
         /// The reach in screen units as it stands.
         var spread: Float { min(2.2, reach + 1.4 * age) }
+        /// How far from knit back it still is.
+        var stir: Float { abs(shatter.position) + abs(shatter.velocity) * 0.1 }
+
+        /// Lands at `epicentre`, kicking the shatter by `velocity` now and by `push` after `delay`.
+        mutating func land(at epicentre: SIMD2<Float>, reach: Float, velocity: Float, push: Float = 0, after delay: Float = 0) {
+            self.epicentre = epicentre
+            self.reach = reach
+            age = 0
+            shatter.velocity += velocity
+            pending = push != 0 ? (delay, push) : nil
+        }
+
+        mutating func step(by dt: Float) {
+            if let push = pending {
+                if push.delay <= dt {
+                    shatter.velocity += push.velocity
+                    pending = nil
+                } else {
+                    pending = (push.delay - dt, push.velocity)
+                }
+            }
+            // Underdamped: shattered dust overshoots into a plumper set as it knits back.
+            shatter.step(toward: 0, frequency: BloomRig.shatterFrequency, damping: 0.5, dt: dt)
+            age += dt
+        }
     }
     private(set) var kicks = [Kick](repeating: Kick(), count: kickSlots)
     private var kicksHeard = 0
@@ -80,16 +107,7 @@ struct BloomRig {
     private var snaresHeard = 0
     /// The build's dive: 0 at rest, 1 at the deepest zoom.
     private(set) var dive = Spring()
-    /// Points on the set's edge the lens can frame: the repelling fixed point β,
-    /// its twin −β and their first preimages, followed as the shape changes.
-    private var anchors = [SIMD2<Float>](repeating: SIMD2(0.5, 0), count: 8)
-    private var anchorIndex = 0
-    /// The lens's centre on the plane, gliding toward the anchor it frames, so a
-    /// chord change or a section never yanks the view.
-    private var lensX = Spring(position: 0.5), lensY = Spring()
-    private(set) var lensZoom = Spring(position: 1)
-    private var sinceMove: Float = 0
-    private var beatsAtMove: Float = 0
+    private(set) var lens = BloomLens()
     /// Where the vocals' light pools, in screen units, and its slow clock.
     private(set) var voice = SIMD2<Float>(-0.3, 0.2)
     private var voicePhase: Float = 0
@@ -131,21 +149,16 @@ struct BloomRig {
             kicksHeard += 1
             let angle = Float(kicksHeard) * 2.39996
             let distance = 0.3 + 0.35 * (Float(kicksHeard) * 0.618034).truncatingRemainder(dividingBy: 1)
-            let slot = quietestKick()
             // Anticipation: the set gathers itself in, then bursts.
-            kicks[slot].shatter.velocity -= 0.15 * strength
-            kicks[slot].epicentre = SIMD2(cos(angle), sin(angle)) * distance
-            kicks[slot].reach = 0.5
-            kicks[slot].age = 0
-            kicks[slot].pending = (0.04, strength)
+            kicks[quietestKick()].land(at: SIMD2(cos(angle), sin(angle)) * distance, reach: 0.5,
+                                       velocity: -0.15 * strength, push: push(strength), after: 0.04)
         }
         if pulse.snare > 0, punch > 0 {
             // Across the frame from the last kick, so the two never land together;
             // a roll twists no harder than a full hit every half second.
             snaresHeard += 1
-            let last = kicks.min { $0.age < $1.age }.map(\.epicentre) ?? .zero
             let sway = Float(snaresHeard) * 1.3
-            twistCentre = -last * 0.9 + SIMD2(cos(sway), sin(sway)) * 0.2
+            twistCentre = -latestKick.epicentre * 0.9 + SIMD2(cos(sway), sin(sway)) * 0.2
             let strength = min(1, pulse.snare * punch * 1.4) * min(1, sinceSnare / 0.5)
             twist.velocity += Self.twistVelocity * Self.facet * strength * (snaresHeard % 2 == 0 ? 1 : -1)
             sinceSnare = 0
@@ -155,26 +168,17 @@ struct BloomRig {
             let strength = min(1, layers.drop * react)
             wave = (0, max(strength, wave.age < 1 ? wave.strength : 0))
             // The drop bursts from the lens's own edge point, across most of the frame.
-            let slot = quietestKick()
-            kicks[slot].epicentre = focusOnScreen
-            kicks[slot].reach = 1.2
-            kicks[slot].age = 0
-            kicks[slot].shatter.velocity += push(strength * min(1.5, configuration.punch))
-            moveLens()
+            kicks[quietestKick()].land(at: focusOnScreen, reach: 1.2, velocity: push(strength * min(1.5, configuration.punch)))
+            lens.move(at: pulse.beats)
         }
     }
 
+    /// The kick that landed last.
+    var latestKick: Kick { kicks.min { $0.age < $1.age }! }
+
     /// The kick slot that has most nearly knit back.
     private func quietestKick() -> Int {
-        kicks.indices.min { abs(kicks[$0].shatter.position) + abs(kicks[$0].shatter.velocity) * 0.1
-            < abs(kicks[$1].shatter.position) + abs(kicks[$1].shatter.velocity) * 0.1 } ?? 0
-    }
-
-    /// Frames the next anchor; stepping by three visits all eight, each far from the last.
-    private mutating func moveLens() {
-        anchorIndex = (anchorIndex + 3) % anchors.count
-        sinceMove = 0
-        beatsAtMove = latest.beats
+        kicks.indices.min { kicks[$0].stir < kicks[$1].stir } ?? 0
     }
 
     /// Moves the fractal on by `dt` seconds of display time.
@@ -207,19 +211,7 @@ struct BloomRig {
         theta.step(toward: theta.position + Self.wrap(goal - theta.position), frequency: 0.45, damping: 1, dt: dt)
         radius.step(toward: shapeRadius + 0.018 * bass, frequency: 0.6, damping: 1, dt: dt)
 
-        for i in kicks.indices {
-            if let pending = kicks[i].pending {
-                if pending.delay - dt <= 0 {
-                    kicks[i].shatter.velocity += push(pending.strength)
-                    kicks[i].pending = nil
-                } else {
-                    kicks[i].pending = (pending.delay - dt, pending.strength)
-                }
-            }
-            // Underdamped: shattered dust overshoots into a plumper set as it knits back.
-            kicks[i].shatter.step(toward: 0, frequency: Self.shatterFrequency, damping: 0.5, dt: dt)
-            kicks[i].age += dt
-        }
+        for i in kicks.indices { kicks[i].step(by: dt) }
         turnGoal += dt * speed * 0.012 * sounding
         turn.step(toward: turnGoal, frequency: 2.8, damping: 0.75, dt: dt)
         // Underdamped too: the twist swings a little past straight as it unwinds.
@@ -232,20 +224,8 @@ struct BloomRig {
         let rising = depth > dive.position
         dive.step(toward: depth, frequency: rising ? 0.4 : 0.9, damping: rising ? 1 : 0.5, dt: dt)
 
-        // The lens: a new part of the edge each section (a drop moves it in
-        // `receive`), every 32 beats of a steady groove or 20 s without one,
-        // never sooner than 8 s; never in silence, when it widens to the whole set.
-        followAnchors()
-        sinceMove += dt
-        let grooving = latest.tempo > 0 && latest.confidence > 0.3
-        if sounding > 0.5, sinceMove > 8, dive.position < 0.1,
-           grooving ? latest.beats - beatsAtMove >= 32 : sinceMove > 20 {
-            moveLens()
-        }
-        let anchor = anchors[anchorIndex]
-        lensX.step(toward: anchor.x, frequency: 0.12, damping: 1, dt: dt)
-        lensY.step(toward: anchor.y, frequency: 0.12, damping: 1, dt: dt)
-        lensZoom.step(toward: 1 + (Self.lensDepth - 1) * sounding, frequency: 0.1, damping: 1, dt: dt)
+        lens.step(by: dt, theta: theta.position, radius: radius.position, sounding: sounding,
+                  pulse: latest, diving: dive.position >= 0.1)
 
         glint *= expf(-dt / 0.04)
         traps += dt * speed * (0.25 + 0.6 * latest.high)
@@ -272,13 +252,10 @@ struct BloomRig {
     var zoom: Float { powf(Self.maximumZoom, dive.position) }
 
     /// The lens's magnification and the dive's together.
-    var viewZoom: Float { lensZoom.position * zoom }
+    var viewZoom: Float { lens.zoom.position * zoom }
 
     /// The plane's span per screen half-height when the view isn't zoomed.
     static let span: Float = 1.3
-
-    /// The edge point the lens frames, on the plane.
-    var focus: SIMD2<Float> { SIMD2(lensX.position, lensY.position) }
 
     /// The plane's centre and its span per screen half-height, as a complex
     /// scale and turn. The focus glides from the middle of the screen at rest
@@ -286,38 +263,14 @@ struct BloomRig {
     var view: (center: SIMD2<Float>, axis: SIMD2<Float>) {
         let zoom = viewZoom
         let axis = SIMD2(cos(turn.position), sin(turn.position)) * (Self.span / zoom)
-        return (focus * (1 - 1 / (zoom * zoom)), axis)
+        return (lens.focus * (1 - 1 / (zoom * zoom)), axis)
     }
 
     /// Where the focus shows, in screen units.
     var focusOnScreen: SIMD2<Float> {
         let (center, axis) = view
-        let d = focus - center
+        let d = lens.focus - center
         return SIMD2(d.x * axis.x + d.y * axis.y, d.y * axis.x - d.x * axis.y) / max(simd_length_squared(axis), 1e-12)
-    }
-
-    /// Keeps the anchors on the set as its shape moves, each preimage taking the
-    /// square root nearer where it was, so they glide rather than jump.
-    private mutating func followAnchors() {
-        let lambda = SIMD2(cos(theta.position), sin(theta.position)) * radius.position
-        let c = Self.c(theta: theta.position, rho: radius.position)
-        let beta = SIMD2<Float>(1, 0) - lambda / 2
-        func root(_ z: SIMD2<Float>, near previous: SIMD2<Float>) -> SIMD2<Float> {
-            let r = Self.squareRoot(z)
-            return simd_distance_squared(r, previous) <= simd_distance_squared(-r, previous) ? r : -r
-        }
-        let r1 = root(-beta - c, near: anchors[2])
-        let s1 = root(r1 - c, near: anchors[4]), s2 = root(-r1 - c, near: anchors[6])
-        anchors[0] = beta; anchors[1] = -beta
-        anchors[2] = r1; anchors[3] = -r1
-        anchors[4] = s1; anchors[5] = -s1
-        anchors[6] = s2; anchors[7] = -s2
-    }
-
-    private static func squareRoot(_ z: SIMD2<Float>) -> SIMD2<Float> {
-        let r = simd_length(z)
-        let x = sqrt(max(0, (r + z.x) / 2)), y = sqrt(max(0, (r - z.x) / 2))
-        return SIMD2(x, z.y < 0 ? -y : y)
     }
 
     /// The shape a pitch class (fractional, gliding) plays.
@@ -370,5 +323,69 @@ struct BloomRig {
 
     private static func wrapPositive(_ angle: Float) -> Float {
         angle - (angle / (2 * .pi)).rounded(.down) * 2 * .pi
+    }
+}
+
+/// Which part of Bloom's set the view frames: one of eight points on its edge,
+/// followed as the shape changes, moving on with the song's sections, and how
+/// closely, widening to the whole set in silence.
+struct BloomLens {
+    /// The repelling fixed point β, its twin −β and their first preimages.
+    private var anchors = [SIMD2<Float>](repeating: SIMD2(0.5, 0), count: 8)
+    private var index = 0
+    /// The centre on the plane, gliding toward the anchor it frames, so a chord
+    /// change or a section never yanks the view.
+    private var x = Spring(position: 0.5), y = Spring()
+    private(set) var zoom = Spring(position: 1)
+    private var sinceMove: Float = 0
+    private var beatsAtMove: Float = 0
+
+    /// The edge point framed, on the plane.
+    var focus: SIMD2<Float> { SIMD2(x.position, y.position) }
+
+    /// Frames the next anchor; stepping by three visits all eight, each far from the last.
+    mutating func move(at beats: Float) {
+        index = (index + 3) % anchors.count
+        sinceMove = 0
+        beatsAtMove = beats
+    }
+
+    /// Moves on to a new part of the edge every 32 beats of a steady groove, or
+    /// 20 s without one, never sooner than 8 s, never in a dive or in silence.
+    mutating func step(by dt: Float, theta: Float, radius: Float, sounding: Float, pulse: BeatDetector.Pulse, diving: Bool) {
+        followAnchors(theta: theta, radius: radius)
+        sinceMove += dt
+        let grooving = pulse.tempo > 0 && pulse.confidence > 0.3
+        if sounding > 0.5, sinceMove > 8, !diving, grooving ? pulse.beats - beatsAtMove >= 32 : sinceMove > 20 {
+            move(at: pulse.beats)
+        }
+        let anchor = anchors[index]
+        x.step(toward: anchor.x, frequency: 0.12, damping: 1, dt: dt)
+        y.step(toward: anchor.y, frequency: 0.12, damping: 1, dt: dt)
+        zoom.step(toward: 1 + (BloomRig.lensDepth - 1) * sounding, frequency: 0.1, damping: 1, dt: dt)
+    }
+
+    /// Keeps the anchors on the set as its shape moves, each preimage taking the
+    /// square root nearer where it was, so they glide rather than jump.
+    private mutating func followAnchors(theta: Float, radius: Float) {
+        let lambda = SIMD2(cos(theta), sin(theta)) * radius
+        let c = BloomRig.c(theta: theta, rho: radius)
+        let beta = SIMD2<Float>(1, 0) - lambda / 2
+        func root(_ z: SIMD2<Float>, near previous: SIMD2<Float>) -> SIMD2<Float> {
+            let r = Self.squareRoot(z)
+            return simd_distance_squared(r, previous) <= simd_distance_squared(-r, previous) ? r : -r
+        }
+        let r1 = root(-beta - c, near: anchors[2])
+        let s1 = root(r1 - c, near: anchors[4]), s2 = root(-r1 - c, near: anchors[6])
+        anchors[0] = beta; anchors[1] = -beta
+        anchors[2] = r1; anchors[3] = -r1
+        anchors[4] = s1; anchors[5] = -s1
+        anchors[6] = s2; anchors[7] = -s2
+    }
+
+    private static func squareRoot(_ z: SIMD2<Float>) -> SIMD2<Float> {
+        let r = simd_length(z)
+        let x = sqrt(max(0, (r + z.x) / 2)), y = sqrt(max(0, (r - z.x) / 2))
+        return SIMD2(x, z.y < 0 ? -y : y)
     }
 }

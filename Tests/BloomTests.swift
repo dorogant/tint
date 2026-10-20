@@ -250,11 +250,8 @@ extension BackgroundTests {
         // with a vocal lighting it, the inside has hardly any fine structure.
         if let large = try? OffscreenRenderer(device: device, width: 640, height: 400) {
             for pitch in [0, 1] {
-                var sung = BackgroundAnimator()
-                sung.configure(settings, animated: false)
-                var last: RenderedFrame?
-                playBloom(&sung, BloomSong.held(pitch: Float(pitch), tonality: 1, mid: 0.8, seconds: 3), renderer: large) { _, frame, _ in last = frame }
-                let (lines, share) = heartLines(last!, heart: heartPixels(sung.bloomUniforms(width: 640, height: 400), width: 640, height: 400))
+                let (frame, heart) = heldHeart(pitch: Float(pitch), mid: 0.8, seconds: 3, renderer: large, settings: settings)
+                let (lines, share) = heartLines(frame, heart: heart)
                 print(String(format: "Bloom heart (pitch class %d, vocal): fine structure %.4f over %.0f%% of the frame", pitch, lines, share * 100))
                 check(share > 0.05 && lines < 0.004, "the heart must glow without lines (\(lines) over \(share) of the frame)")
             }
@@ -354,13 +351,13 @@ extension BackgroundTests {
         var twists: [Float] = []
         var kickAt = SIMD2<Float>.zero, twistAt = SIMD2<Float>.zero
         _ = rig(snare) { rig, display in
-            if display == 61 { kickAt = rig.kicks.min { $0.age < $1.age }!.epicentre }
+            if display == 61 { kickAt = rig.latestKick.epicentre }
             if display >= 90 { twists.append(rig.twist.position); twistAt = rig.twistCentre }
         }
-        let twistPeak = twists.prefix(30).map(abs).max()!, twistAt0 = twists.firstIndex { abs($0) == twistPeak }!
+        let twistPeak = twists.prefix(30).map(abs).max()!, peakFrame = twists.firstIndex { abs($0) == twistPeak }!
         print(String(format: "Bloom mapping: a snare twists %.2f rad after %d ms, %.3f 1.5 s on, %.2f from the kick",
-                     twistPeak, twistAt0 * 1000 / 60, twists[90], simd_distance(kickAt, twistAt)))
-        check(abs(twistPeak - BloomRig.facet) < 0.08 && twistAt0 < 20, "a snare must twist about a twelfth of a turn within 330 ms (\(twistPeak) at \(twistAt0))")
+                     twistPeak, peakFrame * 1000 / 60, twists[90], simd_distance(kickAt, twistAt)))
+        check(abs(twistPeak - BloomRig.facet) < 0.08 && peakFrame < 20, "a snare must twist about a twelfth of a turn within 330 ms (\(twistPeak) at \(peakFrame))")
         check(abs(twists[90]) < 0.02, "the twist must unwind within 1.5 s (\(twists[90]))")
         check(simd_distance(kickAt, twistAt) > 0.4, "the snare must twist away from where the kick landed")
 
@@ -369,7 +366,7 @@ extension BackgroundTests {
         for i in [30, 45, 60, 75] { kicks4[i].layers.kick = 1 }
         var epicentres: [SIMD2<Float>] = []
         _ = rig(kicks4) { rig, display in
-            if [61, 91, 121, 151].contains(display) { epicentres.append(rig.kicks.min { $0.age < $1.age }!.epicentre) }
+            if [61, 91, 121, 151].contains(display) { epicentres.append(rig.latestKick.epicentre) }
         }
         let closest = zip(epicentres, epicentres.dropFirst()).map { simd_distance($0, $1) }.min()!
         check(closest > 0.3, "consecutive kicks must land in different places (closest \(closest))")
@@ -378,7 +375,7 @@ extension BackgroundTests {
         var section = BloomSong.held(pitch: 0, tonality: 1, seconds: 14)
         section[150].layers.drop = 1
         var focuses: [SIMD2<Float>] = [], lensZooms: [Float] = []
-        _ = rig(section) { rig, _ in focuses.append(rig.focus); lensZooms.append(rig.lensZoom.position) }
+        _ = rig(section) { rig, _ in focuses.append(rig.lens.focus); lensZooms.append(rig.lens.zoom.position) }
         let moved = simd_distance(focuses[299], focuses.last!), glide = zip(focuses, focuses.dropFirst()).map { simd_distance($0, $1) }.max()!
         print(String(format: "Bloom mapping: the lens zooms to %.2f×, moves %.2f after a drop, at most %.4f a frame",
                      lensZooms[299], moved, glide))
@@ -518,6 +515,17 @@ extension BackgroundTests {
         bloomLongSongRenders(device: device, directory: directory)
     }
 
+    /// The last frame of a chord held for `seconds` with the mids at `mid`, and which of its pixels lie in the heart.
+    static func heldHeart(pitch: Float, mid: Float, seconds: Float, renderer: OffscreenRenderer,
+                          settings: BackgroundConfiguration) -> (frame: RenderedFrame, heart: [Bool]) {
+        var animator = BackgroundAnimator()
+        animator.configure(settings, animated: false)
+        var last: RenderedFrame?
+        playBloom(&animator, BloomSong.held(pitch: pitch, tonality: 1, mid: mid, seconds: seconds), renderer: renderer) { _, frame, _ in last = frame }
+        let (width, height) = (last!.width, last!.height)
+        return (last!, heartPixels(animator.bloomUniforms(width: Float(width), height: Float(height)), width: width, height: height))
+    }
+
     /// Which pixels of a frame lie in the set's heart (orbits that settle onto
     /// the attracting fixed point), from the uniforms the frame was drawn with,
     /// iterated on the CPU the way the shader does.
@@ -582,14 +590,7 @@ extension BackgroundTests {
         var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         for (pitch, name) in [(0, "C ρ 0.975"), (1, "C♯ ρ 0.960")] {
             for mid: Float in [0, 0.8] {
-                var animator = BackgroundAnimator()
-                animator.configure(settings, animated: false)
-                var last: RenderedFrame?
-                playBloom(&animator, BloomSong.held(pitch: Float(pitch), tonality: 1, mid: mid, seconds: 4), renderer: renderer) { _, frame, _ in
-                    last = frame
-                }
-                guard let frame = last else { continue }
-                let heart = heartPixels(animator.bloomUniforms(width: 1280, height: 800), width: 1280, height: 800)
+                let (frame, heart) = heldHeart(pitch: Float(pitch), mid: mid, seconds: 4, renderer: renderer, settings: settings)
                 var best = (x: 0, y: 0, count: -1)
                 for y in stride(from: 0, through: 400, by: 40) {
                     for x in stride(from: 0, through: 640, by: 40) {
@@ -608,25 +609,21 @@ extension BackgroundTests {
         strip(cells, to: directory.appendingPathComponent("heart.png"), columns: 2, scale: 1)
     }
 
-    /// The long song, a frame every half second, with what the rig reports
-    /// marked on each cell (`marks`: points in 0…1 frame coordinates, top-left origin).
-    static func bloomLongSongRenders(device: MTLDevice, directory: URL,
-                                     marks: (BackgroundAnimator, Int, Int) -> [(x: CGFloat, y: CGFloat, color: CGColor)] = { _, _, _ in [] }) {
+    /// The long song, a frame every half second.
+    static func bloomLongSongRenders(device: MTLDevice, directory: URL) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
         var animator = BackgroundAnimator()
         animator.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
         var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        var dots: [[(x: CGFloat, y: CGFloat, color: CGColor)]] = []
-        playBloom(&animator, BloomLongSong.frames(), renderer: renderer) { animator, frame, i in
+        playBloom(&animator, BloomLongSong.frames(), renderer: renderer) { _, frame, i in
             guard i % 15 == 0 else { return }
             let t = Float(i) / 30
             let m = BloomLongSong.moment(at: t, frame: i)
             var label = String(format: "%.1f s %@", t, BloomLongSong.section(at: t))
             if m.vocal > 0.1 { label += " vocal" }
             sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
-            dots.append(marks(animator, frame.width, frame.height))
         }
-        strip(sheet, to: directory.appendingPathComponent("long-song-sheet.png"), columns: 8, scale: 0.3, dots: dots)
+        strip(sheet, to: directory.appendingPathComponent("long-song-sheet.png"), columns: 8, scale: 0.3)
     }
 
     /// GPU time per Bloom frame at the sizes the app draws, in its costliest
@@ -652,8 +649,7 @@ extension BackgroundTests {
     }
 
     /// Labelled thumbnails in rows, written to `url`.
-    static func strip(_ cells: [(frame: RenderedFrame, label: String, mark: CGColor?)], to url: URL, columns: Int, scale: CGFloat,
-                      dots: [[(x: CGFloat, y: CGFloat, color: CGColor)]] = []) {
+    static func strip(_ cells: [(frame: RenderedFrame, label: String, mark: CGColor?)], to url: URL, columns: Int, scale: CGFloat) {
         guard let first = cells.first?.frame else { return }
         let cellW = Int(CGFloat(first.width) * scale), cellH = Int(CGFloat(first.height) * scale)
         let gap = 4, caption = 18
@@ -673,14 +669,6 @@ extension BackgroundTests {
             if let mark = cell.mark {
                 context.setFillColor(mark)
                 context.fill(CGRect(x: x, y: top - cellH - 5, width: cellW, height: 4))
-            }
-            if n < dots.count {
-                for dot in dots[n] {
-                    let centre = CGPoint(x: CGFloat(x) + dot.x * CGFloat(cellW), y: CGFloat(top) - dot.y * CGFloat(cellH))
-                    context.setStrokeColor(dot.color)
-                    context.setLineWidth(1.5)
-                    context.strokeEllipse(in: CGRect(x: centre.x - 4, y: centre.y - 4, width: 8, height: 8))
-                }
             }
             let text = NSAttributedString(string: cell.label, attributes: [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,

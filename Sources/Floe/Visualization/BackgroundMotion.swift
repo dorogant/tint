@@ -210,7 +210,7 @@ struct BackgroundAnimator {
                              flags: SIMD4(0, detail, logf(max(0.5, rig.radius.position)), rig.theta.position),
                              previous: SIMD4(center.x, center.y, axis.x, axis.y),
                              kicks: (Self.kick(rig.kicks[0]), Self.kick(rig.kicks[1]), Self.kick(rig.kicks[2])),
-                             twist: SIMD4(rig.twistCentre.x, rig.twistCentre.y, rig.twist.position, 0.6),
+                             twist: SIMD4(rig.twistCentre.x, rig.twistCentre.y, rig.twist.position, BloomRig.twistReach),
                              places: SIMD4(rig.focusOnScreen.x, rig.focusOnScreen.y, rig.voice.x, rig.voice.y))
     }
 

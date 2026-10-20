@@ -86,7 +86,7 @@ final class BackgroundMetalView: MTKView {
 @MainActor
 final class BackgroundRenderer: NSObject, MTKViewDelegate {
     enum Failure: Error { case unavailable }
-    /// One pipeline per kind (and Beams' haze and Bloom's fields), all compiled once when the view is made.
+    /// One pipeline per kind (and Beams' haze and Bloom's fields and smooth light), all compiled once when the view is made.
     struct Pipelines {
         let fluid: MTLRenderPipelineState
         let beams: MTLRenderPipelineState
@@ -94,19 +94,34 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         let bloom: MTLRenderPipelineState
         let bloomField: MTLRenderPipelineState
         let bloomCrowd: MTLRenderPipelineState
+        let bloomSoft: MTLRenderPipelineState
     }
     /// Pixels per frame at most: a large window draws Beams at about one pixel
     /// per point, a small one at full Retina. The shaders pre-filter every line
     /// for the pixel size they get, so Core Animation's upscale stays smooth.
     /// Fluid has no hard edges anywhere, so it gets by with far fewer.
-    /// Bloom iterates a fractal per pixel, so it stops at about one pixel per
-    /// point of a large window; its filaments are pre-filtered like the beams.
+    /// Bloom's light is cheap per pixel and its filaments are finer than any
+    /// pre-filter could keep sharp through an upscale, so it draws at full
+    /// Retina even full screen; only its fractal field stops at `bloomFieldBudget`.
     static func pixelBudget(_ kind: VisualSettings.BackgroundKind) -> CGFloat {
         switch kind {
         case .beams: 1_600_000
         case .fluid: 600_000
-        case .bloom: 1_300_000
+        case .bloom: 8_000_000
         }
+    }
+    /// Bloom iterates the fractal per pixel of its field, so that stops at
+    /// about one pixel per point of a large window; the light is drawn from it
+    /// at the drawable's full resolution.
+    static let bloomFieldBudget = 1_300_000
+
+    /// The size of Bloom's field for a drawable of `width`×`height`: the same
+    /// when it fits the budget, else scaled down evenly to fit.
+    static func bloomFieldSize(width: Int, height: Int) -> (width: Int, height: Int) {
+        let area = width * height
+        guard area > bloomFieldBudget else { return (width, height) }
+        let s = (Double(bloomFieldBudget) / Double(area)).squareRoot()
+        return (max(1, Int((Double(width) * s).rounded())), max(1, Int((Double(height) * s).rounded())))
     }
     /// Frames allowed on the GPU at once while running; paused draws wait for none.
     private static let maximumInFlight = 2
@@ -144,11 +159,16 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             descriptor.colorAttachments[0].pixelFormat = format
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
+        let soft = MTLRenderPipelineDescriptor()
+        soft.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
+        soft.fragmentFunction = library.makeFunction(name: "floeBloomSoft")
+        for (index, format) in Targets.softFormats.enumerated() { soft.colorAttachments[index].pixelFormat = format }
         return Pipelines(fluid: try pipeline("floeFluidFragment", pixelFormat), beams: try pipeline("floeBeamsFragment", pixelFormat),
                          haze: try pipeline("floeHazeFragment", Targets.hazeFormat),
                          bloom: try pipeline("floeBloomFragment", pixelFormat),
                          bloomField: try pipeline("floeBloomField", Targets.fieldFormat),
-                         bloomCrowd: try pipeline("floeBloomCrowd", Targets.fieldFormat))
+                         bloomCrowd: try pipeline("floeBloomCrowd", Targets.fieldFormat),
+                         bloomSoft: try device.makeRenderPipelineState(descriptor: soft))
     }
 
     /// Beams' smoke and Bloom's crowding at a quarter of the drawable's
@@ -157,21 +177,25 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
         static let fieldFormat = MTLPixelFormat.rgba16Float
+        /// Bloom's smooth light per dive: round the filaments (and their glints), inside the set, the cores' colour.
+        static let softFormats: [MTLPixelFormat] = [.rgba16Float, .rg11b10Float, .rg11b10Float]
         /// Bloom works out one block of its field in this many afresh each
         /// frame and carries the rest over: 8, or 16 while a deep, crowded
-        /// stretch would cost more than the budget, and for a dive fading out
-        /// under the next.
+        /// stretch would cost more than the budget; 32 for the fainter dive of a handoff.
         private(set) var fieldTurns = 8
         /// Bloom's GPU time per frame, smoothed, in milliseconds.
         private var bloomCost = 0.0
         private let device: MTLDevice
         private var haze: MTLTexture?
         private var crowd: MTLTexture?
-        /// What a dive found per pixel, last frame's and this one's in turn, and
-        /// which dive of which rig drew the latest, through which view.
+        /// What a dive found per pixel, last frame's and this one's in turn, the
+        /// smooth light it casts, and which dive of which rig drew the latest,
+        /// through which view.
         private struct Field {
             let textures: [MTLTexture]
             let passes: [MTLRenderPassDescriptor]
+            let soft: [MTLTexture]
+            let softPass: MTLRenderPassDescriptor
             var latest = 0
             var frame = 0
             var drawn: (run: UInt64, dive: Int, view: BloomView)?
@@ -216,7 +240,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         /// pass that draws this frame's, and what that pass needs. After a resize,
         /// or for a dive not drawn last frame, every pixel is worked out afresh.
         func bloomField(run: UInt64, dive: Int, layer: Int, view: BloomView, turns: Int, width: Int, height: Int)
-            -> (last: MTLTexture, next: MTLTexture, pass: MTLRenderPassDescriptor, uniforms: BloomPassUniforms)? {
+            -> (last: MTLTexture, next: MTLTexture, pass: MTLRenderPassDescriptor, uniforms: BloomPassUniforms,
+                soft: [MTLTexture], softPass: MTLRenderPassDescriptor)? {
             let slot = dive % 2
             if fields[slot].map({ $0.textures[0].width != width || $0.textures[0].height != height }) ?? true {
                 let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.fieldFormat, width: width, height: height, mipmapped: false)
@@ -230,7 +255,20 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
                     pass.colorAttachments[0].storeAction = .store
                     return pass
                 }
-                fields[slot] = Field(textures: [first, second], passes: passes)
+                let soft = Self.softFormats.compactMap { format in
+                    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+                    descriptor.usage = [.renderTarget, .shaderRead]
+                    descriptor.storageMode = .private
+                    return device.makeTexture(descriptor: descriptor)
+                }
+                guard soft.count == Self.softFormats.count else { return nil }
+                let softPass = MTLRenderPassDescriptor()
+                for (index, texture) in soft.enumerated() {
+                    softPass.colorAttachments[index].texture = texture
+                    softPass.colorAttachments[index].loadAction = .dontCare
+                    softPass.colorAttachments[index].storeAction = .store
+                }
+                fields[slot] = Field(textures: [first, second], passes: passes, soft: soft, softPass: softPass)
             }
             guard var field = fields[slot] else { return nil }
             var all: Int32 = 1, history = SIMD4<Float>(0, 0, 1, 0)
@@ -252,7 +290,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             fields[slot] = field
             return (last, field.textures[field.latest], field.passes[field.latest],
                     BloomPassUniforms(layer: Int32(layer), phase: Int32(field.frame % turns), all: all,
-                                      turns: Int32(turns), history: history))
+                                      turns: Int32(turns), history: history),
+                    field.soft, field.softPass)
         }
 
         /// How long the GPU took over a Bloom frame: past about 2 ms, fresh
@@ -308,10 +347,13 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         case .bloom:
             var uniforms = animator.bloomUniforms(width: width, height: height)
             let rig = animator.bloom, views = rig.views
-            // Each dive's field first, then how crowded it is, then the light from them.
-            func field(_ layer: Int, dive: Int, view: BloomView, turns: Int) -> MTLTexture? {
+            let fieldSize = bloomFieldSize(width: Int(width), height: Int(height))
+            // Each dive's field first, then how crowded it is, then each one's
+            // smooth light, then the light from them all at the drawable's size.
+            typealias Dive = (field: MTLTexture, soft: [MTLTexture], softPass: MTLRenderPassDescriptor)
+            func field(_ layer: Int, dive: Int, view: BloomView, turns: Int) -> Dive? {
                 guard let target = targets.bloomField(run: rig.run, dive: dive, layer: layer, view: view, turns: turns,
-                                                      width: Int(width), height: Int(height)),
+                                                      width: fieldSize.width, height: fieldSize.height),
                       let encoder = command.makeRenderCommandEncoder(descriptor: target.pass) else { return nil }
                 var passUniforms = target.uniforms
                 encoder.setRenderPipelineState(pipelines.bloomField)
@@ -320,24 +362,37 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
                 encoder.setFragmentTexture(target.last, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 encoder.endEncoding()
-                return target.next
+                return (target.next, target.soft, target.softPass)
             }
-            let turns = targets.fieldTurns
-            guard let current = field(0, dive: rig.dive, view: views.current, turns: rig.next == nil ? turns : 16) else { return false }
-            let incoming = views.incoming.flatMap { field(1, dive: rig.dive + 1, view: $0, turns: turns) } ?? current
-            guard let (crowd, crowding) = targets.crowd(width: Int(width), height: Int(height)),
+            // While one dive hands over to the next, the fainter of the two is
+            // worked out half as often again as the other.
+            let turns = targets.fieldTurns, fading = rig.blend > 0.5
+            guard let current = field(0, dive: rig.dive, view: views.current, turns: rig.next != nil && fading ? 32 : turns) else { return false }
+            let incoming = views.incoming.flatMap { field(1, dive: rig.dive + 1, view: $0, turns: fading ? turns : 32) }
+            guard let (crowd, crowding) = targets.crowd(width: fieldSize.width, height: fieldSize.height),
                   let first = command.makeRenderCommandEncoder(descriptor: crowding) else { return false }
             first.setRenderPipelineState(pipelines.bloomCrowd)
-            first.setFragmentTexture(current, index: 0)
-            first.setFragmentTexture(incoming, index: 1)
+            first.setFragmentTexture(current.field, index: 0)
+            first.setFragmentTexture((incoming ?? current).field, index: 1)
             first.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             first.endEncoding()
+            for (layer, dive) in [current, incoming].enumerated() {
+                guard let dive else { continue }
+                guard let encoder = command.makeRenderCommandEncoder(descriptor: dive.softPass) else { return false }
+                var passUniforms = BloomPassUniforms(layer: Int32(layer), phase: 0, all: 0, turns: 0, history: .zero)
+                encoder.setRenderPipelineState(pipelines.bloomSoft)
+                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
+                encoder.setFragmentBytes(&passUniforms, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
+                encoder.setFragmentTexture(dive.field, index: 0)
+                encoder.setFragmentTexture(crowd, index: 1)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                encoder.endEncoding()
+            }
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
+            let next = incoming ?? current
             encoder.setRenderPipelineState(pipelines.bloom)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-            encoder.setFragmentTexture(current, index: 0)
-            encoder.setFragmentTexture(incoming, index: 1)
-            encoder.setFragmentTexture(crowd, index: 2)
+            encoder.setFragmentTextures([current.field, next.field] + current.soft + next.soft, range: 0..<8)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }

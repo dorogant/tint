@@ -28,7 +28,11 @@ final class LibraryModel {
     /// Liked state per track URI, each observed on its own: a batch of answers
     /// redraws only the rows whose star changed, not every visible row.
     @ObservationIgnored private var liked: [String: LikedState] = [:]
-    @ObservationIgnored private var likedQueue: Set<String> = []
+    /// Waiting for the next batch, in the order rows appeared.
+    @ObservationIgnored private var likedQueue: [String] = []
+    /// Queued or being checked: a row that scrolls away and back meanwhile
+    /// doesn't ask again.
+    @ObservationIgnored private var likedAsked: Set<String> = []
     @ObservationIgnored private var likedFlush: Task<Void, Never>?
     @ObservationIgnored private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "library")
 
@@ -74,6 +78,10 @@ final class LibraryModel {
         recent = []
         topArtists = []
         savedAlbums = []
+        likedFlush?.cancel()
+        likedFlush = nil
+        likedQueue = []
+        likedAsked = []
         for state in liked.values { state.value = nil }
     }
 
@@ -164,19 +172,28 @@ final class LibraryModel {
 
     /// Batches visible rows into `contains` calls (≤40 URIs each).
     func requestLikedState(_ uri: String) {
-        guard uri.hasPrefix("spotify:track:"), liked[uri]?.value == nil, connection == .connected else { return }
-        likedQueue.insert(uri)
+        guard uri.hasPrefix("spotify:track:"), liked[uri]?.value == nil, connection == .connected,
+              likedAsked.insert(uri).inserted else { return }
+        likedQueue.append(uri)
         guard likedFlush == nil else { return }
         likedFlush = Task {
             try? await Task.sleep(for: .milliseconds(250))
-            let batch = Array(likedQueue)
+            guard !Task.isCancelled else { return }
+            let batch = likedQueue
             likedQueue = []
             likedFlush = nil
-            do {
-                for (uri, flag) in try await api.libraryContains(batch) { setLiked(uri, flag) }
-            } catch {
-                log.error("Liked check failed: \(error.localizedDescription, privacy: .public)")
-            }
+            // One call at a time, each answer shown as it comes: the first rows
+            // don't wait for the rest of a fast scroll's batch.
+            for chunk in batch.chunked(into: 40) { await checkLiked(chunk) }
+        }
+    }
+
+    private func checkLiked(_ uris: [String]) async {
+        defer { likedAsked.subtract(uris) }
+        do {
+            for (uri, flag) in try await api.libraryContains(uris) { setLiked(uri, flag) }
+        } catch {
+            log.error("Liked check failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

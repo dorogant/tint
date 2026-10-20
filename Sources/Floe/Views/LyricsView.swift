@@ -94,9 +94,7 @@ private struct PlainLyricsView: View {
 }
 
 /// Wakes only when the next line is due, so SwiftUI updates once per line.
-/// While following, one frosted pill holds still on the anchor and the lines
-/// ease up into it, scrolled frame by frame by `ScrollGlide`. Scrolled away,
-/// the pill rides on the current line and glides between lines.
+/// One frosted pill glides between lines while the list eases into place.
 private struct SyncedLyricsView: View {
     let lines: [LyricLine]
     @Binding var follow: Bool
@@ -106,18 +104,14 @@ private struct SyncedLyricsView: View {
     @Namespace private var pill
     @ViewState private var active: Int?
     @ViewState private var position = ScrollPosition(idType: Int.self)
-    /// The current line's height, which the anchored pill takes.
-    @ViewState private var pillHeight: CGFloat = 0
-    @ViewState private var layout = ListLayout()
-    @ViewState private var glider = ScrollGlide()
 
     /// Lines switch slightly early so the glide lands with the vocal.
     private static let lead: TimeInterval = 0.15
     /// The current line rests a little above the middle, leaving room to read ahead.
     private static let anchor = UnitPoint(x: 0.5, y: 0.4)
-    /// The list easing a new line into place, and back to it on Follow.
-    private static let glideDuration = 0.35
-    private static let glide = Animation.easeInOut(duration: glideDuration)
+    /// The list easing a new line into place, and back to it on Follow. The
+    /// rows and the pill move on it too, so they travel with the scroll.
+    fileprivate static let glide = Animation.easeInOut(duration: 0.35)
 
     var body: some View {
         GeometryReader { geometry in
@@ -129,16 +123,11 @@ private struct SyncedLyricsView: View {
                         // Only a gap's "…" cares whether music plays. Equatable rows
                         // skip their body when nothing they show changed.
                         LyricRow(line: line, distance: distance(of: line), fontSize: fontSize,
-                                 framed: !follow, softened: follow && !still, still: still,
+                                 softened: follow && !still, still: still,
                                  playing: line.text.isEmpty && player.isPlaying, pill: pill) {
                             player.seek(toMs: line.time * 1000 + 50)
                         }
                         .equatable()
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { [layout, active] in
-                            layout.rows[line.id] = $0
-                            if line.id == active, pillHeight != $0.height { pillHeight = $0.height }
-                        }
-                        .onDisappear { [layout] in layout.rows[line.id] = nil }
                     }
                 }
                 .scrollTargetLayout()
@@ -149,31 +138,15 @@ private struct SyncedLyricsView: View {
             .scrollPosition($position)
             .scrollIndicators(.hidden)
             .mask(edgeFade)
-            .background(alignment: .top) {
-                if follow, active != nil, pillHeight > 0 {
-                    LyricPill()
-                        .matchedGeometryEffect(id: "pill", in: pill)
-                        .frame(height: pillHeight)
-                        .padding(.horizontal, scale(12))
-                        .padding(.top, (geometry.size.height - pillHeight) * Self.anchor.y)
-                }
-            }
-            // Back on Follow, the pill flies to the anchor as the list glides there.
-            .animation(still ? nil : Self.glide, value: follow)
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { [layout] _, offset in
-                layout.offset = offset
-            }
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting { follow = false }
             }
             .onChange(of: follow) {
-                guard follow, let active else {
-                    glider.stop()
-                    return
+                guard follow, let active else { return }
+                withAnimation(still ? nil : Self.glide) {
+                    position.scrollTo(id: active, anchor: Self.anchor)
                 }
-                scroll(to: active, gliding: !still)
             }
-            .onChange(of: geometry.size.height, initial: true) { layout.height = geometry.size.height }
         }
         // Open on the current line, so a newly shown list never lands on line 0
         // and then jumps mid-transition.
@@ -182,7 +155,6 @@ private struct SyncedLyricsView: View {
             advance(to: LRC.activeIndex(in: lines, at: now), animated: false)
         }
         .task(id: player.playbackAnchor) { await followPlayback() }
-        .background { DisplayClock(glider: glider) }
     }
 
     private var edgeFade: some View {
@@ -222,114 +194,13 @@ private struct SyncedLyricsView: View {
     }
 
     private func advance(to index: Int?, animated: Bool) {
-        let gliding = animated && !still
-        guard follow, let index else {
-            withTransaction(Self.transaction(gliding)) { active = index }
-            return
-        }
-        scroll(to: index, gliding: gliding) { active = index }
-    }
-
-    /// Scrolls so `index` rests on the anchor and, when gliding, eases it there
-    /// along with whatever `alongside` changes.
-    private func scroll(to index: Int, gliding: Bool, alongside: () -> Void = {}) {
-        let target = layout.offset(showing: index, anchor: Self.anchor.y)
-        // A glide across more than a screen would show rows the list hasn't drawn.
-        let glides = gliding && target.map { abs($0 - layout.offset) <= layout.height } == true
-        withTransaction(Self.transaction(glides)) {
-            alongside()
-            if let height = layout.rows[index]?.height { pillHeight = height }
-        }
-        let position = $position
-        let jump = { (y: CGFloat) in withTransaction(Self.transaction(false)) { position.wrappedValue.scrollTo(y: y) } }
-        if let target, glides, glider.run(from: layout.offset, to: target, duration: Self.glideDuration, apply: jump) { return }
-        glider.stop()
-        if let target { jump(target) } else {
-            withTransaction(Self.transaction(false)) { position.wrappedValue.scrollTo(id: index, anchor: Self.anchor) }
+        var transaction = Transaction(animation: animated && !still ? Self.glide : nil)
+        transaction.disablesAnimations = !animated || still
+        withTransaction(transaction) {
+            active = index
+            if follow, let index { position.scrollTo(id: index, anchor: Self.anchor) }
         }
     }
-
-    private static func transaction(_ gliding: Bool) -> Transaction {
-        var transaction = Transaction(animation: gliding ? glide : nil)
-        transaction.disablesAnimations = !gliding
-        return transaction
-    }
-}
-
-/// Where the drawn rows sit in the scroll view and how far it's scrolled, so
-/// the list can scroll to a line by offset. Positions are taken on screen:
-/// the lazy list's own coordinates move when it swaps estimated heights for
-/// measured ones. Not observed: noting them redraws nothing.
-@MainActor private final class ListLayout {
-    var rows: [Int: CGRect] = [:]
-    var offset: CGFloat = 0
-    var height: CGFloat = 0
-
-    /// The scroll offset that rests row `index` on the anchor, where the pill
-    /// sits, or nil when the row isn't drawn.
-    func offset(showing index: Int, anchor: CGFloat) -> CGFloat? {
-        guard let row = rows[index], height > 0 else { return nil }
-        return offset + row.minY - (height - row.height) * anchor
-    }
-}
-
-/// Eases the list's scroll offset on the display's clock, on the same curve as
-/// the rows' glide. The scroll view's own animated scrolls kept their own
-/// timing, and the lines drifted out of step with the pill.
-@MainActor private final class ScrollGlide: NSObject {
-    /// Times the glide to the display the list is on.
-    weak var view: NSView?
-    private var link: CADisplayLink?
-    private var from: CGFloat = 0
-    private var to: CGFloat = 0
-    private var start: CFTimeInterval = 0
-    private var duration: CFTimeInterval = 0
-    private var shown: CGFloat?
-    private var apply: (CGFloat) -> Void = { _ in }
-
-    /// Starts from where an unfinished glide has got to. False when the list isn't on screen to time it.
-    func run(from offset: CGFloat, to target: CGFloat, duration: CFTimeInterval, apply: @escaping (CGFloat) -> Void) -> Bool {
-        if link == nil {
-            // Hidden windows get no display frames: the list just jumps.
-            guard let view, view.window?.occlusionState.contains(.visible) == true else { return false }
-            let link = view.displayLink(target: self, selector: #selector(tick(_:)))
-            link.add(to: .main, forMode: .common)
-            self.link = link
-        }
-        from = shown ?? offset
-        to = target
-        start = CACurrentMediaTime()
-        self.duration = duration
-        self.apply = apply
-        return true
-    }
-
-    func stop() {
-        link?.invalidate()
-        link = nil
-        shown = nil
-    }
-
-    @objc private func tick(_ link: CADisplayLink) {
-        let progress = min(1, max(0, (link.targetTimestamp - start) / duration))
-        let offset = from + (to - from) * UnitCurve.easeInOut.value(at: progress)
-        shown = offset
-        apply(offset)
-        if progress >= 1 { stop() }
-    }
-}
-
-/// Lends `ScrollGlide` a view to take the display's clock from.
-private struct DisplayClock: NSViewRepresentable {
-    let glider: ScrollGlide
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        glider.view = view
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) { glider.view = view }
 }
 
 /// The current line sits on the frosted pill; the rest dim, shrink and soften with distance.
@@ -340,8 +211,6 @@ private struct LyricRow: View, Equatable {
     /// 0 is the current line, negative already sung, positive upcoming.
     let distance: Int
     let fontSize: CGFloat
-    /// Whether the current line carries the pill, rather than the pill holding the anchor.
-    let framed: Bool
     let softened: Bool
     let still: Bool
     let playing: Bool
@@ -357,7 +226,7 @@ private struct LyricRow: View, Equatable {
     /// `seek` is left out: it only ever seeks to `line`, and a closure never
     /// compares equal, which made every visible row redraw on each line change.
     nonisolated static func == (a: Self, b: Self) -> Bool {
-        a.line == b.line && a.distance == b.distance && a.fontSize == b.fontSize && a.framed == b.framed && a.softened == b.softened
+        a.line == b.line && a.distance == b.distance && a.fontSize == b.fontSize && a.softened == b.softened
             && a.still == b.still && a.playing == b.playing && a.pill == b.pill
     }
 
@@ -381,7 +250,9 @@ private struct LyricRow: View, Equatable {
                 .blur(radius: blur)
                 .background {
                     if current {
-                        if framed { LyricPill().matchedGeometryEffect(id: "pill", in: pill) }
+                        shape.fill(.white.opacity(0.1))
+                            .overlay(shape.strokeBorder(.white.opacity(0.1)))
+                            .matchedGeometryEffect(id: "pill", in: pill)
                     } else if hovering {
                         shape.fill(.white.opacity(0.045))
                             .overlay(shape.strokeBorder(.white.opacity(0.05)))
@@ -399,6 +270,7 @@ private struct LyricRow: View, Equatable {
         }
         .buttonStyle(LyricPressStyle(still: still))
         .onHover { hovering = $0 }
+        .animation(rowAnimation, value: distance)
         .animation(still ? Self.stillFade : FloeMotion.hover(hovering), value: hovering)
         .help("Seek to this line")
     }
@@ -445,15 +317,12 @@ private struct LyricRow: View, Equatable {
         guard softened, distance != 0, !hovering else { return 0 }
         return CGFloat(min(abs(distance), 4)) * 0.6
     }
-}
 
-/// The frosted pill behind the current line.
-private struct LyricPill: View {
-    @Environment(\.interfaceScale) private var scale
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: scale(18), style: .continuous)
-        shape.fill(.white.opacity(0.1)).overlay(shape.strokeBorder(.white.opacity(0.1)))
+    /// The scroll's own curve, with no cascade: while following, a row (and the
+    /// pill on the current one) on a different curve or delay drifted off the
+    /// scrolling list and caught up late, which read as lag.
+    private var rowAnimation: Animation? {
+        still ? nil : SyncedLyricsView.glide
     }
 }
 

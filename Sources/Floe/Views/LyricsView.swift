@@ -48,14 +48,7 @@ struct LyricsView: View {
         case .loaded(.missing):
             MessageView(systemImage: "text.quote", message: L10n.string("No lyrics found for this song."))
         case let .loaded(.plain(text)):
-            ScrollView {
-                VStack(alignment: .leading, spacing: scale(16)) {
-                    Text("These lyrics have no timing.").floeFont(size: 12).foregroundStyle(Theme.tertiary)
-                    Text(text).floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(scale(10))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(.horizontal, scale(24))
-            }
+            PlainLyricsView(text: text)
         case let .loaded(.synced(lines)):
             SyncedLyricsView(lines: lines, follow: $follow)
         }
@@ -70,6 +63,33 @@ struct LyricsView: View {
         case .failed: "failed"
         }
         return "\(lyrics.trackURI ?? "")|\(phase)|\(lyrics.isSynthetic)"
+    }
+}
+
+/// Untimed lyrics, a row per line. As one `Text` the whole song drew into a
+/// single layer as tall as the song (30 MB for 80 lines); rows draw only
+/// what's on screen. Line spacing between rows matches the text's own.
+private struct PlainLyricsView: View {
+    let text: String
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        ScrollView {
+            VStack(alignment: .leading, spacing: scale(16)) {
+                Text("These lyrics have no timing.").floeFont(size: 12).foregroundStyle(Theme.tertiary)
+                LazyVStack(alignment: .leading, spacing: scale(10)) {
+                    ForEach(lines.indices, id: \.self) { index in
+                        // A blank line keeps its height, as it did inside the text.
+                        Text(lines[index].isEmpty ? " " : String(lines[index]))
+                            .floeFont(size: 22, weight: .semibold, design: .rounded).lineSpacing(scale(10))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(.horizontal, scale(24))
+        }
     }
 }
 

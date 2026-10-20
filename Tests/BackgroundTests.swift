@@ -26,6 +26,11 @@ struct BackgroundTests {
             print("PASS: \(checks) build checks")
             return
         }
+        // FLOE_BLOOM_PROOF=<dir>: full-screen frames and 100% crops of Bloom, for comparing builds.
+        if let proof = ProcessInfo.processInfo.environment["FLOE_BLOOM_PROOF"] {
+            bloomProof(device: device, directory: URL(fileURLWithPath: proof))
+            return
+        }
         // FLOE_BLOOM_COST=1: just Bloom's cost, and its dives sheet if FLOE_BLOOM_RENDERS is set.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_COST"] != nil {
             bloomDiveRenders(device: device)

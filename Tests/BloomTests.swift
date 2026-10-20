@@ -809,3 +809,78 @@ extension BackgroundTests {
         CGImageDestinationFinalize(destination)
     }
 }
+
+// MARK: - Bloom proof
+
+extension RenderedFrame {
+    /// A `w`×`h` window at (`x`, `y`) of this frame as a screen of `screen`
+    /// pixels shows it: Core Animation's linear filter stretches a smaller
+    /// drawable over the screen; one the screen's size is shown as it is.
+    func shown(on screen: (width: Int, height: Int), x: Int = 0, y: Int = 0, width w: Int, height h: Int) -> RenderedFrame {
+        if self.width == screen.width && self.height == screen.height { return crop(x: x, y: y, width: w, height: h) }
+        var out = [UInt8](repeating: 0, count: w * h * 4)
+        let sx = Float(self.width) / Float(screen.width), sy = Float(self.height) / Float(screen.height)
+        for row in 0..<h {
+            let fy = min(Float(self.height - 1), max(0, (Float(y + row) + 0.5) * sy - 0.5))
+            let y0 = Int(fy), y1 = min(self.height - 1, y0 + 1), ty = fy - Float(y0)
+            for column in 0..<w {
+                let fx = min(Float(self.width - 1), max(0, (Float(x + column) + 0.5) * sx - 0.5))
+                let x0 = Int(fx), x1 = min(self.width - 1, x0 + 1), tx = fx - Float(x0)
+                for c in 0..<4 {
+                    func at(_ x: Int, _ y: Int) -> Float { Float(bytes[(y * self.width + x) * 4 + c]) }
+                    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx
+                    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx
+                    out[(row * w + column) * 4 + c] = UInt8(min(255, max(0, (top + (bottom - top) * ty).rounded())))
+                }
+            }
+        }
+        return RenderedFrame(width: w, height: h, bytes: out)
+    }
+}
+
+extension BackgroundTests {
+    /// The moments the before/after proof shows, each after two seconds of
+    /// music so most of the field has been carried over, as in the app.
+    static let proofMoments: [(name: String, destination: Int, progress: Double)] = [
+        ("edge", 0, 0.5), ("dense", 3, 0.75), ("deep", 1, 0.97), ("handoff", 0, 0.94),
+    ]
+    /// Where each proof moment's 100% crop sits on the screen.
+    static let bloomProofCrops: [String: (x: Int, y: Int)] = [
+        "edge": (1250, 1080), "dense": (385, 565), "deep": (1855, 392), "handoff": (560, 390),
+    ]
+
+    /// Full-screen frames (a 1728×1117 pt window at 2×, as the screen shows
+    /// them) of `proofMoments` with 960×600 crops of them at 100%, and four
+    /// seconds of the dense one, every frame, cropped alike, under `directory`.
+    static func bloomProof(device: MTLDevice, directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let screen = (width: 3456, height: 2234)
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2, kind: .bloom)
+        guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { return }
+        print("Bloom proof: drawable \(Int(size.width))x\(Int(size.height)) shown on \(screen.width)x\(screen.height)")
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 2)
+        let crop = (width: 960, height: 600)
+        for moment in proofMoments {
+            var animator = diving(moment.destination, at: moment.progress, settings)
+            var last: RenderedFrame?
+            playBloom(&animator, music, renderer: renderer) { _, frame, _ in last = frame }
+            guard let last else { continue }
+            save(last.shown(on: screen, width: screen.width, height: screen.height).composited(),
+                 to: directory.appendingPathComponent("\(moment.name).png"))
+            if let at = bloomProofCrops[moment.name] {
+                save(last.shown(on: screen, x: at.x, y: at.y, width: crop.width, height: crop.height).composited(),
+                     to: directory.appendingPathComponent("\(moment.name)-crop.png"))
+            }
+        }
+        let sequence = directory.appendingPathComponent("dense-sequence")
+        try? FileManager.default.createDirectory(at: sequence, withIntermediateDirectories: true)
+        let at = bloomProofCrops["dense"] ?? (x: 1248, y: 817)
+        var animator = diving(3, at: 0.75, settings)
+        playBloom(&animator, music + BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 4), renderer: renderer) { _, frame, i in
+            guard i >= 60 else { return }
+            save(frame.shown(on: screen, x: at.x, y: at.y, width: crop.width, height: crop.height).composited(),
+                 to: sequence.appendingPathComponent(String(format: "frame-%03d.png", i - 60)))
+        }
+    }
+}

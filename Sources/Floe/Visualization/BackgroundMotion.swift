@@ -65,13 +65,10 @@ struct BloomLayerUniforms {
 
 /// Matches `BloomPass` in `ReactiveShader`: one dive's field pass.
 struct BloomPassUniforms {
-    /// Which of the uniforms' layers, which of `turns` sets of 8×8 blocks to work out afresh, 1 to work out all.
+    /// Which of the uniforms' layers.
     var layer: Int32
-    var phase: Int32
-    var all: Int32
-    var turns: Int32
-    /// Where screen point v was last frame: xy + zw·v (complex).
-    var history: SIMD4<Float>
+    /// How far apart the field's pixels are, in screen units.
+    var pixel: Float
 }
 
 /// Matches `BloomUniforms` in `ReactiveShader`.

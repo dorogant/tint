@@ -87,14 +87,93 @@ enum BloomSong {
     }
 
     /// Steady analysis with no hits: `pitch` held at `tonality`, at a given loudness.
-    static func held(pitch: Float, tonality: Float, loudness: Float = 0.4, seconds: Float) -> [SpectrumFrame] {
+    static func held(pitch: Float, tonality: Float, loudness: Float = 0.4, mid: Float = 0.3, seconds: Float) -> [SpectrumFrame] {
         var layers = MusicLayers()
         layers.pitchClass = pitch
         layers.tonality = tonality
-        layers.mid = 0.3
+        layers.mid = mid
         layers.bass = 0.2
         let bands = [Float](repeating: loudness, count: 48)
         return Array(repeating: SpectrumFrame(bands: bands, levels: bands, rms: loudness * 0.3, layers: layers), count: Int(seconds * 30))
+    }
+}
+
+/// A whole song in sections, written as analysis layers like `BloomSong`, so
+/// the lens has section changes to glide at: a pad intro, a verse, an
+/// eight-second build ending in a snare roll, the drop into a chorus, a
+/// breakdown and a last chorus. 120 BPM, one chord a bar (C, A minor, F, G).
+enum BloomLongSong {
+    static let seconds: Float = 42
+    static let dropTime: Float = 20
+    static let sections: [(start: Float, name: String)] = [(0, "intro"), (4, "verse"), (12, "build"), (20, "chorus"),
+                                                           (30, "breakdown"), (34, "chorus")]
+
+    static func section(at t: Float) -> String { sections.last { $0.start <= t }!.name }
+
+    static func moment(at t: Float, frame: Int) -> BloomSong.Moment {
+        var m = BloomSong.Moment()
+        let name = section(at: t)
+        let roots: [Float] = [0, 9, 5, 7]
+        let bar = Int(t / 2)
+        let previous = roots[(bar + 3) % 4]
+        var step = roots[bar % 4] - previous
+        step -= (step / 12).rounded() * 12
+        m.pitch = bar == 0 ? roots[0] : previous + step * min(1, (t - Float(bar) * 2) / 0.17)
+        m.tonality = name == "build" ? 0.6 : 0.85
+        func on(_ period: Float, offset: Float = 0) -> Bool {
+            let since = frame - Int((offset * 30).rounded())
+            return since >= 0 && since % Int((period * 30).rounded()) == 0
+        }
+        let drums = name == "verse" || name == "chorus" || name == "build"
+        let roll = name == "build" && t >= 16
+        m.kick = drums && !roll && on(0.5)
+        m.hat = drums && !roll && on(0.25, offset: 0.25)
+        m.snare = drums && !roll && on(1, offset: 0.5) || roll && on(t > 18.5 ? 0.125 : 0.25, offset: 16)
+        for (start, end) in [(6, 11), (22, 29), (35, 41)] as [(Float, Float)] where t >= start && t < end {
+            m.vocal = sinf((t - start) / (end - start) * .pi) * 0.85
+        }
+        m.build = name == "build" ? min(1, (t - 12) / 8) : 0
+        m.drop = abs(t - dropTime) < 0.5 / 30 ? 1 : 0
+        switch name {
+        case "intro": m.loudness = 0.3
+        case "verse": m.loudness = 0.5
+        case "build": m.loudness = 0.45 + 0.02 * (t - 12)
+        case "breakdown": m.loudness = 0.26
+        default: m.loudness = 0.62
+        }
+        m.brightness = 0.25 + 0.5 * m.build + (name == "chorus" ? 0.3 : 0)
+        m.tempo = drums && t >= 4.5 ? 120 : 0
+        return m
+    }
+
+    static func frames() -> [SpectrumFrame] {
+        var lastKick: Float = -10
+        var locked: Float?
+        return (0..<Int(seconds * 30)).map { i in
+            let t = Float(i) / 30
+            let m = moment(at: t, frame: i)
+            if m.kick { lastKick = t }
+            if m.tempo > 0, locked == nil { locked = t }
+            if m.tempo == 0 { locked = nil }
+            var layers = MusicLayers()
+            layers.bass = m.loudness > 0.45 ? 0.75 * expf(-(t - lastKick) / 0.18) + 0.15 : 0.1
+            layers.lowMid = 0.25
+            layers.mid = 0.15 + m.vocal * 0.7
+            layers.high = m.kick || m.hat || t - lastKick < 1 ? 0.35 + 0.3 * m.build : 0.05
+            layers.kick = m.kick ? 0.9 : 0
+            layers.snare = m.snare ? 0.8 : 0
+            layers.hat = m.hat ? 0.6 : 0
+            layers.tempo = m.tempo
+            layers.beats = (t - 4) * 2
+            layers.confidence = locked.map { min(1, (t - $0) * 0.8) } ?? 0
+            layers.pitchClass = m.pitch < 0 ? m.pitch + 12 : m.pitch
+            layers.tonality = m.tonality
+            layers.brightness = m.brightness
+            layers.build = m.build
+            layers.drop = m.drop
+            let bands = [Float](repeating: m.loudness, count: 48)
+            return SpectrumFrame(bands: bands, levels: bands, rms: m.loudness * 0.3, layers: layers)
+        }
     }
 }
 
@@ -392,6 +471,119 @@ extension BackgroundTests {
         }
         strip(todaySheet, to: directory.appendingPathComponent("song-today-sheet.png"), columns: 6, scale: 0.3)
         print("Bloom renders: \(directory.path)/shapes.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
+        bloomHeartRenders(device: device, directory: directory)
+        bloomLongSongRenders(device: device, directory: directory)
+    }
+
+    /// Which pixels of a frame lie in the set's heart (orbits that settle onto
+    /// the attracting fixed point), from the uniforms the frame was drawn with,
+    /// iterated on the CPU the way the shader does.
+    static func heartPixels(_ u: BloomUniforms, width: Int, height: Int) -> [Bool] {
+        let aspect = Float(width) / Float(height)
+        let c = SIMD2(u.c.x, u.c.y), axis = SIMD2(u.c.z, u.c.w), center = SIMD2(u.view.x, u.view.y)
+        let alpha = 0.5 * expf(u.flags.z) * SIMD2(cosf(u.flags.w), sinf(u.flags.w))
+        let n = Int(u.view.z)
+        var mask = [Bool](repeating: false, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let v = SIMD2((2 * (Float(x) + 0.5) / Float(width) - 1) * aspect, 1 - 2 * (Float(y) + 0.5) / Float(height))
+                var z = center + SIMD2(axis.x * v.x - axis.y * v.y, axis.x * v.y + axis.y * v.x)
+                var dz = SIMD2<Float>(1, 0)
+                var state = 0
+                for _ in 0..<n {
+                    dz = 2 * SIMD2(z.x * dz.x - z.y * dz.y, z.x * dz.y + z.y * dz.x)
+                    z = SIMD2(z.x * z.x - z.y * z.y, 2 * z.x * z.y) + c
+                    if simd_length_squared(z) > 1024 { state = 1; break }
+                    if simd_distance_squared(z, alpha) < 0.0036 { state = 2; break }
+                }
+                // As in the shader: an orbit still going that has stopped stretching is settling slowly.
+                mask[y * width + x] = state == 2 || state == 0 && simd_length_squared(dz) < 1e6
+            }
+        }
+        return mask
+    }
+
+    /// Fine structure inside the heart: the mean absolute difference (0…1) between
+    /// each heart pixel's luma and its 9×9 neighbourhood's mean, over pixels at
+    /// least six pixels deep in the heart. Soft pools and gradients score near
+    /// the dither's floor; contour lines score well above it.
+    static func heartLines(_ frame: RenderedFrame, heart: [Bool]) -> (lines: Float, share: Float) {
+        let w = frame.width, h = frame.height
+        var deep = [Bool](repeating: false, count: w * h)
+        for y in 6..<(h - 6) {
+            for x in 6..<(w - 6) where heart[y * w + x] {
+                var all = true
+                for dy in stride(from: -6, through: 6, by: 3) where all {
+                    for dx in stride(from: -6, through: 6, by: 3) where !heart[(y + dy) * w + x + dx] { all = false; break }
+                }
+                deep[y * w + x] = all
+            }
+        }
+        var sum: Float = 0, count = 0
+        for y in 4..<(h - 4) {
+            for x in 4..<(w - 4) where deep[y * w + x] {
+                var mean: Float = 0
+                for dy in -4...4 { for dx in -4...4 { mean += frame.luma(x + dx, y + dy) } }
+                sum += abs(frame.luma(x, y) - mean / 81)
+                count += 1
+            }
+        }
+        return (count > 0 ? sum / Float(count) : 0, Float(count) / Float(w * h))
+    }
+
+    /// Big-heart shapes (ρ 0.975 and 0.96) held with and without a vocal, each
+    /// cropped at 100% to where the heart fills most of the frame.
+    static func bloomHeartRenders(device: MTLDevice, directory: URL) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 1280, height: 800) else { return }
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        for (pitch, name) in [(0, "C ρ 0.975"), (1, "C♯ ρ 0.960")] {
+            for mid: Float in [0, 0.8] {
+                var animator = BackgroundAnimator()
+                animator.configure(settings, animated: false)
+                var last: RenderedFrame?
+                playBloom(&animator, BloomSong.held(pitch: Float(pitch), tonality: 1, mid: mid, seconds: 4), renderer: renderer) { _, frame, _ in
+                    last = frame
+                }
+                guard let frame = last else { continue }
+                let heart = heartPixels(animator.bloomUniforms(width: 1280, height: 800), width: 1280, height: 800)
+                var best = (x: 0, y: 0, count: -1)
+                for y in stride(from: 0, through: 400, by: 40) {
+                    for x in stride(from: 0, through: 640, by: 40) {
+                        var count = 0
+                        for row in stride(from: y, to: y + 400, by: 4) { for column in stride(from: x, to: x + 640, by: 4) where heart[row * 1280 + column] { count += 1 } }
+                        if count > best.count { best = (x, y, count) }
+                    }
+                }
+                let (lines, share) = heartLines(frame, heart: heart)
+                print(String(format: "Bloom heart, %@, %@: fine structure %.4f over %.0f%% of the frame",
+                             name, mid > 0 ? "vocal" : "no vocal", lines, share * 100))
+                cells.append((frame.crop(x: best.x, y: best.y, width: 640, height: 400),
+                              String(format: "%@, %@, lines %.4f", name, mid > 0 ? "vocal" : "no vocal", lines), nil))
+            }
+        }
+        strip(cells, to: directory.appendingPathComponent("heart.png"), columns: 2, scale: 1)
+    }
+
+    /// The long song, a frame every half second, with what the rig reports
+    /// marked on each cell (`marks`: points in 0…1 frame coordinates, top-left origin).
+    static func bloomLongSongRenders(device: MTLDevice, directory: URL,
+                                     marks: (BackgroundAnimator, Int, Int) -> [(x: CGFloat, y: CGFloat, color: CGColor)] = { _, _, _ in [] }) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
+        var animator = BackgroundAnimator()
+        animator.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
+        var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var dots: [[(x: CGFloat, y: CGFloat, color: CGColor)]] = []
+        playBloom(&animator, BloomLongSong.frames(), renderer: renderer) { animator, frame, i in
+            guard i % 15 == 0 else { return }
+            let t = Float(i) / 30
+            let m = BloomLongSong.moment(at: t, frame: i)
+            var label = String(format: "%.1f s %@", t, BloomLongSong.section(at: t))
+            if m.vocal > 0.1 { label += " vocal" }
+            sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
+            dots.append(marks(animator, frame.width, frame.height))
+        }
+        strip(sheet, to: directory.appendingPathComponent("long-song-sheet.png"), columns: 8, scale: 0.3, dots: dots)
     }
 
     /// GPU time per Bloom frame at the sizes the app draws, in its costliest
@@ -417,7 +609,8 @@ extension BackgroundTests {
     }
 
     /// Labelled thumbnails in rows, written to `url`.
-    static func strip(_ cells: [(frame: RenderedFrame, label: String, mark: CGColor?)], to url: URL, columns: Int, scale: CGFloat) {
+    static func strip(_ cells: [(frame: RenderedFrame, label: String, mark: CGColor?)], to url: URL, columns: Int, scale: CGFloat,
+                      dots: [[(x: CGFloat, y: CGFloat, color: CGColor)]] = []) {
         guard let first = cells.first?.frame else { return }
         let cellW = Int(CGFloat(first.width) * scale), cellH = Int(CGFloat(first.height) * scale)
         let gap = 4, caption = 18
@@ -437,6 +630,14 @@ extension BackgroundTests {
             if let mark = cell.mark {
                 context.setFillColor(mark)
                 context.fill(CGRect(x: x, y: top - cellH - 5, width: cellW, height: 4))
+            }
+            if n < dots.count {
+                for dot in dots[n] {
+                    let centre = CGPoint(x: CGFloat(x) + dot.x * CGFloat(cellW), y: CGFloat(top) - dot.y * CGFloat(cellH))
+                    context.setStrokeColor(dot.color)
+                    context.setLineWidth(1.5)
+                    context.strokeEllipse(in: CGRect(x: centre.x - 4, y: centre.y - 4, width: 8, height: 8))
+                }
             }
             let text = NSAttributedString(string: cell.label, attributes: [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,

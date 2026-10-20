@@ -51,34 +51,37 @@ struct BeamUniforms {
     var tints: Heads
 }
 
+/// Matches `BloomShape` in `ReactiveShader`: one shape as the shader zooms into it.
+struct BloomShapeUniforms {
+    /// The zoom's linear coordinate per screen unit, log ρ, λ's angle, the log of the series' reach.
+    var zoom: SIMD4<Float>
+    /// c, then α.
+    var fixed: SIMD4<Float>
+    /// A point of the attracting cycle, the log of its contraction per pass, how close counts as settled (squared).
+    var cycle: SIMD4<Float>
+    /// λ, q, how far into the current repeat the zoom is (0…1).
+    var counts: SIMD4<Float>
+    /// What straightens the passes near the cycle (complex), spare.
+    var straightening: SIMD4<Float>
+    /// The series' eight coefficients, as complex pairs.
+    var series: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+}
+
 /// Matches `BloomUniforms` in `ReactiveShader`.
 struct BloomUniforms {
     var colors: Palette
-    /// c, then the plane's span per screen half-height as a complex scale and turn.
-    var c: SIMD4<Float>
-    /// The plane's centre, iterations, filament width in pixels.
+    /// Iterations, filament width in pixels, how far the incoming shape has dissolved in, spare.
     var view: SIMD4<Float>
-    /// Drawable width and height, the trails' fade this frame, their outward drift.
+    /// Drawable width and height, then where the zoom heads, in screen units.
     var size: SIMD4<Float>
-    /// Glow, the heart's light (the mids), hat glints, the beat's swell.
+    /// Glow, the heart's light (the mids), glints (hats and snares), the beat's swell.
     var light: SIMD4<Float>
     /// The hat constellation's turn (cosine, sine), its radius, the palette's walk.
     var traps: SIMD4<Float>
     /// The drop's wave (radius, strength), overall level, a spare.
     var wave: SIMD4<Float>
-    /// 1 when there are no trails to read yet, fine detail (the highs), the log of
-    /// the fixed point's multiplier |λ| (the shape's radius at rest; kicks add to it
-    /// around their epicentres), its turn θ.
-    var flags: SIMD4<Float>
-    /// The trails' view: the centre and span (as in `c`) the kept frame was drawn
-    /// with, so they stay on the set as the view turns and zooms.
-    var previous: SIMD4<Float>
-    /// Per kick in flight: its epicentre in screen units, its reach, its shatter.
-    var kicks: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
-    /// The snare's twist: its point in screen units, its angle there, its reach.
-    var twist: SIMD4<Float>
-    /// Where the drop's wave sets out and where the vocals' light pools, in screen units.
-    var places: SIMD4<Float>
+    /// The shape zoomed into, then the one dissolving in.
+    var shapes: (BloomShapeUniforms, BloomShapeUniforms)
 }
 
 /// The live background's state between frames, apart from Metal so tests can
@@ -192,30 +195,29 @@ struct BackgroundAnimator {
 
     func bloomUniforms(width: Float, height: Float) -> BloomUniforms {
         let rig = bloom
-        let c = rig.c
-        let (center, axis) = rig.view
         let detail = rig.detail
-        // Deeper views need more iterations to resolve the edge: 28 more per 4×.
-        let iterations = (56 + 40 * detail + 14 * log2(max(1, rig.viewZoom))).rounded()
-        let line = 1.15 - 0.45 * detail
-        let frames = rig.lastStep * 60
         let wave = rig.wave.strength * expf(-rig.wave.age / 0.6)
+        let shape = Self.shape(rig.layer)
         return BloomUniforms(colors: Self.palette(colors),
-                             c: SIMD4(lowHalf: c, highHalf: axis),
-                             view: SIMD4(center.x, center.y, iterations, line),
-                             size: SIMD4(width, height, powf(0.9, frames), 0.0015 * frames),
+                             view: SIMD4((64 + 40 * detail).rounded(), 1.15 - 0.45 * detail, rig.incoming == nil ? 0 : rig.blend, 0),
+                             size: SIMD4(width, height, rig.focus.x, rig.focus.y),
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              traps: SIMD4(cos(rig.traps), sin(rig.traps), 0.42, rig.hue),
                              wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, 0),
-                             flags: SIMD4(0, detail, logf(max(0.5, rig.radius.position)), rig.theta.position),
-                             previous: SIMD4(center.x, center.y, axis.x, axis.y),
-                             kicks: (Self.kick(rig.kicks[0]), Self.kick(rig.kicks[1]), Self.kick(rig.kicks[2])),
-                             twist: SIMD4(rig.twistCentre.x, rig.twistCentre.y, rig.twist.position, BloomRig.twistReach),
-                             places: SIMD4(rig.focusOnScreen.x, rig.focusOnScreen.y, rig.voice.x, rig.voice.y))
+                             shapes: (shape, rig.incoming.map(Self.shape) ?? shape))
     }
 
-    private static func kick(_ kick: BloomRig.Kick) -> SIMD4<Float> {
-        SIMD4(kick.epicentre.x, kick.epicentre.y, kick.spread, kick.shatter.position)
+    /// A layer of Bloom as the shader draws it: the zoom's scale shrinks by ρ^q
+    /// over each repeat, so a whole repeat in it is the same picture again.
+    private static func shape(_ layer: BloomRig.Layer) -> BloomShapeUniforms {
+        let s = layer.shape
+        let a = s.series
+        return BloomShapeUniforms(zoom: SIMD4(BloomRig.span * expf(-layer.phase * s.period), s.period / Float(s.q), atan2(s.lambda.y, s.lambda.x), logf(s.reach)),
+                                  fixed: SIMD4(lowHalf: s.c, highHalf: s.alpha),
+                                  cycle: SIMD4(s.cycle.x, s.cycle.y, s.contraction, s.settling * s.settling),
+                                  counts: SIMD4(s.lambda.x, s.lambda.y, Float(s.q), layer.phase),
+                                  straightening: SIMD4(s.straightening.x, s.straightening.y, 0, 0),
+                                  series: (a.lowHalf.lowHalf, a.lowHalf.highHalf, a.highHalf.lowHalf, a.highHalf.highHalf))
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

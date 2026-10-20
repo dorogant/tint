@@ -91,7 +91,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         let fluid: MTLRenderPipelineState
         let beams: MTLRenderPipelineState
         let haze: MTLRenderPipelineState
-        /// Draws into the drawable and, as a second target, the trails it reads next frame.
         let bloom: MTLRenderPipelineState
     }
     /// Pixels per frame at most: a large window draws Beams at about one pixel
@@ -136,39 +135,24 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
 
     static func makePipelines(device: MTLDevice, pixelFormat: MTLPixelFormat) throws -> Pipelines {
         let library = try device.makeLibrary(source: ReactiveShader.source, options: nil)
-        func pipeline(_ fragment: String, _ format: MTLPixelFormat, second: MTLPixelFormat = .invalid) throws -> MTLRenderPipelineState {
+        func pipeline(_ fragment: String, _ format: MTLPixelFormat) throws -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
             descriptor.fragmentFunction = library.makeFunction(name: fragment)
             descriptor.colorAttachments[0].pixelFormat = format
-            descriptor.colorAttachments[1].pixelFormat = second
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
         return Pipelines(fluid: try pipeline("floeFluidFragment", pixelFormat), beams: try pipeline("floeBeamsFragment", pixelFormat),
                          haze: try pipeline("floeHazeFragment", Targets.hazeFormat),
-                         bloom: try pipeline("floeBloomFragment", pixelFormat, second: Targets.trailsFormat))
+                         bloom: try pipeline("floeBloomFragment", pixelFormat))
     }
 
-    /// Scratch textures that follow the drawable's size: Beams' smoke at a quarter
-    /// of its resolution, with the pass that draws it, and Bloom's trails, two
-    /// textures that take turns being read and written (all made once, not per frame).
+    /// Beams' smoke at a quarter of the drawable's resolution, with the pass that
+    /// draws it, made again only when the drawable's size changes.
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
-        static let trailsFormat = MTLPixelFormat.rgba16Float
         private let device: MTLDevice
         private var haze: MTLTexture?
-        private var trails: [MTLTexture] = []
-        private var written = 0
-        /// The view (the plane's centre and span) the kept frame was drawn with,
-        /// so the next can find where each point of the set was; nil when nothing
-        /// has been kept since the trails were made or another kind drew.
-        private var keptView: SIMD4<Float>?
-        private let bloom: MTLRenderPassDescriptor = {
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[1].loadAction = .dontCare
-            pass.colorAttachments[1].storeAction = .store
-            return pass
-        }()
         private let smoke: MTLRenderPassDescriptor = {
             let pass = MTLRenderPassDescriptor()
             pass.colorAttachments[0].loadAction = .dontCare
@@ -189,34 +173,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             smoke.colorAttachments[0].texture = haze
             return haze.map { ($0, smoke) }
         }
-
-        /// Bloom's pass: `pass`'s drawable plus the trails to write, the trails
-        /// to read and the view they were drawn with (nil if they hold nothing
-        /// yet). Each call swaps the two and keeps `view` for the next.
-        func bloom(_ pass: MTLRenderPassDescriptor, width: Int, height: Int, view: SIMD4<Float>)
-            -> (pass: MTLRenderPassDescriptor, previous: MTLTexture, previousView: SIMD4<Float>?)? {
-            if trails.count != 2 || trails[0].width != width || trails[0].height != height {
-                let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.trailsFormat, width: max(1, width),
-                                                                          height: max(1, height), mipmapped: false)
-                descriptor.usage = [.renderTarget, .shaderRead]
-                descriptor.storageMode = .private
-                trails = (0..<2).compactMap { _ in device.makeTexture(descriptor: descriptor) }
-                keptView = nil
-                guard trails.count == 2 else { return nil }
-            }
-            let target = bloom.colorAttachments[0]!, source = pass.colorAttachments[0]!
-            target.texture = source.texture
-            target.loadAction = source.loadAction
-            target.storeAction = source.storeAction
-            target.clearColor = source.clearColor
-            written = 1 - written
-            bloom.colorAttachments[1].texture = trails[written]
-            defer { keptView = view }
-            return (bloom, trails[1 - written], keptView)
-        }
-
-        /// Another kind drew: Bloom's trails are stale.
-        func forgetTrails() { keptView = nil }
     }
 
     /// The pixels to draw for a view of `points` on a display of `scale`.
@@ -231,7 +187,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     @discardableResult
     static func encode(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
                        animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
-        if animator.configuration.kind != .bloom { targets.forgetTrails() }
         switch animator.configuration.kind {
         case .fluid:
             var uniforms = animator.fluidUniforms(width: width, height: height)
@@ -256,14 +211,9 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             encoder.endEncoding()
         case .bloom:
             var uniforms = animator.bloomUniforms(width: width, height: height)
-            let view = SIMD4(uniforms.view.x, uniforms.view.y, uniforms.c.z, uniforms.c.w)
-            guard let (both, previous, kept) = targets.bloom(pass, width: Int(width), height: Int(height), view: view),
-                  let encoder = command.makeRenderCommandEncoder(descriptor: both) else { return false }
-            uniforms.previous = kept ?? view
-            if kept == nil { uniforms.flags.x = 1 }
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
             encoder.setRenderPipelineState(pipelines.bloom)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-            encoder.setFragmentTexture(previous, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }
@@ -291,8 +241,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
 
     private var isTicking: Bool { link != nil || timer != nil }
 
-    /// Beams' punches and wobbles and Bloom's shatters need every refresh up to
-    /// 60 Hz; Fluid only drifts and swells, so half that looks the same at half the cost.
+    /// Beams' punches and wobbles and Bloom's glints and zoom need every refresh up
+    /// to 60 Hz; Fluid only drifts and swells, so half that looks the same at half the cost.
     private static func frameRate(_ kind: VisualSettings.BackgroundKind) -> Float { kind == .fluid ? 30 : 60 }
 
     /// Frames come from the display's own clock, so each is shown for the same

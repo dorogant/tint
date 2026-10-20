@@ -1046,7 +1046,7 @@ struct BackgroundTests {
                         switch kind {
                         case .beams: sink += animator.beamUniforms(width: 1600, height: 1000).heads.0.x
                         case .fluid: sink += animator.fluidUniforms(width: 1600, height: 1000).motion.x
-                        case .bloom: sink += animator.bloomUniforms(width: 1600, height: 1000).c.x
+                        case .bloom: sink += animator.bloomUniforms(width: 1600, height: 1000).shapes.0.zoom.x
                         }
                     }
                 }

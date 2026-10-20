@@ -1,116 +1,81 @@
 import Foundation
 import simd
 
-/// Bloom: a Julia set, z ← z² + c, that the music plays. Its outline glows as
-/// thin filaments in the cover's colours on a dark ground. A lens frames part of
-/// the set's edge off-centre rather than the whole set, and each layer of the
-/// music has its own job and, apart from the harmony, its own place in the frame:
+/// Bloom: an endless, slow zoom into a Julia set, toward the junction where its
+/// arms meet, that the music steers. Its outline glows as thin filaments in the
+/// cover's colours on a dark ground, and light pools in the bulbs between the
+/// arms. Nothing jumps or shakes: the music sets how fast the zoom goes, where
+/// on the screen it heads, and which set it heads into.
 ///
 /// | Music                              | Fractal                                                          |
 /// |------------------------------------|------------------------------------------------------------------|
-/// | Harmony (pitch class, tonality)    | the shape, everywhere: each pitch class has its own c, and the set glides to the one playing |
-/// | Bass envelope                      | the drift's pace and a slow breath toward finer filigree         |
-/// | Kick                               | a patch of the set shatters to dust around its own epicentre and knits back, the shatter spreading out (a small pull in first); each kick lands somewhere else |
-/// | Snare, clap                        | a local twist around its own point, across the frame from the last kick, that unwinds |
-/// | Hat                                | glints in the outer filaments, where the orbits pass a small turning constellation |
-/// | Mids envelope (vocals, leads)      | soft light pools in the bulbs under a slowly wandering voice     |
-/// | Highs envelope and brightness      | finer filaments and deeper detail                                |
-/// | Build, then drop                   | a slow dive toward the lens's edge point, released with one wave of light from it |
-/// | Sections (a drop, every 32 beats)  | the lens glides to another part of the edge                      |
+/// | Harmony (pitch class)              | the shape, chosen at each new section: each pitch class has its own, from two arms to seven |
+/// | Loudness                           | the zoom's pace                                                  |
+/// | Bass envelope                      | a slow breath: the bulbs swell and the channels between them narrow |
+/// | Kick                               | a small push forward in the zoom                                 |
+/// | Snare, hat                         | glints in the outer filaments                                    |
+/// | Mids envelope (vocals, leads)      | light pooling in the bulbs                                       |
+/// | Highs envelope and brightness      | finer filaments, deeper detail, and a lean of the zoom's centre  |
+/// | Build, then drop                   | the zoom quickens, then eases, with one wave of light from its centre |
+/// | Sections (a drop, every 32 beats)  | the next shape dissolves in, and the zoom's centre drifts elsewhere |
 /// | Beat phase (a steady groove)       | a faint swell of the glow on each beat                           |
 ///
-/// Kicks change the shape, never the brightness, so nothing flashes. With no
-/// clear harmony (drums, noise, or analysis that doesn't report it) the shape
-/// drifts slowly on its own; in silence it all but stops and the lens widens
-/// to the whole set.
+/// Hits change the pace, never the brightness, so nothing flashes. In silence
+/// the zoom all but stops.
 struct BloomRig {
-    /// One shape per pitch class, C first, as the multiplier λ = ρe^{iθ} of the
-    /// set's fixed point (see `c(theta:rho:)`): θ goes round the Mandelbrot set's
-    /// main cardioid, and ρ just under 1 is a plump, joined set while past 1 it
-    /// turns to dust. Picked from a contact sheet of the whole circle and
-    /// rising round it, so a glide between neighbouring notes passes
-    /// only through the shapes between them. Each angle is one where a kick's
-    /// push leaves the Mandelbrot set cleanly (into dust, not into a bulb);
-    /// the lower half mirrors the upper, so the radii alternate between fine
-    /// filigree and plumper sets to tell each mirrored pair apart.
-    static let shapes: [(theta: Float, radius: Float)] = [
-        (0.44, 0.975), (0.87, 0.96), (1.31, 0.98), (1.75, 0.965), (2.27, 0.975), (2.88, 0.96),
-        (3.40, 0.98), (3.84, 0.965), (4.45, 0.975), (4.97, 0.96), (5.41, 0.98), (5.85, 0.965),
+    /// One shape per pitch class, C first: the p/q bulb of the Mandelbrot set it
+    /// sits in, so q arms meet at its junction. Neighbouring pitch classes have
+    /// different arm counts, so a new section reads as a new shape.
+    static let shapes: [(p: Int, q: Int)] = [
+        (1, 3), (2, 5), (1, 4), (1, 2), (3, 5), (2, 3), (1, 5), (3, 4), (4, 5), (1, 6), (2, 7), (5, 6),
     ]
-    /// How far a full snare twists the plane at its point, at the peak, and how
-    /// far round that point the twist reaches, in screen units.
-    static let facet = Float.pi / 6
-    static let twistReach: Float = 0.6
-    /// The deepest a build dives toward the set's edge, beyond the lens.
-    static let maximumZoom: Float = 4
-    /// The lens's magnification while music plays; silence widens it to 1.
-    static let lensDepth: Float = 2
-    /// Kicks shattering at once, each in its own patch.
-    static let kickSlots = 3
-    /// How far past the cardioid's edge a full kick throws the set (at Bass punch
-    /// 100%), wherever its shape sits: far enough to open it into spirals of dust.
-    /// Softer kicks only pinch it.
-    static let shatterPast: Float = 0.03
+    /// How far into its bulb a shape sits at rest, in units of 1/q²: the bulb
+    /// spans about 0…2, its centre (the fattest bulbs) near 1.
+    static let restingDepth: Float = 1.2
+    /// How much further in the bass breathes it.
+    static let breath: Float = 0.25
+    /// The plane per screen half-height at the start of each repeat of the zoom.
+    static let span: Float = 0.6
+    /// The zoom's pace in e-folds a second: in silence, cruising with the music
+    /// (more with loudness), and how much a full build adds.
+    static let idlePace: Float = 0.001
+    static let cruisingPace: Float = 0.045
+    static let buildPace: Float = 0.15
+    /// Seconds a new shape takes to dissolve in.
+    static let dissolve: Float = 4
 
-    /// The shape's angle round the cardioid (unwrapped) and its radius.
-    private(set) var theta = Spring(position: shapes[0].theta)
-    private(set) var radius = Spring(position: shapes[0].radius)
-    /// Where the shape drifts on its own, with no clear harmony.
-    private var wander = shapes[0].theta
-    /// One kick's shatter, added to the radius around its epicentre.
-    struct Kick {
-        private(set) var shatter = Spring()
-        /// In screen units: y runs −1…1, x the same scaled by the aspect ratio.
-        private(set) var epicentre = SIMD2<Float>(0, 0)
-        /// How far it reaches as it lands; it spreads further as it ages.
-        private var reach: Float = 0.5
-        private(set) var age: Float = 10
-        /// A push still to come, and when.
-        private var pending: (delay: Float, velocity: Float)?
+    /// A shape being zoomed into, and how far into its current repeat the zoom is (0…1).
+    struct Layer {
+        let index: Int
+        private(set) var shape: BloomShape
+        private(set) var phase: Float = 0
 
-        /// The reach in screen units as it stands.
-        var spread: Float { min(2.2, reach + 1.4 * age) }
-        /// How far from knit back it still is.
-        var stir: Float { abs(shatter.position) + abs(shatter.velocity) * 0.1 }
-
-        /// Lands at `epicentre`, kicking the shatter by `velocity` now and by `push` after `delay`.
-        mutating func land(at epicentre: SIMD2<Float>, reach: Float, velocity: Float, push: Float = 0, after delay: Float = 0) {
-            self.epicentre = epicentre
-            self.reach = reach
-            age = 0
-            shatter.velocity += velocity
-            pending = push != 0 ? (delay, push) : nil
+        init(index: Int, depth: Float) {
+            self.index = index
+            shape = BloomShape(p: BloomRig.shapes[index].p, q: BloomRig.shapes[index].q, depth: depth)
         }
 
-        mutating func step(by dt: Float) {
-            if let push = pending {
-                if push.delay <= dt {
-                    shatter.velocity += push.velocity
-                    pending = nil
-                } else {
-                    pending = (push.delay - dt, push.velocity)
-                }
-            }
-            // Underdamped: shattered dust overshoots into a plumper set as it knits back.
-            shatter.step(toward: 0, frequency: BloomRig.shatterFrequency, damping: 0.5, dt: dt)
-            age += dt
+        /// `efolds` of zoom further in, with the shape breathed to `depth`.
+        mutating func advance(by efolds: Float, depth: Float) {
+            if abs(depth - shape.depth) > 0.0005 { shape = BloomShape(p: shape.p, q: shape.q, depth: depth) }
+            phase += efolds / shape.period
+            phase -= phase.rounded(.down)
         }
     }
-    private(set) var kicks = [Kick](repeating: Kick(), count: kickSlots)
-    private var kicksHeard = 0
-    /// The plane's slow drift.
-    private(set) var turn = Spring()
-    private var turnGoal: Float = 0
-    /// The snare's twist at its point, in radians: kicked, then unwinding.
-    private(set) var twist = Spring()
-    private(set) var twistCentre = SIMD2<Float>(-0.4, 0.3)
-    private var snaresHeard = 0
-    /// The build's dive: 0 at rest, 1 at the deepest zoom.
-    private(set) var dive = Spring()
-    private(set) var lens = BloomLens()
-    /// Where the vocals' light pools, in screen units, and its slow clock.
-    private(set) var voice = SIMD2<Float>(-0.3, 0.2)
-    private var voicePhase: Float = 0
+
+    private(set) var layer = Layer(index: 0, depth: restingDepth)
+    /// The shape dissolving in, and how far (0…1).
+    private(set) var incoming: Layer?
+    private(set) var blend: Float = 0
+    /// The zoom's pace (e-folds a second), and the kicks' extra push on top.
+    private(set) var pace: Float = idlePace
+    private(set) var surge: Float = 0
+    /// Where the zoom heads, in screen units (y runs −1…1, x the same scaled by
+    /// the aspect ratio), gliding toward a point on a small circle round the middle.
+    private var focusX = Spring(), focusY = Spring()
+    private var heading: Float = 0.6
+    private var sinceChange: Float = 0
+    private var beatsAtChange: Float = 0
     /// Smoothed layers, at display rate.
     private(set) var bass: Float = 0
     private(set) var energy: Float = 0
@@ -118,7 +83,7 @@ struct BloomRig {
     private(set) var detail: Float = 0
     private(set) var tonality: Float = 0
     private(set) var tension: Float = 0
-    /// Decaying after each hat.
+    /// Decaying after each hat or snare.
     private(set) var glint: Float = 0
     /// The hat constellation's turn.
     private(set) var traps: Float = 0
@@ -130,61 +95,41 @@ struct BloomRig {
     private(set) var level: Float = 0.5
     /// The palette's slow walk round the set.
     private(set) var hue: Float = 0
-    /// The last step, for the trails' frame-rate independent fade.
-    private(set) var lastStep: Float = 1 / 60
     private var latest = BeatDetector.Pulse()
     private var layers = MusicLayers()
-    private var sinceSnare: Float = 1
 
-    /// One analysis frame: hits land here, once each, as impulses on the springs.
+    var focus: SIMD2<Float> { SIMD2(focusX.position, focusY.position) }
+
+    /// One analysis frame: hits land here, once each.
     mutating func receive(_ pulse: BeatDetector.Pulse, layers: MusicLayers, configuration: BackgroundConfiguration) {
         latest = pulse
         self.layers = layers
         let react = configuration.reactivity
-        let punch = configuration.punch * react
-        if pulse.kick > 0, punch > 0 {
-            let strength = min(1.4, pulse.kick * punch)
-            // Each kick lands somewhere new: round the frame by the golden angle,
-            // at varying distances from the middle.
-            kicksHeard += 1
-            let angle = Float(kicksHeard) * 2.39996
-            let distance = 0.3 + 0.35 * (Float(kicksHeard) * 0.618034).truncatingRemainder(dividingBy: 1)
-            // Anticipation: the set gathers itself in, then bursts.
-            kicks[quietestKick()].land(at: SIMD2(cos(angle), sin(angle)) * distance, reach: 0.5,
-                                       velocity: -0.15 * strength, push: push(strength), after: 0.04)
-        }
-        if pulse.snare > 0, punch > 0 {
-            // Across the frame from the last kick, so the two never land together;
-            // a roll twists no harder than a full hit every half second.
-            snaresHeard += 1
-            let sway = Float(snaresHeard) * 1.3
-            twistCentre = -latestKick.epicentre * 0.9 + SIMD2(cos(sway), sin(sway)) * 0.2
-            let strength = min(1, pulse.snare * punch * 1.4) * min(1, sinceSnare / 0.5)
-            twist.velocity += Self.twistVelocity * Self.facet * strength * (snaresHeard % 2 == 0 ? 1 : -1)
-            sinceSnare = 0
-        }
+        if pulse.kick > 0 { surge += 0.03 * min(1.4, pulse.kick * configuration.punch * react) }
         if pulse.hat > 0 { glint = max(glint, min(1.2, pulse.hat * react)) }
+        if pulse.snare > 0 { glint = max(glint, min(1, 0.6 * pulse.snare * react)) }
         if layers.drop > 0 {
             let strength = min(1, layers.drop * react)
             wave = (0, max(strength, wave.age < 1 ? wave.strength : 0))
-            // The drop bursts from the lens's own edge point, across most of the frame.
-            kicks[quietestKick()].land(at: focusOnScreen, reach: 1.2, velocity: push(strength * min(1.5, configuration.punch)))
-            lens.move(at: pulse.beats)
+            changeSection()
         }
     }
 
-    /// The kick that landed last.
-    var latestKick: Kick { kicks.min { $0.age < $1.age }! }
-
-    /// The kick slot that has most nearly knit back.
-    private func quietestKick() -> Int {
-        kicks.indices.min { kicks[$0].stir < kicks[$1].stir } ?? 0
+    /// A new section: the zoom heads elsewhere and, unless one is already
+    /// dissolving in, the shape the harmony asks for (or the next one) comes in.
+    private mutating func changeSection() {
+        heading += 2.39996
+        sinceChange = 0
+        beatsAtChange = latest.beats
+        guard incoming == nil else { return }
+        let asked = Int(layers.pitchClass.rounded()) % 12
+        let next = tonality > 0.5 && asked != layer.index ? asked : (layer.index + 5) % 12
+        incoming = Layer(index: next, depth: layer.shape.depth)
+        blend = 0
     }
 
     /// Moves the fractal on by `dt` seconds of display time.
     mutating func step(by dt: Float, configuration: BackgroundConfiguration) {
-        lastStep = dt
-        sinceSnare += dt
         let react = configuration.reactivity
         let speed = configuration.speed
         func follow(_ value: inout Float, _ target: Float, attack: Float, release: Float) {
@@ -199,33 +144,39 @@ struct BloomRig {
         let sounding = BeatDetector.smoothstep(0, 0.12, energy)
         follow(&level, 0.5 + 0.5 * min(1, energy * react * 1.4), attack: 0.4, release: 1.6)
 
-        // Harmony picks the shape; without it the shape wanders, at the bass's pace.
-        let gate = BeatDetector.smoothstep(0.25, 0.6, tonality)
-        wander += dt * speed * (0.004 + sounding * (0.03 + 0.09 * bass))
-        let played = Self.shape(at: layers.pitchClass)
-        wander += Self.wrap(played.theta - wander) * gate * BeatDetector.rate(dt, 2)
-        let goal = wander + Self.wrap(played.theta - wander) * gate
-        let resting = Self.radius(at: wander)
-        let shapeRadius = resting + (played.radius - resting) * gate
-        // Bass breathes the set out toward its finer filigree.
-        theta.step(toward: theta.position + Self.wrap(goal - theta.position), frequency: 0.45, damping: 1, dt: dt)
-        radius.step(toward: shapeRadius + 0.018 * bass, frequency: 0.6, damping: 1, dt: dt)
+        // The pace eases in and out over seconds; a build quickens it most at its end.
+        let goal = Self.idlePace + sounding * (Self.cruisingPace * (0.5 + 0.8 * min(1, energy * react))
+                                               + Self.buildPace * tension * tension * tension)
+        follow(&pace, goal, attack: 1.2, release: 1.5)
+        surge *= expf(-dt / 0.3)
+        let efolds = (pace + surge) * speed * dt
+        let depth = Self.restingDepth + Self.breath * bass
+        layer.advance(by: efolds, depth: depth)
+        if var next = incoming {
+            next.advance(by: efolds, depth: depth)
+            blend += dt / Self.dissolve
+            if blend >= 1 {
+                layer = next
+                incoming = nil
+                blend = 0
+            } else {
+                incoming = next
+            }
+        }
 
-        for i in kicks.indices { kicks[i].step(by: dt) }
-        turnGoal += dt * speed * 0.012 * sounding
-        turn.step(toward: turnGoal, frequency: 2.8, damping: 0.75, dt: dt)
-        // Underdamped too: the twist swings a little past straight as it unwinds.
-        twist.step(toward: 0, frequency: Self.twistFrequency, damping: 0.5, dt: dt)
-        voicePhase += dt * speed * (0.04 + 0.12 * heart)
-        voice = SIMD2(0.75 * sin(voicePhase + 0.7), 0.5 * sin(voicePhase * 1.37))
-        // The dive glides in slowly, most of it in the build's last stretch, and
-        // springs back past rest when the build lets go.
-        let depth = tension * tension * tension
-        let rising = depth > dive.position
-        dive.step(toward: depth, frequency: rising ? 0.4 : 0.9, damping: rising ? 1 : 0.5, dt: dt)
-
-        lens.step(by: dt, theta: theta.position, radius: radius.position, sounding: sounding,
-                  pulse: latest, diving: dive.position >= 0.1)
+        // A new section every 32 beats of a steady groove, or 40 s without one,
+        // never sooner than 16 s, never mid-build or in silence.
+        sinceChange += dt
+        let grooving = latest.tempo > 0 && latest.confidence > 0.3
+        if sounding > 0.5, sinceChange > 16, tension < 0.25,
+           grooving ? latest.beats - beatsAtChange >= 32 : sinceChange > 40 {
+            changeSection()
+        }
+        // The highs lean the centre right and the vocals up, a little, slowly.
+        let round = SIMD2(cos(heading), sin(heading)) * 0.28 * sounding
+        let lean = SIMD2(0.15 * (detail - 0.5), 0.12 * (heart - 0.3)) * sounding
+        focusX.step(toward: round.x + lean.x, frequency: 0.05, damping: 1, dt: dt)
+        focusY.step(toward: round.y + lean.y, frequency: 0.05, damping: 1, dt: dt)
 
         glint *= expf(-dt / 0.04)
         traps += dt * speed * (0.25 + 0.6 * latest.high)
@@ -236,156 +187,92 @@ struct BloomRig {
         let steady = BeatDetector.smoothstep(0.3, 0.7, latest.confidence) * (latest.tempo > 0 ? 1 : 0)
         follow(&beat, steady * expf(-phase * 5), attack: 0.03, release: 0.12)
     }
-
-    /// How far out the shape sits at the strongest kick's epicentre: the size of
-    /// its fixed point's multiplier, under 1 inside the cardioid.
-    var rho: Float {
-        var strongest: Float = 0
-        for kick in kicks where abs(kick.shatter.position) > abs(strongest) { strongest = kick.shatter.position }
-        return max(0.5, radius.position + strongest)
-    }
-
-    /// c for the shape at rest, away from any kick.
-    var c: SIMD2<Float> { Self.c(theta: theta.position, rho: max(0.5, radius.position)) }
-
-    /// How deep the dive has gone, as a magnification (below 1 as it springs back).
-    var zoom: Float { powf(Self.maximumZoom, dive.position) }
-
-    /// The lens's magnification and the dive's together.
-    var viewZoom: Float { lens.zoom.position * zoom }
-
-    /// The plane's span per screen half-height when the view isn't zoomed.
-    static let span: Float = 1.3
-
-    /// The plane's centre and its span per screen half-height, as a complex
-    /// scale and turn. The focus glides from the middle of the screen at rest
-    /// toward it as the view zooms, so the lens frames its edge off-centre.
-    var view: (center: SIMD2<Float>, axis: SIMD2<Float>) {
-        let zoom = viewZoom
-        let axis = SIMD2(cos(turn.position), sin(turn.position)) * (Self.span / zoom)
-        return (lens.focus * (1 - 1 / (zoom * zoom)), axis)
-    }
-
-    /// Where the focus shows, in screen units.
-    var focusOnScreen: SIMD2<Float> {
-        let (center, axis) = view
-        let d = lens.focus - center
-        return SIMD2(d.x * axis.x + d.y * axis.y, d.y * axis.x - d.x * axis.y) / max(simd_length_squared(axis), 1e-12)
-    }
-
-    /// The shape a pitch class (fractional, gliding) plays.
-    static func shape(at pitchClass: Float) -> (theta: Float, radius: Float) {
-        let p = pitchClass - (pitchClass / 12).rounded(.down) * 12
-        let i = Int(p) % 12, j = (i + 1) % 12
-        let f = p - Float(Int(p))
-        let a = shapes[i], b = shapes[j]
-        return (a.theta + wrap(b.theta - a.theta) * f, a.radius + (b.radius - a.radius) * f)
-    }
-
-    /// The resting radius at an angle, between the two shapes it lies between.
-    static func radius(at theta: Float) -> Float {
-        let t = theta - (theta / (2 * .pi)).rounded(.down) * 2 * .pi
-        guard let i = shapes.lastIndex(where: { $0.theta <= t }) else {
-            let a = shapes[shapes.count - 1], b = shapes[0]
-            let span = b.theta + 2 * .pi - a.theta
-            return a.radius + (b.radius - a.radius) * (t + 2 * .pi - a.theta) / span
-        }
-        let a = shapes[i], b = shapes[(i + 1) % shapes.count]
-        let span = wrapPositive(b.theta - a.theta)
-        return a.radius + (b.radius - a.radius) * min(1, (t - a.theta) / span)
-    }
-
-    /// The c whose fixed point α = λ/2 has multiplier λ = ρe^{iθ}: c = λ/2 − λ²/4.
-    /// At ρ = 1 that's the main cardioid's edge.
-    static func c(theta: Float, rho: Float) -> SIMD2<Float> {
-        let lambda = SIMD2(cos(theta), sin(theta)) * rho
-        return lambda / 2 - SIMD2(lambda.x * lambda.x - lambda.y * lambda.y, 2 * lambda.x * lambda.y) / 4
-    }
-
-    /// The shatter spring's pace.
-    static let shatterFrequency: Float = 2
-    /// The push that peaks the shatter spring at 1 with damping 0.5: ω / e^(−ζ/√(1−ζ²)·acos ζ).
-    static let kickVelocity: Float = 2 * .pi * shatterFrequency / 0.546
-    /// The twist spring's pace, and the push that peaks it at 1 (same damping).
-    static let twistFrequency: Float = 1.2
-    static let twistVelocity: Float = 2 * .pi * twistFrequency / 0.546
-
-    /// The push for a hit of `strength`: a full one carries the set from where it
-    /// rests to `shatterPast` beyond the edge.
-    private func push(_ strength: Float) -> Float {
-        Self.kickVelocity * strength * (max(0, 1 - radius.position) + Self.shatterPast)
-    }
-
-    /// An angle difference brought into −π…π.
-    static func wrap(_ angle: Float) -> Float {
-        angle - (angle / (2 * .pi)).rounded() * 2 * .pi
-    }
-
-    private static func wrapPositive(_ angle: Float) -> Float {
-        angle - (angle / (2 * .pi)).rounded(.down) * 2 * .pi
-    }
 }
 
-/// Which part of Bloom's set the view frames: one of eight points on its edge,
-/// followed as the shape changes, moving on with the song's sections, and how
-/// closely, widening to the whole set in silence.
-struct BloomLens {
-    /// The repelling fixed point β, its twin −β and their first preimages.
-    private var anchors = [SIMD2<Float>](repeating: SIMD2(0.5, 0), count: 8)
-    private var index = 0
-    /// The centre on the plane, gliding toward the anchor it frames, so a chord
-    /// change or a section never yanks the view.
-    private var x = Spring(position: 0.5), y = Spring()
-    private(set) var zoom = Spring(position: 1)
-    private var sinceMove: Float = 0
-    private var beatsAtMove: Float = 0
+/// One of Bloom's shapes: c in the p/q bulb of the Mandelbrot set, where the
+/// Julia set's fixed point α is repelling and q arms of the set meet at it. α's
+/// multiplier λ = ρe^{2πip/q} turns a whole number of times over q steps, so
+/// near α the set repeats itself, unturned, every ρ^q times closer: a zoom
+/// toward α can go on forever while only ever drawing one repeat of it.
+struct BloomShape {
+    let p: Int, q: Int
+    /// How far into the bulb, in units of 1/q²: ρ = 1 + depth/q².
+    let depth: Float
+    let lambda: SIMD2<Float>
+    let c: SIMD2<Float>
+    let alpha: SIMD2<Float>
+    /// e-folds of zoom per repeat: q log ρ.
+    let period: Float
+    /// The zoom's linear coordinate w carried onto the set (its Poincaré
+    /// function at α): a series out to `reach`, and beyond it, each factor of ρ
+    /// further out one more step of z ← z² + c. `series` holds its first eight
+    /// coefficients, as complex pairs.
+    let reach: Float
+    let series: SIMD16<Float>
+    /// A point of the attracting q-cycle the bulbs' orbits settle onto, the log
+    /// of how much each pass round it shrinks them, and how close counts as settled.
+    let cycle: SIMD2<Float>
+    let contraction: Float
+    let settling: Float
+    /// Straightens the passes near the cycle so each shrinks orbits evenly: e + b·e²
+    /// for an orbit e from the cycle point (the start of its Koenigs coordinate).
+    let straightening: SIMD2<Float>
 
-    /// The edge point framed, on the plane.
-    var focus: SIMD2<Float> { SIMD2(x.position, y.position) }
-
-    /// Frames the next anchor; stepping by three visits all eight, each far from the last.
-    mutating func move(at beats: Float) {
-        index = (index + 3) % anchors.count
-        sinceMove = 0
-        beatsAtMove = beats
-    }
-
-    /// Moves on to a new part of the edge every 32 beats of a steady groove, or
-    /// 20 s without one, never sooner than 8 s, never in a dive or in silence.
-    mutating func step(by dt: Float, theta: Float, radius: Float, sounding: Float, pulse: BeatDetector.Pulse, diving: Bool) {
-        followAnchors(theta: theta, radius: radius)
-        sinceMove += dt
-        let grooving = pulse.tempo > 0 && pulse.confidence > 0.3
-        if sounding > 0.5, sinceMove > 8, !diving, grooving ? pulse.beats - beatsAtMove >= 32 : sinceMove > 20 {
-            move(at: pulse.beats)
+    init(p: Int, q: Int, depth: Float) {
+        self.p = p
+        self.q = q
+        self.depth = depth
+        let rho = 1 + Double(depth) / Double(q * q)
+        let angle = 2 * Double.pi * Double(p) / Double(q)
+        let l = (re: rho * cos(angle), im: rho * sin(angle))
+        // c = λ/2 − λ²/4, whose fixed point α = λ/2 has multiplier λ.
+        let c = (re: l.re / 2 - (l.re * l.re - l.im * l.im) / 4, im: l.im / 2 - l.re * l.im / 2)
+        lambda = SIMD2(Float(l.re), Float(l.im))
+        self.c = SIMD2(Float(c.re), Float(c.im))
+        alpha = lambda / 2
+        period = Float(Double(q) * log(rho))
+        // ψ(λw) = ψ(w)(λ + ψ(w)) term by term, in δ = z − α.
+        var re = SIMD16<Double>(), im = SIMD16<Double>()
+        re[1] = 1
+        var power = l
+        for k in 2...9 {
+            power = (power.re * l.re - power.im * l.im, power.re * l.im + power.im * l.re)
+            var sum = (re: 0.0, im: 0.0)
+            for i in 1..<k {
+                sum.re += re[i] * re[k - i] - im[i] * im[k - i]
+                sum.im += re[i] * im[k - i] + im[i] * re[k - i]
+            }
+            let over = (re: power.re - l.re, im: power.im - l.im), size = over.re * over.re + over.im * over.im
+            re[k] = (sum.re * over.re + sum.im * over.im) / size
+            im[k] = (sum.im * over.re - sum.re * over.im) / size
         }
-        let anchor = anchors[index]
-        x.step(toward: anchor.x, frequency: 0.12, damping: 1, dt: dt)
-        y.step(toward: anchor.y, frequency: 0.12, damping: 1, dt: dt)
-        zoom.step(toward: 1 + (BloomRig.lensDepth - 1) * sounding, frequency: 0.1, damping: 1, dt: dt)
-    }
-
-    /// Keeps the anchors on the set as its shape moves, each preimage taking the
-    /// square root nearer where it was, so they glide rather than jump.
-    private mutating func followAnchors(theta: Float, radius: Float) {
-        let lambda = SIMD2(cos(theta), sin(theta)) * radius
-        let c = BloomRig.c(theta: theta, rho: radius)
-        let beta = SIMD2<Float>(1, 0) - lambda / 2
-        func root(_ z: SIMD2<Float>, near previous: SIMD2<Float>) -> SIMD2<Float> {
-            let r = Self.squareRoot(z)
-            return simd_distance_squared(r, previous) <= simd_distance_squared(-r, previous) ? r : -r
+        var series = SIMD16<Float>()
+        for k in 1...8 { series[2 * k - 2] = Float(re[k]); series[2 * k - 1] = Float(im[k]) }
+        self.series = series
+        // Out to where the first term left out moves the picture a fifth of a pixel at the screen's edge.
+        reach = Float(pow(1.5e-4 / (re[9] * re[9] + im[9] * im[9]).squareRoot(), 1.0 / 8))
+        // The critical orbit falls onto the attracting cycle; a whole number of
+        // turns round it always lands on the same point of it.
+        var z = (re: 0.0, im: 0.0)
+        for _ in 0..<(64 * q) { z = (z.re * z.re - z.im * z.im + c.re, 2 * z.re * z.im + c.im) }
+        cycle = SIMD2(Float(z.re), Float(z.im))
+        // A pass round the cycle, e ↦ m·e + A·e² near it: m and 2A are its first two derivatives.
+        var multiplier = (re: 1.0, im: 0.0), bend = (re: 0.0, im: 0.0)
+        for _ in 0..<q {
+            bend = (2 * (multiplier.re * multiplier.re - multiplier.im * multiplier.im + z.re * bend.re - z.im * bend.im),
+                    2 * (2 * multiplier.re * multiplier.im + z.re * bend.im + z.im * bend.re))
+            multiplier = (2 * (multiplier.re * z.re - multiplier.im * z.im), 2 * (multiplier.re * z.im + multiplier.im * z.re))
+            z = (z.re * z.re - z.im * z.im + c.re, 2 * z.re * z.im + c.im)
         }
-        let r1 = root(-beta - c, near: anchors[2])
-        let s1 = root(r1 - c, near: anchors[4]), s2 = root(-r1 - c, near: anchors[6])
-        anchors[0] = beta; anchors[1] = -beta
-        anchors[2] = r1; anchors[3] = -r1
-        anchors[4] = s1; anchors[5] = -s1
-        anchors[6] = s2; anchors[7] = -s2
-    }
-
-    private static func squareRoot(_ z: SIMD2<Float>) -> SIMD2<Float> {
-        let r = simd_length(z)
-        let x = sqrt(max(0, (r + z.x) / 2)), y = sqrt(max(0, (r - z.x) / 2))
-        return SIMD2(x, z.y < 0 ? -y : y)
+        // b = A / (m − m²) makes e + b·e² shrink by exactly m each pass, to second order.
+        let over = (re: multiplier.re - (multiplier.re * multiplier.re - multiplier.im * multiplier.im),
+                    im: multiplier.im - 2 * multiplier.re * multiplier.im)
+        let size = max(1e-12, over.re * over.re + over.im * over.im)
+        straightening = SIMD2(Float((bend.re / 2 * over.re + bend.im / 2 * over.im) / size),
+                              Float((bend.im / 2 * over.re - bend.re / 2 * over.im) / size))
+        contraction = Float(max(0.05, -0.5 * log(max(1e-12, multiplier.re * multiplier.re + multiplier.im * multiplier.im))))
+        // A thirtieth of the way to the cycle's next point: close enough, straightened, that each pass shrinks orbits evenly.
+        let next = SIMD2(Float(z.re * z.re - z.im * z.im + c.re), Float(2 * z.re * z.im + c.im))
+        settling = simd_distance(next, cycle) / 30
     }
 }

@@ -99,7 +99,7 @@ enum BloomSong {
 }
 
 /// A whole song in sections, written as analysis layers like `BloomSong`, so
-/// the lens has section changes to glide at: a pad intro, a verse, an
+/// Bloom has sections to change shape at: a pad intro, a verse, an
 /// eight-second build ending in a snare roll, the drop into a chorus, a
 /// breakdown and a last chorus. 120 BPM, one chord a bar (C, A minor, F, G).
 enum BloomLongSong {
@@ -182,22 +182,29 @@ extension BackgroundTests {
 
     static let bloomOutput = ProcessInfo.processInfo.environment["FLOE_BLOOM_RENDERS"].map { URL(fileURLWithPath: $0) }
 
-    /// Plays analysis frames at 30 Hz into a 60 Hz display, rendering every display
-    /// frame (the trails need each one); `each` sees the analysis frame's second render.
+    /// Plays analysis frames at 30 Hz into a 60 Hz display; `each` sees a render
+    /// of each analysis frame's second display frame.
     static func playBloom(_ animator: inout BackgroundAnimator, _ frames: [SpectrumFrame], renderer: OffscreenRenderer,
                           each: (BackgroundAnimator, RenderedFrame, Int) -> Void = { _, _, _ in }) {
-        renderer.forgetTrails()
         for (i, frame) in frames.enumerated() {
             animator.receive(frame)
             animator.step(by: 1 / 60)
-            _ = renderer.render(animator)
             animator.step(by: 1 / 60)
             each(animator, renderer.render(animator), i)
         }
     }
 
+    /// Analysis frames holding `pitch`, with a drop a second in, so the rig takes
+    /// that pitch class's shape (C is the shape it starts on, so it needs none).
+    static func showing(_ pitch: Int, mid: Float = 0.3, seconds: Float) -> [SpectrumFrame] {
+        var frames = BloomSong.held(pitch: Float(pitch), tonality: 1, mid: mid, seconds: seconds)
+        if pitch != 0 { frames[30].layers.drop = 1 }
+        return frames
+    }
+
     static func bloomChecks(device: MTLDevice) {
-        guard let renderer = try? OffscreenRenderer(device: device, width: 480, height: 300) else { fail("cannot build the offscreen renderer") }
+        let renderer: OffscreenRenderer
+        do { renderer = try OffscreenRenderer(device: device, width: 480, height: 300) } catch { fail("cannot build the offscreen renderer: \(error)") }
         let sunset = Covers.palette(Covers.sunset)
         let settings = BackgroundConfiguration(kind: .bloom, colors: sunset)
 
@@ -215,10 +222,30 @@ extension BackgroundTests {
         check(silentStep < 0.0015 && silentSecond < 0.01, "Bloom must be still in silence (\(silentStep) a frame, \(silentSecond) over 2 s)")
         check(silentFrames.last!.meanLuma > 0.01, "Bloom in silence must stay visible, just dim")
 
-        // A kick shatters the set and it knits back: against a twin that never heard it.
-        let held = BloomSong.held(pitch: 0, tonality: 0, seconds: 4)
+        // The zoom is endless: where a repeat ends and the next begins, the
+        // picture changes no more than between any two frames.
+        var music = BackgroundAnimator()
+        music.configure(BackgroundConfiguration(kind: .bloom, colors: sunset, speed: 2), animated: false)
+        var steps: [Float] = [], wraps: [Int] = []
+        var previous: RenderedFrame?, phase: Float = 0
+        playBloom(&music, BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 14), renderer: renderer) { animator, frame, i in
+            if let previous { steps.append(frame.difference(from: previous)) }
+            if animator.bloom.layer.phase < phase { wraps.append(steps.count - 1) }
+            phase = animator.bloom.layer.phase
+            previous = frame
+        }
+        let typical = steps.suffix(200).sorted()[100]
+        let worstWrap = wraps.map { steps[$0] }.max() ?? 0
+        print(String(format: "Bloom zoom: %d repeats in 14 s, change across a repeat's end %.5f, typical frame %.5f",
+                     wraps.count, worstWrap, typical))
+        check(!wraps.isEmpty, "the zoom must pass from one repeat into the next")
+        check(worstWrap < 2.5 * typical + 0.0005, "the zoom must run seamlessly from one repeat into the next (\(worstWrap) vs \(typical))")
+        check(typical > silentStep, "with music the zoom must move (\(typical) a frame)")
+
+        // A kick pushes the zoom on, not the brightness: against a twin that never heard it.
+        let held = BloomSong.held(pitch: 0, tonality: 0, seconds: 3)
         var hit = held
-        hit[60].layers.kick = 1
+        hit[45].layers.kick = 1
         var kicked = BackgroundAnimator(), twin = BackgroundAnimator()
         kicked.configure(settings, animated: false)
         twin.configure(settings, animated: false)
@@ -227,33 +254,30 @@ extension BackgroundTests {
         var apart: [Float] = [], lumaRatio: [Float] = []
         playBloom(&kicked, hit, renderer: renderer) { _, frame, i in
             apart.append(frame.difference(from: twinFrames[i]))
-            if i >= 60 { lumaRatio.append(frame.meanLuma / max(0.001, twinFrames[i].meanLuma)) }
+            if i >= 45 { lumaRatio.append(frame.meanLuma / max(0.001, twinFrames[i].meanLuma)) }
         }
-        let peak = apart[60...75].max()!, after = apart[60 + 45]
-        print(String(format: "Bloom kick: frames differ %.4f at the shatter, %.4f 1.5 s on; mean luma within %.0f%%…%.0f%% of the twin",
-                     peak, after, (lumaRatio.min()! - 1) * 100, (lumaRatio.max()! - 1) * 100))
-        check(apart[..<60].allSatisfy { $0 == 0 }, "the twins must match before the kick")
-        check(peak > 0.008, "a kick must shatter the set (\(peak))")
-        check(after < peak * 0.25, "the set must knit back after a kick (\(after) vs \(peak))")
-        check(lumaRatio.allSatisfy { abs($0 - 1) < 0.5 }, "a kick changes the shape, not the brightness (\(lumaRatio.min()!)…\(lumaRatio.max()!))")
+        print(String(format: "Bloom kick: ahead of the twin by %.4f a second on; mean luma within %.1f%%…%.1f%% of it",
+                     apart[75], (lumaRatio.min()! - 1) * 100, (lumaRatio.max()! - 1) * 100))
+        check(apart[..<45].allSatisfy { $0 == 0 }, "the twins must match before the kick")
+        check(apart[75] > 0, "a kick must push the zoom on")
+        check(lumaRatio.allSatisfy { abs($0 - 1) < 0.1 }, "a kick must not change the brightness (\(lumaRatio.min()!)…\(lumaRatio.max()!))")
 
-        // Harmony picks the shape: two pitch classes held must draw different sets.
+        // Harmony picks the next shape: G after a new section draws a different set from C.
         var c = BackgroundAnimator(), g = BackgroundAnimator()
         c.configure(settings, animated: false)
         g.configure(settings, animated: false)
         var cFrame: RenderedFrame?, gFrame: RenderedFrame?
-        playBloom(&c, BloomSong.held(pitch: 0, tonality: 1, seconds: 3), renderer: renderer) { _, frame, _ in cFrame = frame }
-        playBloom(&g, BloomSong.held(pitch: 7, tonality: 1, seconds: 3), renderer: renderer) { _, frame, _ in gFrame = frame }
+        playBloom(&c, showing(0, seconds: 6), renderer: renderer) { _, frame, _ in cFrame = frame }
+        playBloom(&g, showing(7, seconds: 6), renderer: renderer) { _, frame, _ in gFrame = frame }
         check(cFrame!.difference(from: gFrame!) > 0.01, "C and G must play different shapes")
 
-        // The heart's light is soft, with no lines in it: on a big-heart shape
-        // with a vocal lighting it, the inside has hardly any fine structure.
+        // The bulbs' light is soft, with no lines in it.
         if let large = try? OffscreenRenderer(device: device, width: 640, height: 400) {
-            for pitch in [0, 1] {
-                let (frame, heart) = heldHeart(pitch: Float(pitch), mid: 0.8, seconds: 3, renderer: large, settings: settings)
+            for pitch in [0, 3, 9] {
+                let (frame, heart) = heldHeart(pitch: pitch, mid: 0.8, seconds: 6, renderer: large, settings: settings)
                 let (lines, share) = heartLines(frame, heart: heart)
-                print(String(format: "Bloom heart (pitch class %d, vocal): fine structure %.4f over %.0f%% of the frame", pitch, lines, share * 100))
-                check(share > 0.05 && lines < 0.004, "the heart must glow without lines (\(lines) over \(share) of the frame)")
+                print(String(format: "Bloom bulbs (pitch class %d, vocal): fine structure %.4f over %.0f%% of the frame", pitch, lines, share * 100))
+                check(share > 0.03 && lines < 0.004, "the bulbs must glow without lines (\(lines) over \(share) of the frame)")
             }
         }
 
@@ -310,77 +334,78 @@ extension BackgroundTests {
             return animator.bloom
         }
 
-        // Harmony: a held pitch class with clear tonality settles on its shape;
-        // with none the shape only wanders slowly.
-        for pitch in [0, 4, 7, 11] {
-            let settled = rig(BloomSong.held(pitch: Float(pitch), tonality: 1, seconds: 4))
-            let shape = BloomRig.shapes[pitch]
-            check(abs(BloomRig.wrap(settled.theta.position - shape.theta)) < 0.02 && abs(settled.radius.position - shape.radius) < 0.02,
-                  "pitch class \(pitch) must play its shape (θ \(settled.theta.position) vs \(shape.theta))")
+        // Every shape repeats itself unturned, so the zoom never spins, and is placed finely enough.
+        for (index, (p, q)) in BloomRig.shapes.enumerated() {
+            let shape = BloomShape(p: p, q: q, depth: BloomRig.restingDepth)
+            let turn = Float(q) * atan2(shape.lambda.y, shape.lambda.x)
+            check(abs(turn - (turn / (2 * .pi)).rounded() * 2 * .pi) < 1e-4, "shape \(index) must repeat unturned (\(turn))")
+            check(shape.reach > 0.15 && shape.reach < 0.6, "shape \(index)'s series must reach out a fair way (\(shape.reach))")
+            check(shape.settling > 0.001 && shape.contraction > 0.05, "shape \(index) must have bulbs to settle in (\(shape.settling), \(shape.contraction))")
         }
-        var thetas: [Float] = []
-        _ = rig(BloomSong.held(pitch: 7, tonality: 0, seconds: 4)) { rig, _ in thetas.append(rig.theta.position) }
-        let drift = abs(thetas.last! - thetas.first!) / 4
-        check(drift > 0.005 && drift < 0.2, "with no clear harmony the shape must wander slowly (\(drift) rad a second)")
 
-        // Kick: a small pull in, then out past the cardioid's edge, and back within a second.
-        var kick = BloomSong.held(pitch: 0, tonality: 1, seconds: 6)
-        kick[90].layers.kick = 1
-        var rhos: [Float] = []
-        var rest: Float = 0
-        _ = rig(kick) { rig, display in
-            if display == 179 { rest = rig.rho }
-            if display >= 180 { rhos.append(rig.rho) }
+        // Pace: all but still in silence, faster when louder, quickest at a build's end; eased after the drop.
+        let silent = rig(Array(repeating: .quiet, count: 120))
+        let soft = rig(BloomSong.held(pitch: 0, tonality: 0, loudness: 0.2, seconds: 6))
+        let loud = rig(BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 6))
+        print(String(format: "Bloom pace: %.3f e-folds a second in silence, %.3f soft, %.3f loud", silent.pace, soft.pace, loud.pace))
+        check(silent.pace < 0.004 && soft.pace > silent.pace * 2 && loud.pace > soft.pace * 1.2 && loud.pace < 0.08,
+              "the zoom's pace must follow the loudness, gently (\(silent.pace), \(soft.pace), \(loud.pace))")
+
+        var build = BloomSong.held(pitch: 0, tonality: 1, loudness: 0.5, seconds: 16)
+        for i in build.indices { build[i].layers.build = i < 240 ? Float(i) / 240 : 0 }
+        build[240].layers.drop = 1
+        var paces: [Float] = [], waves: [Float] = [], incoming: [Bool] = [], focuses: [SIMD2<Float>] = []
+        _ = rig(build) { rig, _ in
+            paces.append(rig.pace); waves.append(rig.wave.strength); incoming.append(rig.incoming != nil); focuses.append(rig.focus)
         }
-        let pulledIn = rhos.prefix(3).min()!, peak = rhos.max()!, peakAt = rhos.firstIndex(of: peak)!
-        print(String(format: "Bloom mapping: a kick pulls ρ in to %.3f, throws it to %.3f after %d ms, back to %.3f a second on (rest %.3f)",
-                     pulledIn, peak, peakAt * 1000 / 60, rhos[60], rest))
-        check(pulledIn < rest - 0.001, "a kick must gather the set in first (\(pulledIn) vs \(rest))")
-        check(peak > 1.01 && peakAt < 12, "a kick must throw the set past the edge into dust within 200 ms (\(peak) at \(peakAt))")
-        check(abs(rhos[60] - rest) < 0.01, "the set must knit back within a second (\(rhos[60]))")
+        print(String(format: "Bloom build: pace %.3f halfway, %.3f at its end, %.3f 5 s after the drop", paces[240], paces[479], paces[780]))
+        check(paces[240] < 0.08 && paces[479] > 0.11, "a build must quicken the zoom, mostly in its last stretch (\(paces[240]), \(paces[479]))")
+        let cruise = rig(BloomSong.held(pitch: 0, tonality: 1, loudness: 0.5, seconds: 8)).pace
+        check(paces[780] - cruise < 0.25 * (paces[479] - cruise) && waves[481] > 0.5, "the drop must ease the zoom with a wave (\(paces[780]), wave \(waves[481]))")
+        check(incoming[482] && !incoming[482 + 300], "the drop must dissolve to the next shape over a few seconds")
+
+        // Comfort: away from builds nothing crosses the screen faster than a few
+        // percent of its height a second, even at the corners, and the zoom's centre only glides.
+        var fastest: Float = 0, fastestAnywhere: Float = 0, glide: Float = 0
+        var last = SIMD2<Float>.zero, tense = -1000
+        _ = rig(BloomSong.frames() + BloomLongSong.frames()) { rig, display in
+            let corner = 2.2 * (rig.pace + rig.surge) * settings.speed
+            fastestAnywhere = max(fastestAnywhere, corner)
+            if rig.tension > 0.3 { tense = display }
+            if display - tense > 240 { fastest = max(fastest, corner) }
+            if display > 0 { glide = max(glide, simd_distance(rig.focus, last) * 60) }
+            last = rig.focus
+        }
+        print(String(format: "Bloom comfort: corners move at most %.2f half-heights a second outside builds, %.2f in them; the centre at most %.3f",
+                     fastest, fastestAnywhere, glide))
+        check(fastest < 0.25 && fastestAnywhere < 0.45, "the zoom must stay gentle (\(fastest) outside builds, \(fastestAnywhere) in them)")
+        check(glide < 0.08, "the zoom's centre must only glide (\(glide) a second)")
+
+        // Kick: a small push on, none at Bass punch 0.
+        var kick = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
+        kick[45].layers.kick = 1
+        let pushed = rig(Array(kick.prefix(46))).surge
         var calm = settings
         calm.punch = 0
-        var calmRhos: [Float] = []
-        _ = rig(kick, configuration: calm) { rig, display in if display >= 180 { calmRhos.append(rig.rho) } }
-        check(calmRhos.max()! - calmRhos.min()! < 0.002, "Bass punch at 0 must leave the set whole")
+        let unpushed = rig(Array(kick.prefix(46)), configuration: calm).surge
+        check(pushed > 0.015 && pushed < 0.06 && unpushed == 0, "a kick must push the zoom on a little (\(pushed), \(unpushed) at punch 0)")
 
-        // Snare: a quick twist at its own point, away from the kick, that unwinds.
-        var snare = BloomSong.held(pitch: 0, tonality: 1, seconds: 4)
-        snare[30].layers.kick = 1
-        snare[45].layers.snare = 1
-        var twists: [Float] = []
-        var kickAt = SIMD2<Float>.zero, twistAt = SIMD2<Float>.zero
-        _ = rig(snare) { rig, display in
-            if display == 61 { kickAt = rig.latestKick.epicentre }
-            if display >= 90 { twists.append(rig.twist.position); twistAt = rig.twistCentre }
+        // Sections: harmony picks the next shape; the centre heads elsewhere.
+        for pitch in [3, 7, 11] {
+            let settled = rig(showing(pitch, seconds: 6))
+            check(settled.layer.index == pitch && settled.incoming == nil, "pitch class \(pitch) must play its shape after a section change (\(settled.layer.index))")
         }
-        let twistPeak = twists.prefix(30).map(abs).max()!, peakFrame = twists.firstIndex { abs($0) == twistPeak }!
-        print(String(format: "Bloom mapping: a snare twists %.2f rad after %d ms, %.3f 1.5 s on, %.2f from the kick",
-                     twistPeak, peakFrame * 1000 / 60, twists[90], simd_distance(kickAt, twistAt)))
-        check(abs(twistPeak - BloomRig.facet) < 0.08 && peakFrame < 20, "a snare must twist about a twelfth of a turn within 330 ms (\(twistPeak) at \(peakFrame))")
-        check(abs(twists[90]) < 0.02, "the twist must unwind within 1.5 s (\(twists[90]))")
-        check(simd_distance(kickAt, twistAt) > 0.4, "the snare must twist away from where the kick landed")
-
-        // Consecutive kicks land in different places.
-        var kicks4 = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
-        for i in [30, 45, 60, 75] { kicks4[i].layers.kick = 1 }
-        var epicentres: [SIMD2<Float>] = []
-        _ = rig(kicks4) { rig, display in
-            if [61, 91, 121, 151].contains(display) { epicentres.append(rig.latestKick.epicentre) }
+        check(rig(showing(0, seconds: 6).enumerated().map { var f = $1; if $0 == 30 { f.layers.drop = 1 }; return f }).layer.index != 0,
+              "a new section on the same chord must still bring a new shape")
+        let moved = simd_distance(focuses[479], focuses.last!)
+        check(moved > 0.15, "a new section must move the zoom's centre (\(moved))")
+        var changes: [Float] = []
+        var index = 0
+        _ = rig(BloomLongSong.frames()) { rig, display in
+            if rig.layer.index != index { changes.append(Float(display) / 60); index = rig.layer.index }
         }
-        let closest = zip(epicentres, epicentres.dropFirst()).map { simd_distance($0, $1) }.min()!
-        check(closest > 0.3, "consecutive kicks must land in different places (closest \(closest))")
-
-        // A drop moves the lens to another part of the edge; silence widens it.
-        var section = BloomSong.held(pitch: 0, tonality: 1, seconds: 14)
-        section[150].layers.drop = 1
-        var focuses: [SIMD2<Float>] = [], lensZooms: [Float] = []
-        _ = rig(section) { rig, _ in focuses.append(rig.lens.focus); lensZooms.append(rig.lens.zoom.position) }
-        let moved = simd_distance(focuses[299], focuses.last!), glide = zip(focuses, focuses.dropFirst()).map { simd_distance($0, $1) }.max()!
-        print(String(format: "Bloom mapping: the lens zooms to %.2f×, moves %.2f after a drop, at most %.4f a frame",
-                     lensZooms[299], moved, glide))
-        check(lensZooms[299] > 1.6, "while music plays the lens must frame the edge (\(lensZooms[299])×)")
-        check(moved > 0.2 && glide < 0.02, "a drop must glide the lens elsewhere, never jump (\(moved), \(glide) a frame)")
+        print("Bloom long song: new shapes in at " + changes.map { String(format: "%.1f s", $0) }.joined(separator: ", "))
+        check(changes.count >= 1 && changes.count <= 3, "the long song must change shape at its sections, not more (\(changes))")
 
         // Hat: a glint that's gone within 120 ms.
         var hat = BloomSong.held(pitch: 0, tonality: 1, seconds: 2)
@@ -389,52 +414,26 @@ extension BackgroundTests {
         _ = rig(hat) { rig, display in if display >= 60 { glints.append(rig.glint) } }
         check(glints[0] > 0.5 && glints[7] < 0.05, "a hat must glint and fade within 120 ms (\(glints[0]) → \(glints[7]))")
 
-        // Mids: a held vocal lights the heart; the drums alone don't.
+        // Mids: a held vocal lights the bulbs; the drums alone don't.
         var vocal = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
         for i in vocal.indices { vocal[i].layers.mid = 0.8 }
         let lit = rig(vocal).heart, unlit = rig(BloomSong.held(pitch: 0, tonality: 1, seconds: 3).map { var f = $0; f.layers.mid = 0; return f }).heart
-        check(lit > 0.4 && unlit < 0.05, "a vocal must light the heart (\(lit) vs \(unlit))")
-
-        // Build and drop: the dive deepens with the build, mostly at its end, and
-        // the drop releases it with one wave.
-        var build = BloomSong.held(pitch: 0, tonality: 1, seconds: 10)
-        for i in build.indices { build[i].layers.build = min(1, Float(i) / 240) }
-        for i in 240..<build.count { build[i].layers.build = 0 }
-        build[240].layers.drop = 1
-        var zooms: [Float] = [], waves: [Float] = []
-        _ = rig(build) { rig, _ in zooms.append(rig.zoom); waves.append(rig.wave.strength) }
-        check(zooms[240] < 1.4 && zooms[479] > 2.2, "a build must dive in, mostly in its last stretch (\(zooms[240]) halfway, \(zooms[479]) at the end)")
-        check(zooms[540] < 1.2 && waves[481] > 0.5, "the drop must release the dive with a wave (\(zooms[540]), wave \(waves[481]))")
+        check(lit > 0.4 && unlit < 0.05, "a vocal must light the bulbs (\(lit) vs \(unlit))")
     }
 
     // MARK: - Bloom renders
 
     /// Renders for looking at, when FLOE_BLOOM_RENDERS names a directory: the
     /// twelve pitch-class shapes, the scripted song frame by frame at 30 fps
-    /// with a contact sheet of every tenth frame, and the GPU cost.
+    /// with a contact sheet of every tenth frame, and the long song.
     static func bloomRenders(device: MTLDevice) {
         guard let directory = bloomOutput else { return }
-        do {
-            // One kick, frame by frame: the pull in, the shatter, the knit back.
-            guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
-            var held = BloomSong.held(pitch: 7, tonality: 1, seconds: 3)
-            held[45].layers.kick = 1
-            var animator = BackgroundAnimator()
-            animator.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
-            var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-            playBloom(&animator, held, renderer: renderer) { animator, frame, i in
-                guard (44...67).contains(i) else { return }
-                cells.append((frame, String(format: "%+d ms  ρ %.3f", (i - 45) * 33, animator.bloom.rho),
-                              i == 45 ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : nil))
-            }
-            strip(cells, to: directory.appendingPathComponent("kick.png"), columns: 6, scale: 0.4)
-        }
         let song = directory.appendingPathComponent("song")
         try? FileManager.default.createDirectory(at: song, withIntermediateDirectories: true)
         let colors = Covers.palette(Covers.sunset)
         let settings = BackgroundConfiguration(kind: .bloom, colors: colors)
 
-        // The twelve shapes, each held with clear harmony until it settles.
+        // The twelve shapes, each settled in with clear harmony.
         guard let small = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
         let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
         var shapes: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
@@ -442,20 +441,39 @@ extension BackgroundTests {
             var animator = BackgroundAnimator()
             animator.configure(settings, animated: false)
             var last: RenderedFrame?
-            playBloom(&animator, BloomSong.held(pitch: Float(pitch), tonality: 1, seconds: 4), renderer: small) { _, frame, _ in last = frame }
-            let shape = BloomRig.shapes[pitch]
-            shapes.append((last!, String(format: "%@  θ %.2f  ρ %.3f", name, shape.theta, shape.radius), nil))
+            playBloom(&animator, showing(pitch, seconds: 6), renderer: small) { _, frame, _ in last = frame }
+            let (p, q) = BloomRig.shapes[pitch]
+            shapes.append((last!, "\(name)  \(p)/\(q)", nil))
         }
         strip(shapes, to: directory.appendingPathComponent("shapes.png"), columns: 4, scale: 0.5)
 
-        // Each kind of cover at the same moments: a held chord, the vocal swell, a shatter.
+        // One repeat of the zoom, in eight steps: the last frame leads back into the first.
+        var zoom: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var animator = BackgroundAnimator()
+        animator.configure(settings, animated: false)
+        let loud = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 1)[0]
+        for _ in 0..<60 { animator.advance(by: 1 / 30, frame: loud) }
+        for _ in 0..<8 {
+            zoom.append((small.render(animator), String(format: "phase %.3f", animator.bloom.layer.phase), nil))
+            let start = animator.bloom.layer.phase
+            var progress: Float = 0
+            while progress < 0.125 {
+                animator.advance(by: 1 / 60, frame: loud)
+                progress = animator.bloom.layer.phase - start
+                progress -= progress.rounded(.down)
+                if progress > 0.9 { progress = 0 }
+            }
+        }
+        strip(zoom, to: directory.appendingPathComponent("zoom.png"), columns: 4, scale: 0.5)
+
+        // Each kind of cover at the same moments: before the beat, the vocal swell, just after the drop.
         var palettes: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         for (name, cover) in [("sunset", Covers.palette(Covers.sunset)), ("ocean", Covers.palette(Covers.ocean)),
                               ("navy", Covers.palette(Covers.navy)), ("neutral", neutral)] {
             var animator = BackgroundAnimator()
             animator.configure(BackgroundConfiguration(kind: .bloom, colors: cover, neutral: name == "neutral"), animated: false)
-            playBloom(&animator, BloomSong.frames().prefix(200).map { $0 }, renderer: small) { _, frame, i in
-                if [55, 172, 182].contains(i) { palettes.append((frame, "\(name), \(String(format: "%.1f s", Float(i) / 30))", nil)) }
+            playBloom(&animator, BloomSong.frames().prefix(300).map { $0 }, renderer: small) { _, frame, i in
+                if [55, 172, 295].contains(i) { palettes.append((frame, "\(name), \(String(format: "%.1f s", Float(i) / 30))", nil)) }
             }
         }
         strip(palettes, to: directory.appendingPathComponent("palettes.png"), columns: 3, scale: 0.5)
@@ -478,11 +496,11 @@ extension BackgroundTests {
 
         // The song, at 960×600, every frame.
         guard let renderer = try? OffscreenRenderer(device: device, width: 960, height: 600) else { return }
-        var animator = BackgroundAnimator()
-        animator.configure(settings, animated: false)
+        var player = BackgroundAnimator()
+        player.configure(settings, animated: false)
         var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         let frames = BloomSong.frames()
-        playBloom(&animator, frames, renderer: renderer) { _, frame, i in
+        playBloom(&player, frames, renderer: renderer) { _, frame, i in
             save(frame.composited(), to: song.appendingPathComponent(String(format: "frame-%03d.png", i)))
             guard i % 10 == 0 else { return }
             let m = BloomSong.moment(at: Float(i) / 30, frame: i)
@@ -492,60 +510,64 @@ extension BackgroundTests {
             sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
         }
         strip(sheet, to: directory.appendingPathComponent("song-sheet.png"), columns: 6, scale: 0.3)
-
-        // The same song as today's analyzer hears it: no harmony, brightness, build or drop.
-        var today = BackgroundAnimator()
-        today.configure(settings, animated: false)
-        var todaySheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        let plain = frames.map { frame -> SpectrumFrame in
-            var frame = frame
-            (frame.layers.pitchClass, frame.layers.tonality, frame.layers.brightness) = (0, 0, 0)
-            (frame.layers.build, frame.layers.drop) = (0, 0)
-            return frame
-        }
-        playBloom(&today, plain, renderer: renderer) { _, frame, i in
-            guard i % 10 == 0 else { return }
-            let m = BloomSong.moment(at: Float(i) / 30, frame: i)
-            todaySheet.append((frame, String(format: "%.1f s%@", Float(i) / 30, m.vocal > 0.1 ? " vocal" : ""),
-                               m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
-        }
-        strip(todaySheet, to: directory.appendingPathComponent("song-today-sheet.png"), columns: 6, scale: 0.3)
-        print("Bloom renders: \(directory.path)/shapes.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
+        print("Bloom renders: \(directory.path)/shapes.png, zoom.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
         bloomHeartRenders(device: device, directory: directory)
         bloomLongSongRenders(device: device, directory: directory)
     }
 
-    /// The last frame of a chord held for `seconds` with the mids at `mid`, and which of its pixels lie in the heart.
-    static func heldHeart(pitch: Float, mid: Float, seconds: Float, renderer: OffscreenRenderer,
+    /// The last frame of a shape held for `seconds` with the mids at `mid`, and which of its pixels lie in the bulbs.
+    static func heldHeart(pitch: Int, mid: Float, seconds: Float, renderer: OffscreenRenderer,
                           settings: BackgroundConfiguration) -> (frame: RenderedFrame, heart: [Bool]) {
         var animator = BackgroundAnimator()
         animator.configure(settings, animated: false)
         var last: RenderedFrame?
-        playBloom(&animator, BloomSong.held(pitch: pitch, tonality: 1, mid: mid, seconds: seconds), renderer: renderer) { _, frame, _ in last = frame }
+        playBloom(&animator, showing(pitch, mid: mid, seconds: seconds), renderer: renderer) { _, frame, _ in last = frame }
         let (width, height) = (last!.width, last!.height)
         return (last!, heartPixels(animator.bloomUniforms(width: Float(width), height: Float(height)), width: width, height: height))
     }
 
-    /// Which pixels of a frame lie in the set's heart (orbits that settle onto
-    /// the attracting fixed point), from the uniforms the frame was drawn with,
-    /// iterated on the CPU the way the shader does.
+    /// Which pixels of a frame lie in the bulbs (orbits that settle onto the
+    /// attracting cycle), from the uniforms the frame was drawn with, iterated
+    /// on the CPU the way the shader does.
     static func heartPixels(_ u: BloomUniforms, width: Int, height: Int) -> [Bool] {
+        func times(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> SIMD2<Float> { SIMD2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x) }
+        let s = u.shapes.0
         let aspect = Float(width) / Float(height)
-        let c = SIMD2(u.c.x, u.c.y), axis = SIMD2(u.c.z, u.c.w), center = SIMD2(u.view.x, u.view.y)
-        let alpha = 0.5 * expf(u.flags.z) * SIMD2(cosf(u.flags.w), sinf(u.flags.w))
-        let n = Int(u.view.z)
+        let lambda = SIMD2(s.counts.x, s.counts.y)
+        let c = SIMD2(s.fixed.x, s.fixed.y), alpha = SIMD2(s.fixed.z, s.fixed.w), cycle = SIMD2(s.cycle.x, s.cycle.y)
+        let terms = [s.series.0, s.series.1, s.series.2, s.series.3].flatMap { [SIMD2($0.x, $0.y), SIMD2($0.z, $0.w)] }
+        let focus = SIMD2(u.size.z, u.size.w)
+        let n = Int(u.view.x)
         var mask = [Bool](repeating: false, count: width * height)
         for y in 0..<height {
             for x in 0..<width {
+                // As in the shader: the series near α, then out to the set by steps of z ← z² + c.
                 let v = SIMD2((2 * (Float(x) + 0.5) / Float(width) - 1) * aspect, 1 - 2 * (Float(y) + 0.5) / Float(height))
-                var z = center + SIMD2(axis.x * v.x - axis.y * v.y, axis.x * v.y + axis.y * v.x)
-                var dz = SIMD2<Float>(1, 0)
+                let w = s.zoom.x * (v - focus)
+                let placing = min(160, max(0, Int(((logf(max(simd_length(w), 1e-15)) - s.zoom.w) / s.zoom.y).rounded(.up))))
+                let turn = -Float(placing) * s.zoom.z
+                let inward = expf(-Float(placing) * s.zoom.y) * SIMD2(cosf(turn), sinf(turn))
+                let point = times(w, inward)
+                var sum = terms[7], slope = SIMD2<Float>.zero
+                for k in stride(from: 6, through: 0, by: -1) {
+                    slope = times(slope, point) + sum
+                    sum = times(sum, point) + terms[k]
+                }
+                var d = times(point, sum), dz = s.zoom.x * times(sum + times(point, slope), inward)
+                var far = false
+                for _ in 0..<placing {
+                    dz = times(dz, lambda + 2 * d)
+                    d = times(d, lambda + d)
+                    if simd_length_squared(d) > 1024 { far = true; break }
+                }
+                if far { continue }
+                var z = alpha + d
                 var state = 0
                 for _ in 0..<n {
-                    dz = 2 * SIMD2(z.x * dz.x - z.y * dz.y, z.x * dz.y + z.y * dz.x)
-                    z = SIMD2(z.x * z.x - z.y * z.y, 2 * z.x * z.y) + c
+                    dz = 2 * times(z, dz)
+                    z = times(z, z) + c
                     if simd_length_squared(z) > 1024 { state = 1; break }
-                    if simd_distance_squared(z, alpha) < 0.0036 { state = 2; break }
+                    if simd_distance_squared(z, cycle) < s.cycle.w { state = 2; break }
                 }
                 // As in the shader: an orbit still going that has stopped stretching is settling slowly.
                 mask[y * width + x] = state == 2 || state == 0 && simd_length_squared(dz) < 1e6
@@ -554,10 +576,10 @@ extension BackgroundTests {
         return mask
     }
 
-    /// Fine structure inside the heart: the mean absolute difference (0…1) between
-    /// each heart pixel's luma and its 9×9 neighbourhood's mean, over pixels at
-    /// least six pixels deep in the heart. Soft pools and gradients score near
-    /// the dither's floor; contour lines score well above it.
+    /// Fine structure inside the bulbs: the mean absolute difference (0…1)
+    /// between each bulb pixel's luma and its 9×9 neighbourhood's mean, over
+    /// pixels at least six pixels deep in a bulb. Soft pools and gradients score
+    /// near the dither's floor; contour lines score well above it.
     static func heartLines(_ frame: RenderedFrame, heart: [Bool]) -> (lines: Float, share: Float) {
         let w = frame.width, h = frame.height
         var deep = [Bool](repeating: false, count: w * h)
@@ -582,28 +604,18 @@ extension BackgroundTests {
         return (count > 0 ? sum / Float(count) : 0, Float(count) / Float(w * h))
     }
 
-    /// Big-heart shapes (ρ 0.975 and 0.96) held with and without a vocal, each
-    /// cropped at 100% to where the heart fills most of the frame.
+    /// Three shapes' bulbs with and without a vocal, at 100%.
     static func bloomHeartRenders(device: MTLDevice, directory: URL) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 1280, height: 800) else { return }
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
         var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        for (pitch, name) in [(0, "C ρ 0.975"), (1, "C♯ ρ 0.960")] {
+        for pitch in [0, 3, 9] {
             for mid: Float in [0, 0.8] {
-                let (frame, heart) = heldHeart(pitch: Float(pitch), mid: mid, seconds: 4, renderer: renderer, settings: settings)
-                var best = (x: 0, y: 0, count: -1)
-                for y in stride(from: 0, through: 400, by: 40) {
-                    for x in stride(from: 0, through: 640, by: 40) {
-                        var count = 0
-                        for row in stride(from: y, to: y + 400, by: 4) { for column in stride(from: x, to: x + 640, by: 4) where heart[row * 1280 + column] { count += 1 } }
-                        if count > best.count { best = (x, y, count) }
-                    }
-                }
+                let (frame, heart) = heldHeart(pitch: pitch, mid: mid, seconds: 6, renderer: renderer, settings: settings)
                 let (lines, share) = heartLines(frame, heart: heart)
-                print(String(format: "Bloom heart, %@, %@: fine structure %.4f over %.0f%% of the frame",
-                             name, mid > 0 ? "vocal" : "no vocal", lines, share * 100))
-                cells.append((frame.crop(x: best.x, y: best.y, width: 640, height: 400),
-                              String(format: "%@, %@, lines %.4f", name, mid > 0 ? "vocal" : "no vocal", lines), nil))
+                let (p, q) = BloomRig.shapes[pitch]
+                cells.append((frame.crop(x: 320, y: 200, width: 640, height: 400),
+                              String(format: "%d/%d, %@, lines %.4f over %.0f%%", p, q, mid > 0 ? "vocal" : "no vocal", lines, share * 100), nil))
             }
         }
         strip(cells, to: directory.appendingPathComponent("heart.png"), columns: 2, scale: 1)
@@ -627,24 +639,24 @@ extension BackgroundTests {
     }
 
     /// GPU time per Bloom frame at the sizes the app draws, in its costliest
-    /// state (deep in a build, full detail, the heart lit).
+    /// states (mid-dissolve, so two shapes, at full detail; and a seven-arm shape held).
     static func bloomPerformance(device: MTLDevice) {
-        var animator = BackgroundAnimator()
-        animator.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
-        for frame in BloomSong.frames().prefix(Int(BloomSong.dropTime * 30) - 3) { animator.advance(by: 1 / 30, frame: frame) }
+        var dissolving = BackgroundAnimator()
+        dissolving.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
+        for frame in BloomSong.frames() + Array(BloomSong.held(pitch: 10, tonality: 1, seconds: 1)) { dissolving.advance(by: 1 / 30, frame: frame) }
         var resting = BackgroundAnimator()
         resting.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
-        for frame in BloomSong.held(pitch: 9, tonality: 1, seconds: 3) { resting.advance(by: 1 / 30, frame: frame) }
+        for frame in showing(10, seconds: 6) { resting.advance(by: 1 / 30, frame: frame) }
         let windows: [(String, CGSize)] = [("1200x750 pt window", CGSize(width: 1200, height: 750)),
                                            ("1440x900 pt window", CGSize(width: 1440, height: 900)),
                                            ("1728x1117 pt full screen", CGSize(width: 1728, height: 1117))]
         for (name, points) in windows {
             let size = BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .bloom)
             guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
-            let deep = renderer.gpuMilliseconds(animator)
+            let both = renderer.gpuMilliseconds(dissolving)
             let rest = renderer.gpuMilliseconds(resting)
-            print(String(format: "GPU per frame, %@, Bloom (%dx%d): %.2f ms deep in a build, %.2f ms held on a chord, %.1f%% of the GPU at 60 Hz",
-                         name, Int(size.width), Int(size.height), deep, rest, max(deep, rest) * 6))
+            print(String(format: "GPU per frame, %@, Bloom (%dx%d): %.2f ms dissolving (%@), %.2f ms on a seven-arm shape, %.1f%% of the GPU at 60 Hz",
+                         name, Int(size.width), Int(size.height), both, dissolving.bloom.incoming == nil ? "not" : "yes", rest, max(both, rest) * 6))
         }
     }
 

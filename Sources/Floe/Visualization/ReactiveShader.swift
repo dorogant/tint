@@ -250,27 +250,27 @@ enum ReactiveShader {
     }
     """#
 
-    /// A Julia set drawn by its distance estimate: the outline glows as thin
-    /// filaments with a soft halo in the water around them. Inside, light pools
-    /// toward the centre of every bulb, measured by the set's own conformal
-    /// coordinate (Koenigs'), and the heart's light (the mids) fills it; outside,
-    /// the escape time draws faint equipotential ripples. Orbits passing the hat
-    /// constellation glint. Each frame is kept, fading, in a second target, so
-    /// dust a kick scatters leaves trails.
+    /// An endless zoom into a Julia set toward α, the junction where its arms
+    /// meet, drawn by its distance estimate: the outline glows as thin filaments
+    /// with a soft halo around them, and light pools in the bulbs between the
+    /// arms, brightest at their centres. Orbits passing the hat constellation
+    /// glint. Near α the set repeats itself every ρ^q times closer, so the zoom
+    /// only ever draws one repeat: each pixel's point on that repeat is carried
+    /// out to the set by the steps of z ← z² + c themselves, which keeps every
+    /// level of the zoom as sharp as the first.
     private static let bloom = #"""
-    // c: c, then the plane per screen half-height (a complex scale and turn). view: centre, iterations, filament width (px).
-    // size: width, height, trail fade, trail drift. light: glow, heart (mids), glint (hats), beat.
-    // traps: constellation turn (cos, sin), radius, palette walk. wave: drop ring radius, strength, level, spare.
-    // flags: no trails yet, detail (highs), log of the fixed point's multiplier |λ|, its turn θ.
-    // previous: the trails' centre and span, as drawn last frame.
-    // Screen units below: y runs −1…1 and x the same times the aspect ratio, as `v` does.
-    // kicks: per kick, its epicentre, reach and shatter. twist: the snare's point, angle and reach.
-    // places: where the drop's wave sets out, where the vocals' light pools.
+    // view: iterations, filament width (px), how far the incoming shape has dissolved in, spare.
+    // size: width, height, where the zoom heads (screen units: y runs −1…1, x the same times the aspect ratio).
+    // light: glow, heart (mids), glint (hats, snares), beat. traps: constellation turn (cos, sin), radius, palette walk.
+    // wave: drop ring radius, strength, level, spare.
+    // Per shape. zoom: the zoom's linear coordinate per screen unit, log ρ, λ's angle, the log of the series' reach.
+    // fixed: c, then α. cycle: a point of the attracting cycle, the log of its contraction per pass, the settling
+    // radius squared. counts: λ, q, how far into the current repeat the zoom is. straightening: b (complex), spare.
+    // series: eight complex coefficients.
+    struct BloomShape { float4 zoom; float4 fixed; float4 cycle; float4 counts; float4 straightening; float4 series[4]; };
     struct BloomUniforms {
-        float4 colors[5]; float4 c; float4 view; float4 size; float4 light; float4 traps; float4 wave; float4 flags;
-        float4 previous; float4 kicks[3]; float4 twist; float4 places;
+        float4 colors[5]; float4 view; float4 size; float4 light; float4 traps; float4 wave; BloomShape shapes[2];
     };
-    struct BloomOutput { float4 color [[color(0)]]; float4 trails [[color(1)]]; };
     static float2 complexMultiply(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
     /// The palette as a loop, eased from colour to colour.
     static float3 paletteLoop(constant float4 *colors, float t) {
@@ -286,156 +286,111 @@ enum ReactiveShader {
         float3 c = paletteLoop(colors, t);
         return c / max(max(c.r, max(c.g, c.b)), 0.08f);
     }
-    /// Anti-aliased lines at the integers of `x`, faded out where they crowd
-    /// closer than a few pixels. Works across a wrap of `x` by a whole number.
-    static float contour(float x, float sharpness) {
-        float width = min(fwidth(x), fwidth(fract(x + 0.5)));
-        float across = abs(fract(x + 0.5) - 0.5);
-        float line = 1 - smoothstep(0.0, 1.2 * width + 0.02 / sharpness, across);
-        return line * (1 - smoothstep(0.08, 0.3, width));
-    }
-    fragment BloomOutput floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
-                                           texture2d<float> trails [[texture(0)]]) {
-        float aspect = u.size.x / max(u.size.y, 1.0f);
-        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
-        float2 axis = u.c.zw;
-        // The snare turns the plane round its own point, less the further from it.
-        float2 fromTwist = v - u.twist.xy;
-        float twistAngle = u.twist.z * exp(-dot(fromTwist, fromTwist) / (u.twist.w * u.twist.w));
-        float2 twisted = u.twist.xy + complexMultiply(fromTwist, float2(cos(twistAngle), sin(twistAngle)));
-        float2 z = u.view.xy + complexMultiply(axis, twisted);
-        float2 point = z;
-        // The cover's colours lie round the set, so each side of it takes its own.
-        float around = atan2(z.y, z.x) * 0.15915494;
-        float pixel = 2 * length(axis) / max(u.size.y, 1.0f);
-        // Each kick throws the shape out past the edge around its epicentre, fading
-        // with distance, so a patch of the set shatters while the rest holds.
-        float shatter = 0, kicked = 0;
-        for (int k = 0; k < 3; k++) {
-            float2 d = v - u.kicks[k].xy;
-            float weight = exp(-dot(d, d) / (u.kicks[k].z * u.kicks[k].z));
-            shatter += u.kicks[k].w * weight;
-            kicked = max(kicked, weight * min(1.0f, abs(u.kicks[k].w) * 30));
+    /// One shape's light at screen point `v`.
+    static float3 bloomShape(constant BloomUniforms& u, constant BloomShape& s, float2 v) {
+        float2 from = v - u.size.zw;
+        // The zoom's linear coordinate w, carried onto the set: brought in by
+        // whole steps of λ to where the series holds, then back out by as many
+        // steps of z ← z² + c (measured from α, δ ← δ(λ + δ), exact however small δ is).
+        float2 w = s.zoom.x * from;
+        int placing = clamp(int(ceil((0.5 * log(max(dot(w, w), 1e-30f)) - s.zoom.w) / s.zoom.y)), 0, 160);
+        float turn = -float(placing) * s.zoom.z;
+        float2 inward = exp(-float(placing) * s.zoom.y) * float2(cos(turn), sin(turn));
+        float2 start = complexMultiply(w, inward);
+        float2 sum = s.series[3].zw, slope = 0;
+        for (int k = 6; k >= 0; k--) {
+            float4 pair = s.series[k / 2];
+            slope = complexMultiply(slope, start) + sum;
+            sum = complexMultiply(sum, start) + ((k & 1) ? pair.zw : pair.xy);
         }
-        float logRho = log(max(0.5f, exp(u.flags.z) + shatter)), theta = u.flags.w;
-        float2 lambdaHere = exp(logRho) * float2(cos(theta), sin(theta));
-        float2 c = 0.5 * lambdaHere - 0.25 * complexMultiply(lambdaHere, lambdaHere);
-        float2 fixed = 0.5 * lambdaHere; // α, whose multiplier is λ = 2α
-        // Inside the cardioid every orbit in the heart settles onto α: stop once it's close.
-        float settle = logRho < -0.004 ? 0.0036 : -1.0;
-        float2 dz = float2(1, 0);
-        float r2 = dot(z, z);
+        float2 d = complexMultiply(start, sum);
+        float2 dd = s.zoom.x * complexMultiply(sum + complexMultiply(start, slope), inward);
+        // 0: still going (on the set's edge), 1: escaped, 2: settled in a bulb. An
+        // orbit can escape while being placed: its count runs on from before the start.
+        float2 lambda = s.counts.xy;
+        int state = 0, i = 0;
+        for (int k = 0; k < placing; k++) {
+            dd = complexMultiply(dd, lambda + 2 * d);
+            d = complexMultiply(d, lambda + d);
+            if (dot(d, d) > 1024) { state = 1; i = k - placing; break; }
+        }
+        float2 c = s.fixed.xy, z = s.fixed.zw + d, dz = dd;
         // Hats: three trap points turning round the origin.
         float2 t0 = u.traps.xy * u.traps.z;
         float2 t1 = complexMultiply(t0, float2(-0.5, 0.8660254));
         float2 t2 = complexMultiply(t0, float2(-0.5, -0.8660254));
-        float trap = 1e4;
-        int n = int(u.view.z);
-        int i = 0;
-        int state = 0; // 0: still going (on the set's edge, or dust), 1: escaped, 2: settled in the heart
-        for (; i < n; i++) {
-            dz = 2 * complexMultiply(z, dz);
-            z = float2(z.x * z.x - z.y * z.y, 2 * z.x * z.y) + c;
-            r2 = dot(z, z);
-            if (r2 > 1024) { state = 1; break; }
-            if (distance_squared(z, fixed) < settle) { state = 2; break; }
-            trap = min(trap, min(distance_squared(z, t0), min(distance_squared(z, t1), distance_squared(z, t2))));
+        float trap = 1e4, r2 = dot(z, z), near = 0;
+        int n = int(u.view.x);
+        if (state == 0) {
+            for (; i < n; i++) {
+                dz = 2 * complexMultiply(z, dz);
+                z = float2(z.x * z.x - z.y * z.y, 2 * z.x * z.y) + c;
+                r2 = dot(z, z);
+                if (r2 > 1024) { state = 1; break; }
+                float2 e = z - s.cycle.xy;
+                if (dot(e, e) < s.cycle.w) {
+                    e += complexMultiply(s.straightening.xy, complexMultiply(e, e));
+                    near = dot(e, e);
+                    state = 2;
+                    break;
+                }
+                trap = min(trap, min(distance_squared(z, t0), min(distance_squared(z, t1), distance_squared(z, t2))));
+            }
         }
-        float steps = float(i + 1);
-        float glow = u.light.x;
-        float hue = u.traps.w;
-
-        // Outside: distance to the set in pixels, and the smooth escape time. An
-        // orbit still going hasn't escaped to measure from; how hard it is still
-        // stretching stands in, so only points right on the edge (or dust) light up.
+        float steps = float(i + 1), q = s.counts.z, phase = s.counts.w;
+        // Distance to the set in pixels (dz is per screen unit). An orbit still
+        // going hasn't escaped to measure from; how hard it is still stretching
+        // stands in, so only points right on the edge light up.
+        float pixel = 2 / max(u.size.y, 1.0f);
         float lr = 0.5 * log(max(r2, 1.0001f));
         float stretch = rsqrt(max(dot(dz, dz), 1e-30f));
         float px = (state == 1 ? sqrt(r2) * lr * stretch : stretch) / pixel;
-        float mu = steps - log2(max(lr, 1e-4f));
-        // Inside: Koenigs' coordinate φ = (z − α) / λⁿ, as log-radius and turns. Its
-        // second-order term, w + w²/(λ(1 − λ)), keeps the lace seamless where
-        // neighbouring orbits settled a step apart.
-        float2 w = z - fixed;
-        float2 lambda = 2 * fixed;
-        float2 bend = complexMultiply(lambda, float2(1, 0) - lambda);
-        w += complexMultiply(float2(bend.x, -bend.y) / max(dot(bend, bend), 1e-6f), complexMultiply(w, w));
-        float ring = 0.5 * log(max(dot(w, w), 1e-12f)) - steps * logRho;
-        float ripples = contour(mu * 0.5, 1);
-
-        // Only an orbit that has come close to α has a true φ to light the centres
-        // with; one still settling slowly fades in as it nears.
-        float settled = state == 2 ? 1.0 : smoothstep(0.15, 0.06, length(z - fixed));
-        // An orbit still going that has stopped stretching is in the heart, just
-        // settling slowly (near the cardioid's edge); one still stretching is on the edge.
-        if (state == 0 && dot(dz, dz) < 1e6) state = 2;
-        float3 light = 0;
-        // Only the filaments themselves leave trails: halos and the heart would smear into mud.
-        float3 ink = 0;
-        // The vocals light the bulbs under their own wandering point most.
-        float2 fromVoice = v - u.places.zw;
-        float heart = u.light.y * (0.2 + 0.8 * exp(-dot(fromVoice, fromVoice) / 0.64));
+        // The smooth escape time, less what the zoom has added this repeat, so it
+        // runs on unbroken from one repeat into the next (each adds q steps).
+        float mu = steps - log2(max(lr, 1e-4f)) - q * phase;
+        // An orbit still going that has stopped stretching is in a bulb, settling slowly.
+        if (state == 0 && dot(dz, dz) < 1e6) { state = 2; near = s.cycle.w; }
+        // The cover's colours lie round the zoom's centre, so each side of it takes its own.
+        float around = atan2(from.y, from.x) * 0.15915494;
+        float glow = u.light.x, heart = u.light.y, hue = u.traps.w;
+        float3 light;
         if (state != 2) {
             float3 tint = lightTint(u.colors, hue + around + 0.02 * mu);
-            float width = u.view.w;
+            float width = u.view.y;
             float core = exp(-0.5 * px * px / (width * width));
-            float halo = exp(-px / (4 + 6 * glow)) * 0.45 * glow + 0.07 * glow / (1 + 0.025 * px);
-            float field = state == 1 ? ripples * 0.07 * exp(-0.008 * px) : 0.0;
-            // Shattered, the outline is spread over a cloud of dust: each grain
-            // gets less of its light, so a kick changes the shape, not the brightness.
-            // Just past the edge the heart turns to a fine fur of dust that takes
-            // ages to escape: it stays dim, so the outline still reads.
-            float spread = 1 / (1 + 60 * max(0.0f, logRho)) / (1 + max(0.0f, mu - 30) / 12);
-            ink = (tint * 1.2 + 0.45) * core * spread;
-            light = ink + tint * halo * spread * spread + lightTint(u.colors, hue + around + 0.5) * field;
+            float halo = (exp(-px / (4 + 6 * glow)) * 0.45 + 0.04 / (1 + 0.025 * px)) * sqrt(glow);
+            light = (tint * 1.2 + 0.45) * core + tint * halo;
         } else {
-            // The heart: light pools softly toward the centre of every bulb, where φ
-            // is small, and thins out toward its rim. It's a smooth function of |φ|
-            // alone, so it draws no lines.
-            // The hue deepens away from each centre, held still right at it, where log |φ| runs off.
-            float3 tint = lightTint(u.colors, hue + 0.45 + 0.04 * max(ring, -3.0f));
-            // φ's scale shrinks as α weakens toward the cardioid's edge; the pools shrink with it.
-            float reach = 0.002 + 20 * logRho * logRho;
-            float q = exp(2 * ring) / (4 * reach);
-            float pool = (0.6 * exp(-q) + 0.4 / (1 + q)) * settled;
-            light = tint * (0.008 + 0.03 * heart + pool * (0.06 + 0.5 * heart));
+            // How long the orbit took to settle, in passes round the cycle, smooth
+            // across the step it settled on: small at a bulb's centre, growing
+            // toward its rim, and less what the zoom has added this repeat. The
+            // light falls off with it alone, so it draws no lines.
+            float settle = (steps - 1) / q - 0.5 * log(s.cycle.w / max(near, 1e-12f)) / s.cycle.z - phase;
+            float pool = exp(-0.6 * max(settle, 0.0f));
+            float3 tint = lightTint(u.colors, hue + 0.45 + around);
+            light = tint * (0.006 + 0.01 * heart + pool * (0.03 + 0.16 * heart));
         }
-        // Hats glint out in the filaments, and give way where a kick is landing.
-        float glintHere = (state != 2 ? 1.0 : 0.3) * (1 - 0.8 * kicked);
-        light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9 * glintHere;
-        // The drop's single wave runs out from the lens's edge point, lighting the filaments it passes.
-        float wave = exp(-pow((length(v - u.places.xy) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
+        light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9 * (state != 2 ? 1.0 : 0.3);
+        return light;
+    }
+    fragment float4 floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]]) {
+        float aspect = u.size.x / max(u.size.y, 1.0f);
+        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
+        float3 light = bloomShape(u, u.shapes[0], v);
+        // A new shape dissolves in over the old: both zoom on together meanwhile.
+        if (u.view.z > 0) light = mix(light, bloomShape(u, u.shapes[1], v), smoothstep(0.0, 1.0, u.view.z));
+        // The drop's single wave runs out from the zoom's centre, lighting the filaments it passes.
+        float wave = exp(-pow((length(v - u.size.zw) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
         float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 3 * wave);
         light *= level;
-        light += lightTint(u.colors, hue + around) * wave * 0.05;
-        ink *= level;
-
-        // Trails: last frame, faded and drifting outward a little, under this one.
-        // They're read where this point of the plane was drawn last frame, so they
-        // stay on the set as the view turns and zooms: only the set's own changes smear.
-        float3 kept = 0;
-        if (u.flags.x < 0.5) {
-            constexpr sampler filtered(filter::linear, address::clamp_to_edge);
-            float2 span = u.previous.zw;
-            float2 was = complexMultiply(point - u.previous.xy, float2(span.x, -span.y)) / max(dot(span, span), 1e-12f);
-            float2 st = float2(was.x / aspect * 0.5 + 0.5, 0.5 - was.y * 0.5); // textures run top-down
-            st = 0.5 + (st - 0.5) * (1 - u.size.w);
-            // Off the kept frame's edge (as the view zooms out) there's nothing to keep.
-            bool inside = all(st >= 0.0) && all(st <= 1.0);
-            kept = inside ? trails.sample(filtered, st).rgb * u.size.z : 0.0;
-        }
-        float3 total = max(ink, kept);
-        // Trails are kept at full strength but shown softer than the live outline.
-        float3 shown = max(light, kept * 0.45);
+        light += lightTint(u.colors, u.traps.w + atan2(v.y - u.size.w, v.x - u.size.z) * 0.15915494) * wave * 0.05;
 
         float3 average = (u.colors[0].rgb + u.colors[1].rgb + u.colors[2].rgb + u.colors[3].rgb + u.colors[4].rgb) * 0.2;
-        float3 color = float3(0.008, 0.009, 0.013) + average * 0.02 + shown;
+        float3 color = float3(0.008, 0.009, 0.013) + average * 0.02 + light;
         color = 1 - exp(-color * 1.2); // highlights roll off instead of clipping
         color = limitLuma(color, 0.38, 0.6);
         float alpha = 0.92;
-        BloomOutput out;
-        out.color = float4(color * alpha + dither(in.position.xy), alpha); // premultiplied, over the cover backdrop
-        out.trails = float4(total, 1);
-        return out;
+        return float4(color * alpha + dither(in.position.xy), alpha); // premultiplied, over the cover backdrop
     }
     """#
 }

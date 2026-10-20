@@ -13,6 +13,7 @@ struct FloeApp: App {
     @ViewState private var visualization: VisualizationModel
     @ViewState private var visuals: VisualSettings
     @ViewState private var autoPreset: AutoPresetController
+    @ViewState private var presence = WindowPresence()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -43,7 +44,8 @@ struct FloeApp: App {
     private var autoPresetActive: Bool { visuals.autoPreset && visuals.liveBackground }
 
     private var needsAnalysis: Bool {
-        player.isPlaying && (scenePhase == .active || SelfTest.isEnabled) && !reduceMotion && !systemReduceMotion
+        player.isPlaying && ((scenePhase == .active && presence.isVisible) || SelfTest.isEnabled)
+            && !reduceMotion && !systemReduceMotion
             && (visuals.liveBackground || (visuals.showVisualizer && navigator.surface == .nowPlaying))
     }
 

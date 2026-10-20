@@ -190,9 +190,39 @@ extension WebAPI {
         try await send("DELETE", "me/library", ["uris": uris.joined(separator: ",")])
     }
 
-    /// Follows `next` links until done or `max` items.
+    /// Every page, or pages until `max` items. The first page's `total` says
+    /// which offsets remain, so those are asked for together (a few at a time):
+    /// 300 playlists cost two round trips instead of six.
     private func all<T: Decodable & Sendable>(_ path: String, _ query: [String: String], max: Int = .max) async throws -> [T] {
-        var page: Paging<T> = try await get(path, query)
+        let first: Paging<T> = try await get(path, query)
+        guard first.next != nil, first.items.count < max else { return first.items }
+        guard let limit = query["limit"].flatMap(Int.init), limit > 0, let total = first.total else {
+            return try await following(first, max: max)
+        }
+        var offsets = stride(from: limit, to: Swift.min(total, max), by: limit).makeIterator()
+        var pages: [Int: [T]] = [:]
+        try await withThrowingTaskGroup(of: (Int, [T]).self) { group in
+            func ask(_ offset: Int) {
+                group.addTask {
+                    let page: Paging<T> = try await self.get(path, query.merging(["offset": "\(offset)"]) { $1 })
+                    return (offset, page.items)
+                }
+            }
+            for _ in 0..<Self.pagesAtOnce { if let offset = offsets.next() { ask(offset) } }
+            while let (offset, items) = try await group.next() {
+                pages[offset] = items
+                if let offset = offsets.next() { ask(offset) }
+            }
+        }
+        return pages.keys.sorted().reduce(into: first.items) { $0 += pages[$1]! }
+    }
+
+    /// Requests in flight for one list; Spotify rate-limits bursts.
+    private static let pagesAtOnce = 4
+
+    /// Follows `next` links one by one, for lists that don't say their size.
+    private func following<T: Decodable & Sendable>(_ first: Paging<T>, max: Int) async throws -> [T] {
+        var page = first
         var items = page.items
         while let next = page.next, items.count < max {
             page = try await get(next)

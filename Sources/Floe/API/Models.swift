@@ -153,7 +153,6 @@ struct PlayHistory: Decodable, Sendable {
     }
 
     let track: Track
-    let playedAt: Date?
     let context: Context?
 }
 

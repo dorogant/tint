@@ -43,6 +43,49 @@ private final class StubHTTP: URLProtocol, @unchecked Sendable {
     static func captured() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
 }
 
+/// A paged list of `total` playlists or saved albums, each page answered after
+/// a delay, counting how many requests overlap.
+private final class PagingStub: URLProtocol, @unchecked Sendable {
+    static let lock = NSLock()
+    nonisolated(unsafe) static var total = 0
+    nonisolated(unsafe) static var offsets = [Int]()
+    nonisolated(unsafe) static var inFlight = 0
+    nonisolated(unsafe) static var mostInFlight = 0
+    static func reset(total: Int) {
+        lock.withLock { self.total = total; offsets = []; inFlight = 0; mostInFlight = 0 }
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let value = { (name: String) in query.first { $0.name == name }?.value.flatMap(Int.init) }
+        let offset = value("offset") ?? 0, limit = value("limit") ?? 20
+        let total = Self.lock.withLock {
+            Self.offsets.append(offset)
+            Self.inFlight += 1
+            Self.mostInFlight = max(Self.mostInFlight, Self.inFlight)
+            return Self.total
+        }
+        let albums = url.path.hasSuffix("me/albums")
+        let items: [[String: Any]] = (offset..<min(offset + limit, total)).map { index in
+            let ref: [String: Any] = ["id": "\(index)", "uri": "spotify:x:\(index)", "name": "\(index)", "owner": ["id": "u"]]
+            return albums ? ["album": ref] : ref
+        }
+        let next: Any = offset + limit < total ? "https://api.spotify.com/v1\(url.path)?offset=\(offset + limit)&limit=\(limit)" : NSNull()
+        let body = try! JSONSerialization.data(withJSONObject: ["items": items, "total": total, "offset": offset, "next": next])
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { [self] in
+            Self.lock.withLock { Self.inFlight -= 1 }
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])!,
+                                cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+    override func stopLoading() {}
+    static var snapshot: (offsets: [Int], mostInFlight: Int) { lock.withLock { (offsets.sorted(), mostInFlight) } }
+}
+
 private actor MockPlayback: PlaybackAPI {
     var permission = true
     var delay = false
@@ -138,6 +181,28 @@ struct Phase5Tests {
                      && immediate.durationMs == 120000 && immediate.explicit
                      && immediate.coverURL?.absoluteString == "https://example.test/cover")
         print("PASS: selected-track metadata")
+
+        let pagingConfig = URLSessionConfiguration.ephemeral
+        pagingConfig.protocolClasses = [PagingStub.self]
+        let paged = WebAPI(user: UserTokenProvider(), tokens: tokens, http: URLSession(configuration: pagingConfig))
+        PagingStub.reset(total: 333)
+        let started = ContinuousClock.now
+        let playlists = try await paged.myPlaylists()
+        let elapsed = ContinuousClock.now - started
+        var pages = PagingStub.snapshot
+        precondition(playlists.map(\.id) == (0..<333).map { "\($0)" }, "every playlist, in order")
+        precondition(pages.offsets == [0, 50, 100, 150, 200, 250, 300], "each page once, got \(pages.offsets)")
+        precondition((2...4).contains(pages.mostInFlight), "later pages overlap, a few at a time; got \(pages.mostInFlight)")
+        PagingStub.reset(total: 333)
+        let albums = try await paged.savedAlbums()
+        pages = PagingStub.snapshot
+        precondition(albums.count == 100 && pages.offsets == [0, 50], "stops at the cap, got \(pages.offsets)")
+        PagingStub.reset(total: 30)
+        let short = try await paged.myPlaylists()
+        precondition(short.count == 30 && PagingStub.snapshot.offsets == [0], "one page")
+        print("PASS: paged lists load their remaining pages together, in order, up to a cap "
+              + "(7 pages of 50 ms in \(elapsed.formatted(.units(allowed: [.milliseconds]))))")
+
         let deniedAPI = MockPlayback(); await deniedAPI.setPermission(false)
         let denied = ConnectModel(api: deniedAPI)
         await denied.refresh(.queue)

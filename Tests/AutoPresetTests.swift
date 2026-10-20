@@ -407,6 +407,13 @@ struct AutoPresetTests {
         stub.genres["slow"] = ["ambient"]
         answer = await reopened.genres(for: ["slow"])
         check(answer.genres == ["ambient"], "a cancelled lookup isn't cached as empty")
+
+        // Expired answers are dropped when the file is read, and gone from it at the next save.
+        clock.date += 40 * 86_400
+        let later = ArtistGenres(file: file, now: { clock.date }, fetch: { try await stub.fetch($0) })
+        _ = await later.genres(for: ["fresh"])
+        let saved = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        check(saved.map { Array($0.keys) } == ["fresh"], "only fresh answers are kept on disk, got \(saved?.keys.sorted() ?? [])")
         print("PASS: genres are cached per artist in memory and on disk, one request per song, with rate-limit and refusal pauses")
     }
 }

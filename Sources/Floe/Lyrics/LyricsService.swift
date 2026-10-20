@@ -74,13 +74,7 @@ actor LyricsService {
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else { throw Failure.http(0) }
         if response.statusCode == 429 || response.statusCode == 503 {
-            let header = response.value(forHTTPHeaderField: "Retry-After") ?? ""
-            let seconds = Double(header).map { max(1, $0) } ?? 30
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = TimeZone(secondsFromGMT: 0)
-            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
-            nextRequest = formatter.date(from: header) ?? Date().addingTimeInterval(seconds)
+            nextRequest = Self.retryDate(response.value(forHTTPHeaderField: "Retry-After") ?? "")
             throw Failure.rateLimited(nextRequest)
         }
         let content: Content
@@ -99,6 +93,15 @@ actor LyricsService {
         order.append(signature)
         if order.count > 24 { cache.removeValue(forKey: order.removeFirst()) }
         return content
+    }
+
+    /// `Retry-After` is seconds or an HTTP date; without one, wait 30 s.
+    private static func retryDate(_ header: String) -> Date {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+        return formatter.date(from: header) ?? Date().addingTimeInterval(Double(header).map { max(1, $0) } ?? 30)
     }
 
     /// Unknown newer fields (hasWordSync / lyricsfile) are intentionally ignored;

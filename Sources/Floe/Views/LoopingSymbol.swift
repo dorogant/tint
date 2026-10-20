@@ -33,7 +33,7 @@ struct LoopingSymbol: NSViewRepresentable {
     func makeNSView(context: Context) -> LoopingSymbolView { LoopingSymbolView() }
 
     func updateNSView(_ view: LoopingSymbolView, context: Context) {
-        view.update(self)
+        view.update(self, onstage: context.environment.isOnstage)
     }
 
     /// The image's own size, as a SwiftUI `Image` lays out. (The view's intrinsic
@@ -57,7 +57,7 @@ final class LoopingSymbolView: NSImageView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func update(_ spec: LoopingSymbol) {
+    func update(_ spec: LoopingSymbol, onstage: Bool) {
         contentTintColor = NSColor(spec.color)
         setAccessibilityLabel(spec.label)
         if symbol?.name != spec.systemName || symbol?.pointSize != spec.pointSize || symbol?.weight != spec.weight {
@@ -68,12 +68,27 @@ final class LoopingSymbolView: NSImageView {
             image = NSImage(systemSymbolName: spec.systemName, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: spec.pointSize, weight: spec.weight))
         }
-        guard spec.running != running else { return }
-        running = spec.running
+        let wanted = spec.running && onstage
+        guard wanted != running else { return }
+        running = wanted
         switch (running, spec.effect) {
         case (false, _): removeAllSymbolEffects()
         case (true, .waves): addSymbolEffect(.variableColor.iterative)
         case (true, .breathe): addSymbolEffect(.breathe)
         }
+    }
+}
+
+private struct OnstageKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// False while a surface stays mounted out of sight (the Library under Now
+    /// Playing and Lyrics). Looping symbols there stop: at opacity 0 they kept
+    /// animating and cost as much CPU as visible ones.
+    var isOnstage: Bool {
+        get { self[OnstageKey.self] }
+        set { self[OnstageKey.self] = newValue }
     }
 }

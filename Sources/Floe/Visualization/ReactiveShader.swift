@@ -251,10 +251,10 @@ enum ReactiveShader {
     """#
 
     /// A Julia set drawn by its distance estimate: the outline glows as thin
-    /// filaments with a soft halo in the water around them. Inside, the set's
-    /// own conformal coordinate (Koenigs') lays a lace of rings and spokes that
-    /// wraps every bulb, and the heart's light (the mids) fills it; outside, the
-    /// escape time draws faint equipotential ripples. Orbits passing the hat
+    /// filaments with a soft halo in the water around them. Inside, light pools
+    /// toward the centre of every bulb, measured by the set's own conformal
+    /// coordinate (Koenigs'), and the heart's light (the mids) fills it; outside,
+    /// the escape time draws faint equipotential ripples. Orbits passing the hat
     /// constellation glint. Each frame is kept, fading, in a second target, so
     /// dust a kick scatters leaves trails.
     private static let bloom = #"""
@@ -343,9 +343,7 @@ enum ReactiveShader {
         float2 bend = complexMultiply(lambda, float2(1, 0) - lambda);
         w += complexMultiply(float2(bend.x, -bend.y) / max(dot(bend, bend), 1e-6f), complexMultiply(w, w));
         float ring = 0.5 * log(max(dot(w, w), 1e-12f)) - steps * logRho;
-        float spoke = (atan2(w.y, w.x) - steps * theta) * 0.15915494;
         float ripples = contour(mu * 0.5, 1);
-        float lace = max(contour(ring * 1.4, 1), contour(spoke * 6, 2));
 
         // Only an orbit that has come close to α has a true φ to draw the lace and
         // light the centres with; one still settling slowly fades in as it nears.
@@ -371,14 +369,16 @@ enum ReactiveShader {
             ink = (tint * 1.2 + 0.45) * core * spread;
             light = ink + tint * halo * spread * spread + lightTint(u.colors, hue + around + 0.5) * field;
         } else {
-            // The heart: light gathers at the centre of every bulb, where φ is small,
-            // and the lace of φ's rings and spokes glows through the rest.
-            float3 tint = lightTint(u.colors, hue + 0.45 + 0.04 * ring);
-            // φ's scale shrinks as α weakens toward the cardioid's edge; the centres' light shrinks with it.
+            // The heart: light pools softly toward the centre of every bulb, where φ
+            // is small, and thins out toward its rim. It's a smooth function of |φ|
+            // alone, so it draws no lines.
+            // The hue deepens away from each centre, held still right at it, where log |φ| runs off.
+            float3 tint = lightTint(u.colors, hue + 0.45 + 0.04 * max(ring, -3.0f));
+            // φ's scale shrinks as α weakens toward the cardioid's edge; the pools shrink with it.
             float reach = 0.002 + 20 * logRho * logRho;
-            float centre = exp(-exp(2 * ring) / reach) * settled;
-            lace *= settled;
-            light = tint * (0.008 + 0.03 * heart + lace * (0.06 + 0.3 * heart) + centre * (0.05 + 0.6 * heart));
+            float q = exp(2 * ring) / (4 * reach);
+            float pool = (0.6 * exp(-q) + 0.4 / (1 + q)) * settled;
+            light = tint * (0.008 + 0.03 * heart + pool * (0.06 + 0.5 * heart));
         }
         light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9;
         // The drop's single wave runs out from the middle, lighting the filaments it passes.

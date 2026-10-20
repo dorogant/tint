@@ -246,6 +246,20 @@ extension BackgroundTests {
         playBloom(&g, BloomSong.held(pitch: 7, tonality: 1, seconds: 3), renderer: renderer) { _, frame, _ in gFrame = frame }
         check(cFrame!.difference(from: gFrame!) > 0.01, "C and G must play different shapes")
 
+        // The heart's light is soft, with no lines in it: on a big-heart shape
+        // with a vocal lighting it, the inside has hardly any fine structure.
+        if let large = try? OffscreenRenderer(device: device, width: 640, height: 400) {
+            for pitch in [0, 1] {
+                var sung = BackgroundAnimator()
+                sung.configure(settings, animated: false)
+                var last: RenderedFrame?
+                playBloom(&sung, BloomSong.held(pitch: Float(pitch), tonality: 1, mid: 0.8, seconds: 3), renderer: large) { _, frame, _ in last = frame }
+                let (lines, share) = heartLines(last!, heart: heartPixels(sung.bloomUniforms(width: 640, height: 400), width: 640, height: 400))
+                print(String(format: "Bloom heart (pitch class %d, vocal): fine structure %.4f over %.0f%% of the frame", pitch, lines, share * 100))
+                check(share > 0.05 && lines < 0.004, "the heart must glow without lines (\(lines) over \(share) of the frame)")
+            }
+        }
+
         // Photosensitivity and legibility through the song and through a frantic
         // groove at the brightest settings: no region flashes more than three
         // times a second, and text stays readable.

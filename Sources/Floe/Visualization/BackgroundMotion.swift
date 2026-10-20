@@ -67,11 +67,18 @@ struct BloomUniforms {
     /// The drop's wave (radius, strength), overall level, a spare.
     var wave: SIMD4<Float>
     /// 1 when there are no trails to read yet, fine detail (the highs), the log of
-    /// the fixed point's multiplier |λ| (the shape's radius, kick included), its turn θ.
+    /// the fixed point's multiplier |λ| (the shape's radius at rest; kicks add to it
+    /// around their epicentres), its turn θ.
     var flags: SIMD4<Float>
     /// The trails' view: the centre and span (as in `c`) the kept frame was drawn
     /// with, so they stay on the set as the view turns and zooms.
     var previous: SIMD4<Float>
+    /// Per kick in flight: its epicentre in screen units, its reach, its shatter.
+    var kicks: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+    /// The snare's twist: its point in screen units, its angle there, its reach.
+    var twist: SIMD4<Float>
+    /// Where the drop's wave sets out and where the vocals' light pools, in screen units.
+    var places: SIMD4<Float>
 }
 
 /// The live background's state between frames, apart from Metal so tests can
@@ -186,15 +193,10 @@ struct BackgroundAnimator {
     func bloomUniforms(width: Float, height: Float) -> BloomUniforms {
         let rig = bloom
         let c = rig.c
-        // The view fits the set at rest; a build dives toward the edge point β,
-        // which glides in from where it sits toward the middle of the screen
-        // (its distance from the middle shrinks as the zoom grows).
-        let span: Float = 1.3
-        let turn = SIMD2(cos(rig.turn.position), sin(rig.turn.position))
-        let axis = turn * (span / rig.zoom)
-        let center = rig.focus * (1 - 1 / (rig.zoom * rig.zoom))
+        let (center, axis) = rig.view
         let detail = rig.detail
-        let iterations = (56 + 40 * detail + 28 * rig.dive.position).rounded()
+        // Deeper views need more iterations to resolve the edge: 28 more per 4×.
+        let iterations = (56 + 40 * detail + 14 * log2(max(1, rig.viewZoom))).rounded()
         let line = 1.15 - 0.45 * detail
         let frames = rig.lastStep * 60
         let wave = rig.wave.strength * expf(-rig.wave.age / 0.6)
@@ -205,8 +207,15 @@ struct BackgroundAnimator {
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              traps: SIMD4(cos(rig.traps), sin(rig.traps), 0.42, rig.hue),
                              wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, 0),
-                             flags: SIMD4(0, detail, logf(rig.rho), rig.theta.position),
-                             previous: SIMD4(center.x, center.y, axis.x, axis.y))
+                             flags: SIMD4(0, detail, logf(max(0.5, rig.radius.position)), rig.theta.position),
+                             previous: SIMD4(center.x, center.y, axis.x, axis.y),
+                             kicks: (Self.kick(rig.kicks[0]), Self.kick(rig.kicks[1]), Self.kick(rig.kicks[2])),
+                             twist: SIMD4(rig.twistCentre.x, rig.twistCentre.y, rig.twist.position, 0.6),
+                             places: SIMD4(rig.focusOnScreen.x, rig.focusOnScreen.y, rig.voice.x, rig.voice.y))
+    }
+
+    private static func kick(_ kick: BloomRig.Kick) -> SIMD4<Float> {
+        SIMD4(kick.epicentre.x, kick.epicentre.y, kick.spread, kick.shatter.position)
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

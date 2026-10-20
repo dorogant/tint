@@ -263,9 +263,12 @@ enum ReactiveShader {
     // traps: constellation turn (cos, sin), radius, palette walk. wave: drop ring radius, strength, level, spare.
     // flags: no trails yet, detail (highs), log of the fixed point's multiplier |λ|, its turn θ.
     // previous: the trails' centre and span, as drawn last frame.
+    // Screen units below: y runs −1…1 and x the same times the aspect ratio, as `v` does.
+    // kicks: per kick, its epicentre, reach and shatter. twist: the snare's point, angle and reach.
+    // places: where the drop's wave sets out, where the vocals' light pools.
     struct BloomUniforms {
         float4 colors[5]; float4 c; float4 view; float4 size; float4 light; float4 traps; float4 wave; float4 flags;
-        float4 previous;
+        float4 previous; float4 kicks[3]; float4 twist; float4 places;
     };
     struct BloomOutput { float4 color [[color(0)]]; float4 trails [[color(1)]]; };
     static float2 complexMultiply(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
@@ -296,14 +299,28 @@ enum ReactiveShader {
         float aspect = u.size.x / max(u.size.y, 1.0f);
         float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
         float2 axis = u.c.zw;
-        float2 z = u.view.xy + complexMultiply(axis, v);
+        // The snare turns the plane round its own point, less the further from it.
+        float2 fromTwist = v - u.twist.xy;
+        float twistAngle = u.twist.z * exp(-dot(fromTwist, fromTwist) / (u.twist.w * u.twist.w));
+        float2 twisted = u.twist.xy + complexMultiply(fromTwist, float2(cos(twistAngle), sin(twistAngle)));
+        float2 z = u.view.xy + complexMultiply(axis, twisted);
         float2 point = z;
         // The cover's colours lie round the set, so each side of it takes its own.
         float around = atan2(z.y, z.x) * 0.15915494;
         float pixel = 2 * length(axis) / max(u.size.y, 1.0f);
-        float2 c = u.c.xy;
-        float logRho = u.flags.z, theta = u.flags.w;
-        float2 fixed = 0.5 * exp(logRho) * float2(cos(theta), sin(theta)); // α, whose multiplier is λ = 2α
+        // Each kick throws the shape out past the edge around its epicentre, fading
+        // with distance, so a patch of the set shatters while the rest holds.
+        float shatter = 0, kicked = 0;
+        for (int k = 0; k < 3; k++) {
+            float2 d = v - u.kicks[k].xy;
+            float weight = exp(-dot(d, d) / (u.kicks[k].z * u.kicks[k].z));
+            shatter += u.kicks[k].w * weight;
+            kicked = max(kicked, weight * min(1.0f, abs(u.kicks[k].w) * 30));
+        }
+        float logRho = log(max(0.5f, exp(u.flags.z) + shatter)), theta = u.flags.w;
+        float2 lambdaHere = exp(logRho) * float2(cos(theta), sin(theta));
+        float2 c = 0.5 * lambdaHere - 0.25 * complexMultiply(lambdaHere, lambdaHere);
+        float2 fixed = 0.5 * lambdaHere; // α, whose multiplier is λ = 2α
         // Inside the cardioid every orbit in the heart settles onto α: stop once it's close.
         float settle = logRho < -0.004 ? 0.0036 : -1.0;
         float2 dz = float2(1, 0);
@@ -354,7 +371,9 @@ enum ReactiveShader {
         float3 light = 0;
         // Only the filaments themselves leave trails: halos and the heart would smear into mud.
         float3 ink = 0;
-        float heart = u.light.y;
+        // The vocals light the bulbs under their own wandering point most.
+        float2 fromVoice = v - u.places.zw;
+        float heart = u.light.y * (0.2 + 0.8 * exp(-dot(fromVoice, fromVoice) / 0.64));
         if (state != 2) {
             float3 tint = lightTint(u.colors, hue + around + 0.02 * mu);
             float width = u.view.w;
@@ -380,9 +399,11 @@ enum ReactiveShader {
             float pool = (0.6 * exp(-q) + 0.4 / (1 + q)) * settled;
             light = tint * (0.008 + 0.03 * heart + pool * (0.06 + 0.5 * heart));
         }
-        light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9;
-        // The drop's single wave runs out from the middle, lighting the filaments it passes.
-        float wave = exp(-pow((length(v) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
+        // Hats glint out in the filaments, and give way where a kick is landing.
+        float glintHere = (state != 2 ? 1.0 : 0.3) * (1 - 0.8 * kicked);
+        light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9 * glintHere;
+        // The drop's single wave runs out from the lens's edge point, lighting the filaments it passes.
+        float wave = exp(-pow((length(v - u.places.xy) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
         float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 3 * wave);
         light *= level;
         light += lightTint(u.colors, hue + around) * wave * 0.05;

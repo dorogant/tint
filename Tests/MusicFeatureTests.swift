@@ -5,12 +5,17 @@ import Foundation
 extension BackgroundTests {
     /// One layer frame per 30 Hz tick for `seconds` of mono audio from `sample(t)`.
     static func analyze(_ seconds: Float, _ sample: (Float) -> Float) -> [MusicLayers] {
+        analyzedFrames(seconds, sample).map(\.layers)
+    }
+
+    /// One analysis frame per 30 Hz tick for `seconds` of mono audio from `sample(t)`.
+    static func analyzedFrames(_ seconds: Float, _ sample: (Float) -> Float) -> [SpectrumFrame] {
         let analyzer = SpectrumAnalyzer()!
         let block = Int(SpectrumAnalyzer.sampleRate / 30)
         var samples = [Float](repeating: 0, count: block)
         return (0..<Int(seconds * 30)).map { frame in
             for i in 0..<block { samples[i] = sample(Float(frame * block + i) / SpectrumAnalyzer.sampleRate) }
-            return analyzer.process(left: samples, right: samples, count: block).layers
+            return analyzer.process(left: samples, right: samples, count: block)
         }
     }
 

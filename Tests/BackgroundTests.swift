@@ -20,6 +20,12 @@ struct BackgroundTests {
         guard let device = MTLCreateSystemDefaultDevice() else {
             fail("Metal device is required for the background regression check")
         }
+        if let study = ProcessInfo.processInfo.environment["FLOE_STUDY"] {
+            let directory = URL(fileURLWithPath: study)
+            if ProcessInfo.processInfo.environment["FLOE_STUDY_HEART"] != nil { bloomHeartRenders(device: device, directory: directory) }
+            if ProcessInfo.processInfo.environment["FLOE_STUDY_LONG"] != nil { bloomLongSongRenders(device: device, directory: directory) }
+            return
+        }
         // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
             bloomRenders(device: device)

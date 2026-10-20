@@ -347,14 +347,43 @@ extension BackgroundTests {
         _ = rig(kick, configuration: calm) { rig, display in if display >= 180 { calmRhos.append(rig.rho) } }
         check(calmRhos.max()! - calmRhos.min()! < 0.002, "Bass punch at 0 must leave the set whole")
 
-        // Snare: the plane turns a facet, quickly, and stays there.
-        var snare = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
+        // Snare: a quick twist at its own point, away from the kick, that unwinds.
+        var snare = BloomSong.held(pitch: 0, tonality: 1, seconds: 4)
+        snare[30].layers.kick = 1
         snare[45].layers.snare = 1
-        var turns: [Float] = []
-        _ = rig(snare) { rig, display in if display >= 90 { turns.append(rig.turn.position) } }
-        let turned = turns.last! - turns.first!, quick = turns[12] - turns.first!
-        check(abs(turned - BloomRig.facet) < 0.08 && quick > 0.8 * turned,
-              "a snare must turn the plane a twelfth of a turn within 200 ms (\(turned), \(quick) after 200 ms)")
+        var twists: [Float] = []
+        var kickAt = SIMD2<Float>.zero, twistAt = SIMD2<Float>.zero
+        _ = rig(snare) { rig, display in
+            if display == 61 { kickAt = rig.kicks.min { $0.age < $1.age }!.epicentre }
+            if display >= 90 { twists.append(rig.twist.position); twistAt = rig.twistCentre }
+        }
+        let twistPeak = twists.prefix(30).map(abs).max()!, twistAt0 = twists.firstIndex { abs($0) == twistPeak }!
+        print(String(format: "Bloom mapping: a snare twists %.2f rad after %d ms, %.3f 1.5 s on, %.2f from the kick",
+                     twistPeak, twistAt0 * 1000 / 60, twists[90], simd_distance(kickAt, twistAt)))
+        check(abs(twistPeak - BloomRig.facet) < 0.08 && twistAt0 < 20, "a snare must twist about a twelfth of a turn within 330 ms (\(twistPeak) at \(twistAt0))")
+        check(abs(twists[90]) < 0.02, "the twist must unwind within 1.5 s (\(twists[90]))")
+        check(simd_distance(kickAt, twistAt) > 0.4, "the snare must twist away from where the kick landed")
+
+        // Consecutive kicks land in different places.
+        var kicks4 = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
+        for i in [30, 45, 60, 75] { kicks4[i].layers.kick = 1 }
+        var epicentres: [SIMD2<Float>] = []
+        _ = rig(kicks4) { rig, display in
+            if [61, 91, 121, 151].contains(display) { epicentres.append(rig.kicks.min { $0.age < $1.age }!.epicentre) }
+        }
+        let closest = zip(epicentres, epicentres.dropFirst()).map { simd_distance($0, $1) }.min()!
+        check(closest > 0.3, "consecutive kicks must land in different places (closest \(closest))")
+
+        // A drop moves the lens to another part of the edge; silence widens it.
+        var section = BloomSong.held(pitch: 0, tonality: 1, seconds: 14)
+        section[150].layers.drop = 1
+        var focuses: [SIMD2<Float>] = [], lensZooms: [Float] = []
+        _ = rig(section) { rig, _ in focuses.append(rig.focus); lensZooms.append(rig.lensZoom.position) }
+        let moved = simd_distance(focuses[299], focuses.last!), glide = zip(focuses, focuses.dropFirst()).map { simd_distance($0, $1) }.max()!
+        print(String(format: "Bloom mapping: the lens zooms to %.2f×, moves %.2f after a drop, at most %.4f a frame",
+                     lensZooms[299], moved, glide))
+        check(lensZooms[299] > 1.6, "while music plays the lens must frame the edge (\(lensZooms[299])×)")
+        check(moved > 0.2 && glide < 0.02, "a drop must glide the lens elsewhere, never jump (\(moved), \(glide) a frame)")
 
         // Hat: a glint that's gone within 120 ms.
         var hat = BloomSong.held(pitch: 0, tonality: 1, seconds: 2)

@@ -49,7 +49,7 @@ struct ReactiveBackground: NSViewRepresentable {
                                 reactivity: Float(settings.reactivity), speed: Float(settings.motionSpeed),
                                 glow: Float(settings.glow), punch: Float(settings.punch),
                                 vividness: Float(settings.vividness), beamCount: settings.beamCount,
-                                strobe: settings.strobe)
+                                strobe: settings.strobe, bloomQuality: settings.bloomQuality)
     }
 
     static func dismantleNSView(_ view: BackgroundMetalView, coordinator: Coordinator) {
@@ -110,16 +110,22 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         }
     }
     /// Bloom iterates the fractal afresh for every pixel of its field every
-    /// frame, so that stops at FIELDDOC; the colour is drawn
-    /// from it at the drawable's full resolution.
-    static let bloomFieldBudget = 1_300_000
+    /// frame, so that stops at about a pixel per point of a full-screen window
+    /// at High detail, and at a bit over half a pixel per point at Lighter;
+    /// the colour is drawn from it at the drawable's full resolution.
+    static func bloomFieldBudget(_ quality: VisualSettings.BloomQuality) -> Int {
+        switch quality {
+        case .high: 1_300_000
+        case .lighter: 500_000
+        }
+    }
 
     /// The size of Bloom's field for a drawable of `width`×`height`: the same
-    /// when it fits the budget, else scaled down evenly to fit.
-    static func bloomFieldSize(width: Int, height: Int) -> (width: Int, height: Int) {
+    /// when it fits `budget`, else scaled down evenly to fit.
+    static func bloomFieldSize(width: Int, height: Int, budget: Int) -> (width: Int, height: Int) {
         let area = width * height
-        guard area > bloomFieldBudget else { return (width, height) }
-        let s = (Double(bloomFieldBudget) / Double(area)).squareRoot()
+        guard area > budget else { return (width, height) }
+        let s = (Double(budget) / Double(area)).squareRoot()
         return (max(1, Int((Double(width) * s).rounded())), max(1, Int((Double(height) * s).rounded())))
     }
     /// Frames allowed on the GPU at once while running; paused draws wait for none.
@@ -187,6 +193,13 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             let soft: [MTLTexture]
             let softPass: MTLRenderPassDescriptor
         }
+        /// Bloom's field shrinks a step, a share of its pixels, while a stretch
+        /// of the dive would cost the GPU more than about 4.5 ms a frame, and
+        /// grows back once it would cost well under that again.
+        static let bloomShares = [1.0, 0.7, 0.5, 0.35, 0.25]
+        private(set) var bloomShare = 0
+        /// Bloom's GPU time per frame, smoothed, in milliseconds.
+        private var bloomCost = 0.0
         private let device: MTLDevice
         private var haze: MTLTexture?
         private let smoke = MTLRenderPassDescriptor()
@@ -233,6 +246,19 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             return device.makeTexture(descriptor: descriptor)
         }
 
+        /// How long the GPU took over a Bloom frame.
+        func recordBloomFrame(milliseconds: Double) {
+            bloomCost += (milliseconds - bloomCost) * 0.15
+            let shares = Self.bloomShares
+            if bloomCost > 4.5, bloomShare < shares.count - 1 {
+                bloomShare += 1
+                bloomCost *= shares[bloomShare] / shares[bloomShare - 1]
+            } else if bloomShare > 0, bloomCost * shares[bloomShare - 1] / shares[bloomShare] < 3.5 {
+                bloomShare -= 1
+                bloomCost *= shares[bloomShare] / shares[bloomShare + 1]
+            }
+        }
+
         /// Lets Bloom's fields go while another kind draws.
         func releaseFields() {
             if fields[0] != nil || fields[1] != nil { fields = [nil, nil] }
@@ -277,7 +303,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         case .bloom:
             var uniforms = animator.bloomUniforms(width: width, height: height)
             let rig = animator.bloom
-            let fieldSize = bloomFieldSize(width: Int(width), height: Int(height))
+            let budget = Double(bloomFieldBudget(animator.configuration.bloomQuality)) * Targets.bloomShares[targets.bloomShare]
+            let fieldSize = bloomFieldSize(width: Int(width), height: Int(height), budget: Int(budget))
             // Each dive's field afresh, then its smooth colour, then the light
             // from them at the drawable's size. While one dive hands over to the
             // next, the fainter of the two is worked out at half the resolution.
@@ -415,11 +442,13 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         command.present(drawable)
         command.addCompletedHandler { [weak self] command in
             let succeeded = command.status == .completed
+            let milliseconds = (command.gpuEndTime - command.gpuStartTime) * 1000
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.inFlight -= 1
                 if succeeded {
                     self.status?.backgroundFramesDrawn += 1
+                    if self.animator.configuration.kind == .bloom { self.targets.recordBloomFrame(milliseconds: milliseconds) }
                     // A color/resize update can arrive while the last GPU frame
                     // is in flight. Draw its replacement once, without a timer.
                     if self.needsStaticDraw { self.redrawIfPaused() }

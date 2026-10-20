@@ -327,8 +327,9 @@ extension BackgroundTests {
         // The window-sized drawable renders like the small one: at full Retina,
         // from a field that stays within its budget.
         let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1440, height: 900), scale: 2, kind: .bloom)
-        let field = BackgroundRenderer.bloomFieldSize(width: Int(size.width), height: Int(size.height))
-        check(size.width == 2880 && field.width * field.height <= BackgroundRenderer.bloomFieldBudget + 2_000,
+        let budget = BackgroundRenderer.bloomFieldBudget(.high)
+        let field = BackgroundRenderer.bloomFieldSize(width: Int(size.width), height: Int(size.height), budget: budget)
+        check(size.width == 2880 && field.width * field.height <= budget + 2_000,
               "Bloom must draw at full Retina from a field within budget (\(size), field \(field))")
         if let large = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) {
             let frame = large.render(c)
@@ -698,33 +699,52 @@ extension BackgroundTests {
     }
 
     /// GPU time per Bloom frame at the sizes the app draws, at full detail,
-    /// over every dive at several depths and through a handoff (two dives drawn).
+    /// over every dive at several depths and through a handoff (two dives
+    /// drawn), at each detail setting: first at the setting's full field, then
+    /// as the app settles, its field a step smaller wherever that costs too much.
     static func bloomPerformance(device: MTLDevice) {
-        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
         var bright = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.5, seconds: 2)
         for i in bright.indices { bright[i].layers.high = 1; bright[i].layers.brightness = 1 }
-        var states: [(String, BackgroundAnimator)] = []
-        for (index, _) in BloomRig.destinations.enumerated() {
-            for progress in [0.1, 0.25, 0.5, 0.75, 1 - 0.4 / BloomRig.destinations[index].depth] {
-                var animator = diving(index, at: progress, settings)
-                for frame in bright { animator.advance(by: 1 / 30, frame: frame) }
-                states.append((String(format: "dive %d at %.2f", index, progress), animator))
-            }
-        }
         let windows: [(String, CGSize)] = [("1200x750 pt window", CGSize(width: 1200, height: 750)),
                                            ("1440x932 pt full screen", CGSize(width: 1440, height: 932)),
                                            ("1728x1117 pt full screen", CGSize(width: 1728, height: 1117))]
-        for (name, points) in windows {
-            let size = BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .bloom)
-            let field = BackgroundRenderer.bloomFieldSize(width: Int(size.width), height: Int(size.height))
-            guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
-            let costs = states.map { ($0.0, renderer.gpuMilliseconds($0.1, frames: 30)) }
-            let mean = costs.map(\.1).reduce(0, +) / Double(costs.count)
-            let worst = costs.max { $0.1 < $1.1 }!
-            print(String(format: "GPU per frame, %@, Bloom (%dx%d from a %dx%d field): %.2f ms on average, %.2f ms at worst (%@), %.1f%% of the GPU at 30 Hz",
-                         name, Int(size.width), Int(size.height), field.width, field.height, mean, worst.1, worst.0, mean * 3))
-            if name.hasPrefix("1440") {
-                print("  " + costs.map { String(format: "%@ %.1f", $0.0, $0.1) }.joined(separator: ", "))
+        for quality in VisualSettings.BloomQuality.allCases {
+            let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset), bloomQuality: quality)
+            var states: [(String, BackgroundAnimator)] = []
+            for (index, _) in BloomRig.destinations.enumerated() {
+                for progress in [0.1, 0.25, 0.5, 0.75, 1 - 0.4 / BloomRig.destinations[index].depth] {
+                    var animator = diving(index, at: progress, settings)
+                    for frame in bright { animator.advance(by: 1 / 30, frame: frame) }
+                    states.append((String(format: "dive %d at %.2f", index, progress), animator))
+                }
+            }
+            for (name, points) in windows {
+                let size = BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .bloom)
+                let field = BackgroundRenderer.bloomFieldSize(width: Int(size.width), height: Int(size.height),
+                                                              budget: BackgroundRenderer.bloomFieldBudget(quality))
+                var full: [Double] = [], settled: [(String, Double, Int)] = []
+                for (label, animator) in states {
+                    // A new renderer each time, so each state settles from the full field.
+                    guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
+                    var cost = renderer.gpuMilliseconds(animator, frames: 20)
+                    full.append(cost)
+                    for _ in 0..<6 {
+                        let share = renderer.targets.bloomShare
+                        for _ in 0..<40 { renderer.targets.recordBloomFrame(milliseconds: cost) }
+                        if renderer.targets.bloomShare == share { break }
+                        cost = renderer.gpuMilliseconds(animator, frames: 20)
+                    }
+                    settled.append((label, cost, renderer.targets.bloomShare))
+                }
+                let mean = settled.map(\.1).reduce(0, +) / Double(settled.count)
+                let worst = settled.max { $0.1 < $1.1 }!
+                let smaller = settled.filter { $0.2 > 0 }.count
+                print(String(format: "GPU per frame, %@, Bloom %@ (%dx%d from a %dx%d field): %.2f ms on average, %.2f ms at worst (%@), %.1f%% of the GPU at 30 Hz; %d of %d stretches a step smaller; at the full field always: %.2f on average, %.2f at worst",
+                             name, quality.rawValue, Int(size.width), Int(size.height), field.width, field.height, mean, worst.1, worst.0,
+                             mean * 3, smaller, settled.count, full.reduce(0, +) / Double(full.count), full.max()!))
+                if name.hasPrefix("1440") {
+                    print("  " + settled.map { String(format: "%@ %.1f%@", $0.0, $0.1, $0.2 > 0 ? " (step \($0.2))" : "") }.joined(separator: ", "))
+                }
             }
         }
     }

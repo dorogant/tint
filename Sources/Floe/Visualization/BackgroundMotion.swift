@@ -17,6 +17,7 @@ struct BackgroundConfiguration: Equatable {
     var vividness: Float = 1
     var beamCount = 6
     var strobe = false
+    var bloomQuality = VisualSettings.BloomQuality.high
 }
 
 typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)

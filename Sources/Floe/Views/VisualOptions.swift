@@ -52,6 +52,10 @@ struct BackgroundOptions: View {
                 SettingsStepper("Beam count", value: $settings.beamCount, range: VisualSettings.beamCountRange)
                 Toggle("Strobe on the beat", isOn: $settings.strobe)
             }.disabled(settings.backgroundKind != .beams)
+            Picker("Bloom detail", selection: $settings.bloomQuality) {
+                Text("High").tag(VisualSettings.BloomQuality.high)
+                Text("Lighter").tag(VisualSettings.BloomQuality.lighter)
+            }.pickerStyle(.segmented).disabled(settings.backgroundKind != .bloom)
         }.disabled(!settings.liveBackground)
         if settings.liveBackground, let error = visualization.backgroundFailure {
             Text(error).font(.callout).foregroundStyle(.orange)

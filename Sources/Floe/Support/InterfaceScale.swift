@@ -7,16 +7,25 @@ import SwiftUI
 /// areas behind. Read once per body, like any environment value.
 struct InterfaceScale: Equatable, Sendable {
     let factor: CGFloat
-    /// `Theme`'s guides at this size, rounded to the grid rather than multiplied.
+    // The guides every page shares, on one spacing scale in multiples of 4 at
+    // Compact, and rounded to the grid rather than multiplied at other sizes.
+
+    /// Window margin and the gap between panels. Panels round to `corner`, so
+    /// they stay concentric with the window's own corners.
     let margin: CGFloat
+    /// From a page panel's edge to its content: titles, section headers,
+    /// covers, card artwork and list columns all start on this line.
     let gutter: CGFloat
+    /// How far a hover or selection plate reaches past what it holds. Plates
+    /// round to their content's radius plus this, so the corners nest.
     let plate: CGFloat
+    /// Between the sections of a page.
     let sectionGap: CGFloat
+    /// From a section header to its content.
     let headerGap: CGFloat
     let corner: CGFloat
 
-    /// The original layout; `Theme`'s guides read their values from here, so
-    /// test harnesses can build this file without the rest of the views.
+    /// The original layout.
     static let compact = Self(factor: 1, margin: 8, gutter: 28, plate: 8, sectionGap: 32, headerGap: 12, corner: 18)
     /// Text that was 12.5 pt reads 14.
     static let standard = Self(factor: 1.12, margin: 9, gutter: 32, plate: 9, sectionGap: 36, headerGap: 14, corner: 20)

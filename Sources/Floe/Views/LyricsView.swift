@@ -118,7 +118,6 @@ private struct SyncedLyricsView: View {
     /// The list easing a new line into place, and back to it on Follow.
     private static let glideDuration = 0.35
     private static let glide = Animation.easeInOut(duration: glideDuration)
-    private nonisolated static let list = "lyric list"
 
     var body: some View {
         GeometryReader { geometry in
@@ -135,14 +134,14 @@ private struct SyncedLyricsView: View {
                             player.seek(toMs: line.time * 1000 + 50)
                         }
                         .equatable()
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.list)) } action: { [layout, active] in
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { [layout, active] in
                             layout.rows[line.id] = $0
-                            if line.id == active { pillHeight = $0.height }
+                            if line.id == active, pillHeight != $0.height { pillHeight = $0.height }
                         }
+                        .onDisappear { [layout] in layout.rows[line.id] = nil }
                     }
                 }
                 .scrollTargetLayout()
-                .coordinateSpace(.named(Self.list))
                 .padding(.horizontal, scale(12))
                 .padding(.top, geometry.size.height * Self.anchor.y)
                 .padding(.bottom, geometry.size.height * (1 - Self.anchor.y))
@@ -161,8 +160,8 @@ private struct SyncedLyricsView: View {
             }
             // Back on Follow, the pill flies to the anchor as the list glides there.
             .animation(still ? nil : Self.glide, value: follow)
-            .onScrollGeometryChange(for: CGRect.self) { $0.visibleRect } action: { [layout] _, visible in
-                layout.visible = visible
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { [layout] _, offset in
+                layout.offset = offset
             }
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting { follow = false }
@@ -174,9 +173,7 @@ private struct SyncedLyricsView: View {
                 }
                 scroll(to: active, gliding: !still)
             }
-            // Rows rewrap: positions noted for rows now off screen no longer hold.
-            .onChange(of: geometry.size.width) { layout.rows.removeAll() }
-            .onChange(of: fontSize) { layout.rows.removeAll() }
+            .onChange(of: geometry.size.height, initial: true) { layout.height = geometry.size.height }
         }
         // Open on the current line, so a newly shown list never lands on line 0
         // and then jumps mid-transition.
@@ -238,14 +235,14 @@ private struct SyncedLyricsView: View {
     private func scroll(to index: Int, gliding: Bool, alongside: () -> Void = {}) {
         let target = layout.offset(showing: index, anchor: Self.anchor.y)
         // A glide across more than a screen would show rows the list hasn't drawn.
-        let glides = gliding && target.map { abs($0 - layout.visible.minY) <= layout.visible.height } == true
+        let glides = gliding && target.map { abs($0 - layout.offset) <= layout.height } == true
         withTransaction(Self.transaction(glides)) {
             alongside()
             if let height = layout.rows[index]?.height { pillHeight = height }
         }
         let position = $position
         let jump = { (y: CGFloat) in withTransaction(Self.transaction(false)) { position.wrappedValue.scrollTo(y: y) } }
-        if let target, glides, glider.run(from: layout.visible.minY, to: target, duration: Self.glideDuration, apply: jump) { return }
+        if let target, glides, glider.run(from: layout.offset, to: target, duration: Self.glideDuration, apply: jump) { return }
         glider.stop()
         if let target { jump(target) } else {
             withTransaction(Self.transaction(false)) { position.wrappedValue.scrollTo(id: index, anchor: Self.anchor) }
@@ -259,17 +256,20 @@ private struct SyncedLyricsView: View {
     }
 }
 
-/// Where the rows sit in the list and what the scroll view shows, so the list
-/// can scroll to a line by offset. Not observed: noting them redraws nothing.
+/// Where the drawn rows sit in the scroll view and how far it's scrolled, so
+/// the list can scroll to a line by offset. Positions are taken on screen:
+/// the lazy list's own coordinates move when it swaps estimated heights for
+/// measured ones. Not observed: noting them redraws nothing.
 @MainActor private final class ListLayout {
     var rows: [Int: CGRect] = [:]
-    var visible = CGRect.zero
+    var offset: CGFloat = 0
+    var height: CGFloat = 0
 
-    /// The scroll offset that rests row `index` on the anchor, or nil before
-    /// it's laid out. The list's top padding is `anchor` of a screen, so
-    /// that much of the screen above the anchor cancels out.
+    /// The scroll offset that rests row `index` on the anchor, where the pill
+    /// sits, or nil when the row isn't drawn.
     func offset(showing index: Int, anchor: CGFloat) -> CGFloat? {
-        rows[index].map { $0.minY + $0.height * anchor }
+        guard let row = rows[index], height > 0 else { return nil }
+        return offset + row.minY - (height - row.height) * anchor
     }
 }
 

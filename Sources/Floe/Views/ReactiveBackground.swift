@@ -93,6 +93,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         let haze: MTLRenderPipelineState
         let bloom: MTLRenderPipelineState
         let bloomField: MTLRenderPipelineState
+        let bloomSoft: MTLRenderPipelineState
     }
     /// Pixels per frame at most: a large window draws Beams at about one pixel
     /// per point, a small one at full Retina. The shaders pre-filter every line
@@ -111,7 +112,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     /// Bloom iterates the fractal afresh for every pixel of its field every
     /// frame, so that stops at FIELDDOC; the colour is drawn
     /// from it at the drawable's full resolution.
-    static let bloomFieldBudget = 500_000
+    static let bloomFieldBudget = 1_300_000
 
     /// The size of Bloom's field for a drawable of `width`×`height`: the same
     /// when it fits the budget, else scaled down evenly to fit.
@@ -157,10 +158,18 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             descriptor.colorAttachments[0].pixelFormat = format
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
+        func soft() throws -> MTLRenderPipelineState {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
+            descriptor.fragmentFunction = library.makeFunction(name: "floeBloomSoft")
+            for (index, format) in Targets.softFormats.enumerated() { descriptor.colorAttachments[index].pixelFormat = format }
+            return try device.makeRenderPipelineState(descriptor: descriptor)
+        }
         return Pipelines(fluid: try pipeline("floeFluidFragment", pixelFormat), beams: try pipeline("floeBeamsFragment", pixelFormat),
                          haze: try pipeline("floeHazeFragment", Targets.hazeFormat),
                          bloom: try pipeline("floeBloomFragment", pixelFormat),
-                         bloomField: try pipeline("floeBloomField", Targets.fieldFormat))
+                         bloomField: try pipeline("floeBloomField", Targets.fieldFormat),
+                         bloomSoft: try soft())
     }
 
     /// Beams' smoke at a quarter of the drawable's resolution, with the pass
@@ -169,12 +178,20 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
         static let fieldFormat = MTLPixelFormat.rgba16Float
+        /// Bloom's smooth colour per dive: outside the set, inside it, the filaments'.
+        static let softFormats: [MTLPixelFormat] = [.rg11b10Float, .rg11b10Float, .rgba16Float]
+        /// What a dive found per pixel, its smooth colour, and the passes that draw them.
+        struct BloomField {
+            let texture: MTLTexture
+            let pass: MTLRenderPassDescriptor
+            let soft: [MTLTexture]
+            let softPass: MTLRenderPassDescriptor
+        }
         private let device: MTLDevice
         private var haze: MTLTexture?
         private let smoke = MTLRenderPassDescriptor()
-        /// What each dive found per pixel this frame, and the passes that draw
-        /// them: two, so the next dive has its own while it fades in.
-        private var fields: [(texture: MTLTexture, pass: MTLRenderPassDescriptor)?] = [nil, nil]
+        /// Each dive's, this frame: two, so the next dive has its own while it fades in.
+        private var fields: [BloomField?] = [nil, nil]
 
         init(device: MTLDevice) {
             self.device = device
@@ -191,15 +208,21 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             return haze.map { ($0, smoke) }
         }
 
-        /// The field of `width`×`height` for the dive drawn as the uniforms' `layer`, and the pass that draws it.
-        func bloomField(layer: Int, width: Int, height: Int) -> (texture: MTLTexture, pass: MTLRenderPassDescriptor)? {
+        /// The field of `width`×`height` for the dive drawn as the uniforms' `layer`.
+        func bloomField(layer: Int, width: Int, height: Int) -> BloomField? {
             if let field = fields[layer], field.texture.width == width, field.texture.height == height { return field }
-            guard let made = texture(Self.fieldFormat, width: width, height: height) else { return nil }
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = made
-            pass.colorAttachments[0].loadAction = .dontCare
-            pass.colorAttachments[0].storeAction = .store
-            fields[layer] = (made, pass)
+            let made = ([Self.fieldFormat] + Self.softFormats).compactMap { texture($0, width: width, height: height) }
+            guard made.count == 1 + Self.softFormats.count else { return nil }
+            func pass(_ textures: ArraySlice<MTLTexture>) -> MTLRenderPassDescriptor {
+                let pass = MTLRenderPassDescriptor()
+                for (index, texture) in textures.enumerated() {
+                    pass.colorAttachments[index].texture = texture
+                    pass.colorAttachments[index].loadAction = .dontCare
+                    pass.colorAttachments[index].storeAction = .store
+                }
+                return pass
+            }
+            fields[layer] = BloomField(texture: made[0], pass: pass(made.prefix(1)), soft: Array(made.dropFirst()), softPass: pass(made.dropFirst()))
             return fields[layer]
         }
 
@@ -255,25 +278,35 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             var uniforms = animator.bloomUniforms(width: width, height: height)
             let rig = animator.bloom
             let fieldSize = bloomFieldSize(width: Int(width), height: Int(height))
-            // Each dive's field afresh, then the colour from them at the drawable's size.
-            func field(_ layer: Int) -> MTLTexture? {
-                guard let target = targets.bloomField(layer: layer, width: fieldSize.width, height: fieldSize.height),
+            // Each dive's field afresh, then its smooth colour, then the light
+            // from them at the drawable's size. While one dive hands over to the
+            // next, the fainter of the two is worked out at half the resolution.
+            func dive(_ layer: Int, faint: Bool) -> Targets.BloomField? {
+                let size = faint ? (max(1, fieldSize.width / 2), max(1, fieldSize.height / 2)) : fieldSize
+                guard let target = targets.bloomField(layer: layer, width: size.0, height: size.1),
                       let encoder = command.makeRenderCommandEncoder(descriptor: target.pass) else { return nil }
-                var passUniforms = BloomPassUniforms(layer: Int32(layer), pixel: 2 / Float(fieldSize.height))
+                var passUniforms = BloomPassUniforms(layer: Int32(layer), pixel: 2 / Float(size.1))
                 encoder.setRenderPipelineState(pipelines.bloomField)
                 encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
                 encoder.setFragmentBytes(&passUniforms, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 encoder.endEncoding()
-                return target.texture
+                guard let soft = command.makeRenderCommandEncoder(descriptor: target.softPass) else { return nil }
+                soft.setRenderPipelineState(pipelines.bloomSoft)
+                soft.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
+                soft.setFragmentBytes(&passUniforms, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
+                soft.setFragmentTexture(target.texture, index: 0)
+                soft.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                soft.endEncoding()
+                return target
             }
-            guard let current = field(0) else { return false }
-            let incoming = rig.next == nil ? current : field(1) ?? current
+            let handing = rig.next != nil
+            guard let current = dive(0, faint: handing && rig.blend > 0.5) else { return false }
+            let next = handing ? dive(1, faint: rig.blend <= 0.5) ?? current : current
             guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
             encoder.setRenderPipelineState(pipelines.bloom)
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-            encoder.setFragmentTexture(current, index: 0)
-            encoder.setFragmentTexture(incoming, index: 1)
+            encoder.setFragmentTextures([current.texture, next.texture] + current.soft + next.soft, range: 0..<8)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
         }

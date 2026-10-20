@@ -52,7 +52,7 @@ struct BloomRig {
     /// Iterations per pixel. Pixels that haven't escaped or settled onto a
     /// cycle by then are drawn as the edge of a bulb. It never changes, so a
     /// pixel carried over from the last frame matches one worked out afresh.
-    static let iterations: Float = 900
+    static let iterations: Float = 600
 
     /// The dive under way, and how far down it is (0…1).
     private(set) var destination: Int

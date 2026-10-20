@@ -77,26 +77,34 @@ final class LibraryModel {
         for state in liked.values { state.value = nil }
     }
 
+    /// Everything loads at once and shows as it arrives: Home's shelves don't
+    /// wait for the last page of a long playlist list.
     func refresh() async {
         loadError = nil
+        await withDiscardingTaskGroup { group in
+            group.addTask { await self.loadAccount() }
+            // Home shelves are optional: show what loads.
+            group.addTask { await self.loadRecent() }
+            group.addTask { await self.loadTopArtists() }
+            group.addTask { await self.loadSavedAlbums() }
+        }
+    }
+
+    private func loadRecent() async { recent = (try? await api.recentlyPlayed()) ?? [] }
+    private func loadTopArtists() async { topArtists = (try? await api.topArtists()) ?? [] }
+    private func loadSavedAlbums() async { savedAlbums = (try? await api.savedAlbums()) ?? [] }
+
+    private func loadAccount() async {
         async let me = api.me()
         async let lists = api.myPlaylists()
-        async let history = api.recentlyPlayed()
-        async let artists = api.topArtists()
-        async let albums = api.savedAlbums()
         do {
             profile = try await me
             playlists = try await lists
         } catch TokenError.notAuthorized {
             connection = .disconnected
-            return
         } catch {
             loadError = error.localizedDescription
         }
-        // Home shelves are optional: show what loads.
-        recent = (try? await history) ?? []
-        topArtists = (try? await artists) ?? []
-        savedAlbums = (try? await albums) ?? []
     }
 
     /// Development Mode lists tracks only for playlists the user owns or collaborates on.

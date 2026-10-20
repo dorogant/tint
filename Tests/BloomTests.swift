@@ -99,7 +99,7 @@ enum BloomSong {
 }
 
 /// A whole song in sections, written as analysis layers like `BloomSong`, so
-/// Bloom has sections to change shape at: a pad intro, a verse, an
+/// Bloom has sections to play through: a pad intro, a verse, an
 /// eight-second build ending in a snare roll, the drop into a chorus, a
 /// breakdown and a last chorus. 120 BPM, one chord a bar (C, A minor, F, G).
 enum BloomLongSong {
@@ -194,12 +194,17 @@ extension BackgroundTests {
         }
     }
 
-    /// Analysis frames holding `pitch`, with a drop a second in, so the rig takes
-    /// that pitch class's shape (C is the shape it starts on, so it needs none).
-    static func showing(_ pitch: Int, mid: Float = 0.3, seconds: Float) -> [SpectrumFrame] {
-        var frames = BloomSong.held(pitch: Float(pitch), tonality: 1, mid: mid, seconds: seconds)
-        if pitch != 0 { frames[30].layers.drop = 1 }
-        return frames
+    /// An animator `progress` along the dive into `destination`, as configured.
+    static func diving(_ destination: Int, at progress: Double, _ configuration: BackgroundConfiguration) -> BackgroundAnimator {
+        var animator = BackgroundAnimator()
+        animator.configure(configuration, animated: false)
+        animator.bloom = BloomRig(destination: destination, progress: progress)
+        return animator
+    }
+
+    /// Where along the dive into `destination` the next one starts fading in.
+    static func handoffStart(_ destination: Int) -> Double {
+        1 - BloomRig.handoff / BloomRig.destinations[destination].depth
     }
 
     static func bloomChecks(device: MTLDevice) {
@@ -222,33 +227,34 @@ extension BackgroundTests {
         check(silentStep < 0.0015 && silentSecond < 0.01, "Bloom must be still in silence (\(silentStep) a frame, \(silentSecond) over 2 s)")
         check(silentFrames.last!.meanLuma > 0.01, "Bloom in silence must stay visible, just dim")
 
-        // The zoom is endless: where a repeat ends and the next begins, the
-        // picture changes no more than between any two frames.
-        var music = BackgroundAnimator()
-        music.configure(BackgroundConfiguration(kind: .bloom, colors: sunset, speed: 2), animated: false)
-        var steps: [Float] = [], wraps: [Int] = []
-        var previous: RenderedFrame?, phase: Float = 0
-        playBloom(&music, BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 14), renderer: renderer) { animator, frame, i in
+        // The dive is endless: as one dive hands over to the next, and where the
+        // next takes over, the picture changes no more than between any two frames.
+        let fast = BackgroundConfiguration(kind: .bloom, colors: sunset, speed: 2)
+        var music = diving(0, at: handoffStart(0) - 0.4 / BloomRig.destinations[0].depth, fast)
+        var steps: [Float] = [], blending: [Int] = [], takeover: Int?
+        var previous: RenderedFrame?
+        playBloom(&music, BloomSong.held(pitch: 7, tonality: 1, loudness: 0.6, seconds: 18), renderer: renderer) { animator, frame, _ in
             if let previous { steps.append(frame.difference(from: previous)) }
-            if animator.bloom.layer.phase < phase { wraps.append(steps.count - 1) }
-            phase = animator.bloom.layer.phase
+            if animator.bloom.next != nil { blending.append(steps.count - 1) }
+            if takeover == nil, animator.bloom.destination != 0 { takeover = steps.count - 1 }
             previous = frame
         }
-        let typical = steps.suffix(200).sorted()[100]
-        let worstWrap = wraps.map { steps[$0] }.max() ?? 0
-        print(String(format: "Bloom zoom: %d repeats in 14 s, change across a repeat's end %.5f, typical frame %.5f",
-                     wraps.count, worstWrap, typical))
-        check(!wraps.isEmpty, "the zoom must pass from one repeat into the next")
-        check(worstWrap < 2.5 * typical + 0.0005, "the zoom must run seamlessly from one repeat into the next (\(worstWrap) vs \(typical))")
-        check(typical > silentStep, "with music the zoom must move (\(typical) a frame)")
+        let typical = steps.prefix(60).sorted()[30]
+        let worstBlend = blending.map { steps[$0] }.max() ?? 0
+        let atTakeover = takeover.map { steps[$0] } ?? 0
+        print(String(format: "Bloom handoff: %.1f s fading in, change at most %.5f a frame meanwhile and %.5f as it takes over, typical %.5f",
+                     Float(blending.count) / 30, worstBlend, atTakeover, typical))
+        check(takeover != nil && music.bloom.destination == 7, "the next dive must take over, the one the harmony names (\(music.bloom.destination))")
+        check(blending.count > 60, "the next dive must fade in over seconds (\(blending.count) frames)")
+        check(worstBlend < 2.5 * typical + 0.0005 && atTakeover < 2.5 * typical + 0.0005,
+              "one dive must run seamlessly into the next (\(worstBlend), \(atTakeover) vs \(typical))")
+        check(typical > silentStep, "with music the dive must move (\(typical) a frame)")
 
-        // A kick pushes the zoom on, not the brightness: against a twin that never heard it.
+        // A kick pushes the dive on, not the brightness: against a twin that never heard it.
         let held = BloomSong.held(pitch: 0, tonality: 0, seconds: 3)
         var hit = held
         hit[45].layers.kick = 1
-        var kicked = BackgroundAnimator(), twin = BackgroundAnimator()
-        kicked.configure(settings, animated: false)
-        twin.configure(settings, animated: false)
+        var kicked = diving(0, at: 0.4, settings), twin = diving(0, at: 0.4, settings)
         var twinFrames: [RenderedFrame] = []
         playBloom(&twin, held, renderer: renderer) { _, frame, _ in twinFrames.append(frame) }
         var apart: [Float] = [], lumaRatio: [Float] = []
@@ -259,31 +265,34 @@ extension BackgroundTests {
         print(String(format: "Bloom kick: ahead of the twin by %.4f a second on; mean luma within %.1f%%…%.1f%% of it",
                      apart[75], (lumaRatio.min()! - 1) * 100, (lumaRatio.max()! - 1) * 100))
         check(apart[..<45].allSatisfy { $0 == 0 }, "the twins must match before the kick")
-        check(apart[75] > 0, "a kick must push the zoom on")
+        check(apart[75] > 0, "a kick must push the dive on")
         check(lumaRatio.allSatisfy { abs($0 - 1) < 0.1 }, "a kick must not change the brightness (\(lumaRatio.min()!)…\(lumaRatio.max()!))")
 
-        // Harmony picks the next shape: G after a new section draws a different set from C.
-        var c = BackgroundAnimator(), g = BackgroundAnimator()
-        c.configure(settings, animated: false)
-        g.configure(settings, animated: false)
+        // Harmony picks the next dive: G as the handoff begins sends it down a
+        // different valley from C. Every dive sets out from the whole set, so
+        // they part only once the next has taken over.
+        let early = handoffStart(0) - 0.15 / BloomRig.destinations[0].depth
+        var c = diving(0, at: early, fast), g = diving(0, at: early, fast)
         var cFrame: RenderedFrame?, gFrame: RenderedFrame?
-        playBloom(&c, showing(0, seconds: 6), renderer: renderer) { _, frame, _ in cFrame = frame }
-        playBloom(&g, showing(7, seconds: 6), renderer: renderer) { _, frame, _ in gFrame = frame }
-        check(cFrame!.difference(from: gFrame!) > 0.01, "C and G must play different shapes")
+        playBloom(&c, BloomSong.held(pitch: 0, tonality: 1, loudness: 0.6, seconds: 22), renderer: renderer) { _, frame, _ in cFrame = frame }
+        playBloom(&g, BloomSong.held(pitch: 7, tonality: 1, loudness: 0.6, seconds: 22), renderer: renderer) { _, frame, _ in gFrame = frame }
+        check(c.bloom.destination != 0 && c.bloom.destination != g.bloom.destination,
+              "C and G must take different dives (\(c.bloom.destination), \(g.bloom.destination))")
+        check(cFrame!.difference(from: gFrame!) > 0.01, "C and G must head into different valleys (\(cFrame!.difference(from: gFrame!)))")
 
         // The bulbs' light is soft, with no lines in it.
         if let large = try? OffscreenRenderer(device: device, width: 640, height: 400) {
-            for pitch in [0, 3, 9] {
-                let (frame, heart) = heldHeart(pitch: pitch, mid: 0.8, seconds: 6, renderer: large, settings: settings)
+            for (destination, progress) in Self.hearts {
+                let (frame, heart) = heldHeart(destination, at: progress, mid: 0.8, renderer: large, settings: settings)
                 let (lines, share) = heartLines(frame, heart: heart)
-                print(String(format: "Bloom bulbs (pitch class %d, vocal): fine structure %.4f over %.0f%% of the frame", pitch, lines, share * 100))
-                check(share > 0.03 && lines < 0.004, "the bulbs must glow without lines (\(lines) over \(share) of the frame)")
+                print(String(format: "Bloom bulbs (dive %d at %.2f, vocal): fine structure %.4f over %.0f%% of the frame", destination, progress, lines, share * 100))
+                check(share > 0.02 && lines < 0.004, "the bulbs must glow without lines (\(lines) over \(share) of the frame)")
             }
         }
 
         // Photosensitivity and legibility through the song and through a frantic
-        // groove at the brightest settings: no region flashes more than three
-        // times a second, and text stays readable.
+        // groove at the brightest settings, at the start of a dive and near its
+        // end: no region flashes more than three times a second, and text stays readable.
         let frantic = SyntheticTrack(kicksPerSecond: 8, kick: 0.95, bass: 0.3, pad: 0.25, hats: 0.12, snare: 0.4, kickOffset: 1)
         var franticFrames = SyntheticTrack.frames([(SyntheticTrack(pad: 0.08), 1), (frantic, 4)])
         for i in stride(from: 45, to: franticFrames.count, by: 20) { franticFrames[i].layers.drop = 1 }
@@ -291,26 +300,28 @@ extension BackgroundTests {
                                                 reactivity: 2, speed: 2, glow: 2, punch: 2, vividness: 1.5)
         for (name, frames, configuration) in [("song, defaults", BloomSong.frames(), settings), ("frantic, brightest", franticFrames, brightest),
                                               ("frantic, defaults", franticFrames, settings)] {
-            var animator = BackgroundAnimator()
-            animator.configure(configuration, animated: false)
-            var cells: [[Float]] = Array(repeating: [], count: 17)
-            var brightestLuma: Float = 0, meanest: Float = 0
-            playBloom(&animator, frames, renderer: renderer) { _, frame, i in
-                guard i >= 15 else { return }
-                let grid = frame.relativeLuminance(columns: 4, rows: 4)
-                for (c, value) in grid.enumerated() { cells[c].append(value) }
-                cells[16].append(grid.reduce(0, +) / 16)
-                brightestLuma = max(brightestLuma, frame.maxLuma)
-                meanest = max(meanest, frame.meanLuma)
+            for (destination, progress) in [(0, 0.0), (3, 0.5), (1, handoffStart(1))] {
+                var animator = diving(destination, at: progress, configuration)
+                var cells: [[Float]] = Array(repeating: [], count: 17)
+                var brightestLuma: Float = 0, meanest: Float = 0
+                playBloom(&animator, frames, renderer: renderer) { _, frame, i in
+                    guard i >= 15 else { return }
+                    let grid = frame.relativeLuminance(columns: 4, rows: 4)
+                    for (c, value) in grid.enumerated() { cells[c].append(value) }
+                    cells[16].append(grid.reduce(0, +) / 16)
+                    brightestLuma = max(brightestLuma, frame.maxLuma)
+                    meanest = max(meanest, frame.meanLuma)
+                }
+                let worst = cells.map { mostFlashesPerSecond(transitions($0)) }.max()!
+                let whole = mostFlashesPerSecond(transitions(cells[16]))
+                let label = "\(name), dive \(destination) at \(String(format: "%.2f", progress))"
+                print(String(format: "Bloom %@: at most %d WCAG flashes a second over the frame, %d in any region; peak luma %.2f, mean at most %.3f",
+                             label, whole, worst, brightestLuma, meanest))
+                check(worst <= 3 && whole == 0, "\(label): Bloom must never flash (\(whole) a second over the frame, \(worst) in a region)")
+                // As for Fluid: the presets' looks stay under 0.2, the brightest settings on a pale cover under 0.32.
+                let darkEnough: Float = configuration == brightest ? 0.32 : 0.2
+                check(brightestLuma <= legibleLuma && meanest < darkEnough, "\(label): Bloom must stay dark enough for text (peak \(brightestLuma), mean \(meanest))")
             }
-            let worst = cells.map { mostFlashesPerSecond(transitions($0)) }.max()!
-            let whole = mostFlashesPerSecond(transitions(cells[16]))
-            print(String(format: "Bloom %@: at most %d WCAG flashes a second over the frame, %d in any region; peak luma %.2f, mean at most %.3f",
-                         name, whole, worst, brightestLuma, meanest))
-            check(worst <= 3 && whole == 0, "\(name): Bloom must never flash (\(whole) a second over the frame, \(worst) in a region)")
-            // As for Fluid: the presets' looks stay under 0.2, the brightest settings on a pale cover under 0.32.
-            let darkEnough: Float = configuration == brightest ? 0.32 : 0.2
-            check(brightestLuma <= legibleLuma && meanest < darkEnough, "\(name): Bloom must stay dark enough for text (peak \(brightestLuma), mean \(meanest))")
         }
 
         // The window-sized drawable renders like the small one.
@@ -320,27 +331,91 @@ extension BackgroundTests {
             let frame = large.render(c)
             check(frame.meanLuma > 0.01 && frame.maxLuma <= legibleLuma, "the window-sized Bloom must render (\(frame.meanLuma))")
         }
+        bloomCarryChecks(device: device)
     }
+
+    /// Carrying most of the field over from frame to frame looks like working
+    /// every pixel out afresh: through the song (kicks, the build, the drop),
+    /// 8×8 blocks of the carried frames stay as bright as fresh ones, with a
+    /// fresh block in 8 each frame, or in 16 as on a costly stretch. A speck
+    /// of a bulb a pixel wide may come and go, as it does from frame to frame anyway.
+    static func bloomCarryChecks(device: MTLDevice) {
+        guard let carried = try? OffscreenRenderer(device: device, width: 960, height: 600),
+              let fresh = try? OffscreenRenderer(device: device, width: 960, height: 600) else { return }
+        var other = BackgroundAnimator()
+        other.configure(BackgroundConfiguration(kind: .fluid, colors: Covers.palette(Covers.sunset)), animated: false)
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        var worstMean: Float = 0, worstRare: Float = 0
+        var pairs: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        for (destination, progress, turns) in [(0, 0.3, 8), (3, 0.6, 16), (1, 0.85, 8), (1, 0.85, 16)] {
+            var mean: Float = 0, rare: Float = 0
+            for _ in 0..<200 { carried.targets.recordBloomFrame(milliseconds: turns == 16 ? 100 : 0) }
+            var animator = diving(destination, at: progress, settings)
+            playBloom(&animator, BloomSong.frames(), renderer: carried) { animator, frame, i in
+                guard i % 50 == 49 else { return }
+                _ = fresh.render(other) // lets the fresh renderer's fields go
+                let truth = fresh.render(animator)
+                var blocks: [Float] = []
+                for by in 0..<(frame.height / 8) {
+                    for bx in 0..<(frame.width / 8) {
+                        var sum: Float = 0
+                        for y in (by * 8)..<(by * 8 + 8) { for x in (bx * 8)..<(bx * 8 + 8) { sum += frame.luma(x, y) - truth.luma(x, y) } }
+                        blocks.append(abs(sum) / 64)
+                    }
+                }
+                blocks.sort()
+                mean = max(mean, blocks.reduce(0, +) / Float(blocks.count))
+                rare = max(rare, blocks[blocks.count * 99 / 100])
+                if i == 249 {
+                    pairs.append((frame.crop(x: 480, y: 150, width: 480, height: 300), "dive \(destination), carried, a block in \(turns) afresh", nil))
+                    pairs.append((truth.crop(x: 480, y: 150, width: 480, height: 300), "afresh", nil))
+                }
+            }
+            print(String(format: "Bloom carried over, dive %d from %.2f, a block in %d afresh: 8×8 blocks %.4f from afresh on average, %.4f for the worst 1%%",
+                         destination, progress, turns, mean, rare))
+            // A block in 16 is carried twice as far, so it may stray twice as far.
+            worstMean = max(worstMean, mean * 8 / Float(turns))
+            worstRare = max(worstRare, rare * 8 / Float(turns))
+        }
+        if let directory = bloomOutput {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            strip(pairs, to: directory.appendingPathComponent("carried.png"), columns: 2, scale: 1)
+        }
+        check(worstMean < 0.004 && worstRare < 0.06, "carrying Bloom's field over must look like working it out afresh (\(worstMean), worst 1% \(worstRare))")
+    }
+
+    /// Where the bulbs are big: the whole set, and two dives passing large ones early on.
+    static let hearts: [(Int, Double)] = [(0, 0), (2, 0.15), (4, 0.15)]
 
     /// What plays what, frame by frame on the rig alone, as the app steps it
     /// (analysis at 30 Hz, display at 60).
     static func bloomMappingChecks() {
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
-        func rig(_ frames: [SpectrumFrame], configuration: BackgroundConfiguration = settings,
+        func rig(_ frames: [SpectrumFrame], configuration: BackgroundConfiguration = settings, from start: BloomRig = BloomRig(),
                  each: (BloomRig, Int) -> Void = { _, _ in }) -> BloomRig {
             var animator = BackgroundAnimator()
             animator.configure(configuration, animated: false)
+            animator.bloom = start
             play(&animator, frames) { animator, _, display in each(animator.bloom, display) }
             return animator.bloom
         }
 
-        // Every shape repeats itself unturned, so the zoom never spins, and is placed finely enough.
-        for (index, (p, q)) in BloomRig.shapes.enumerated() {
-            let shape = BloomShape(p: p, q: q, depth: BloomRig.restingDepth)
-            let turn = Float(q) * atan2(shape.lambda.y, shape.lambda.x)
-            check(abs(turn - (turn / (2 * .pi)).rounded() * 2 * .pi) < 1e-4, "shape \(index) must repeat unturned (\(turn))")
-            check(shape.reach > 0.15 && shape.reach < 0.6, "shape \(index)'s series must reach out a fair way (\(shape.reach))")
-            check(shape.settling > 0.001 && shape.contraction > 0.05, "shape \(index) must have bulbs to settle in (\(shape.settling), \(shape.contraction))")
+        // Every destination is a copy of the set: its orbit comes back to 0 after
+        // its period, it lies a good way down, and the dive turns gently, if at all.
+        for (index, d) in BloomRig.destinations.enumerated() {
+            var z = Complex(0, 0)
+            for _ in 0..<d.period { z = z * z + d.nucleus }
+            let turn = atan2(d.scale.im, d.scale.re)
+            print(String(format: "Bloom dive %d: period %d, %.1f e-folds down, turning %.0f° on the way, heading for (%.2f, %.2f) on the screen",
+                         index, d.period, d.depth, turn * 180 / .pi, d.focus.x, d.focus.y))
+            check(z.magnitude < 1e-9, "dive \(index)'s nucleus must be periodic (\(z.magnitude))")
+            check(d.depth > 7 && d.depth < 16, "dive \(index) must go a good way down (\(d.depth) e-folds)")
+            check(abs(d.focus.x) < 1.6 && abs(d.focus.y) < 1, "dive \(index) must head for a point on the screen (\(d.focus))")
+            // Its end frames the copy as its start frames the whole set.
+            let end = d.view(along: d, at: 1, scale: 1)
+            let expected = d.scale * BloomRig.home
+            check((end.offset - expected).magnitude < 1e-9 * d.scale.magnitude && (end.perScreenUnit - d.scale * BloomRig.span).magnitude < 1e-9 * d.scale.magnitude,
+                  "dive \(index) must end framing its copy as the whole set")
         }
 
         // Pace: all but still in silence, faster when louder, quickest at a build's end; eased after the drop.
@@ -349,37 +424,55 @@ extension BackgroundTests {
         let loud = rig(BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 6))
         print(String(format: "Bloom pace: %.3f e-folds a second in silence, %.3f soft, %.3f loud", silent.pace, soft.pace, loud.pace))
         check(silent.pace < 0.004 && soft.pace > silent.pace * 2 && loud.pace > soft.pace * 1.2 && loud.pace < 0.08,
-              "the zoom's pace must follow the loudness, gently (\(silent.pace), \(soft.pace), \(loud.pace))")
+              "the dive's pace must follow the loudness, gently (\(silent.pace), \(soft.pace), \(loud.pace))")
 
         var build = BloomSong.held(pitch: 0, tonality: 1, loudness: 0.5, seconds: 16)
         for i in build.indices { build[i].layers.build = i < 240 ? Float(i) / 240 : 0 }
         build[240].layers.drop = 1
-        var paces: [Float] = [], waves: [Float] = [], incoming: [Bool] = [], focuses: [SIMD2<Float>] = []
-        _ = rig(build) { rig, _ in
-            paces.append(rig.pace); waves.append(rig.wave.strength); incoming.append(rig.incoming != nil); focuses.append(rig.focus)
-        }
+        var paces: [Float] = [], waves: [Float] = []
+        _ = rig(build) { rig, _ in paces.append(rig.pace); waves.append(rig.wave.strength) }
         print(String(format: "Bloom build: pace %.3f halfway, %.3f at its end, %.3f 5 s after the drop", paces[240], paces[479], paces[780]))
-        check(paces[240] < 0.08 && paces[479] > 0.11, "a build must quicken the zoom, mostly in its last stretch (\(paces[240]), \(paces[479]))")
+        check(paces[240] < 0.08 && paces[479] > 0.11, "a build must quicken the dive, mostly in its last stretch (\(paces[240]), \(paces[479]))")
         let cruise = rig(BloomSong.held(pitch: 0, tonality: 1, loudness: 0.5, seconds: 8)).pace
-        check(paces[780] - cruise < 0.25 * (paces[479] - cruise) && waves[481] > 0.5, "the drop must ease the zoom with a wave (\(paces[780]), wave \(waves[481]))")
-        check(incoming[482] && !incoming[482 + 300], "the drop must dissolve to the next shape over a few seconds")
+        check(paces[780] - cruise < 0.25 * (paces[479] - cruise) && waves[481] > 0.5, "the drop must ease the dive with a wave (\(paces[780]), wave \(waves[481]))")
 
         // Comfort: away from builds nothing crosses the screen faster than a few
-        // percent of its height a second, even at the corners, and the zoom's centre only glides.
+        // percent of its height a second, even at the far corner from where the
+        // dive heads, turning and leaning included, and that point only glides.
         var fastest: Float = 0, fastestAnywhere: Float = 0, glide: Float = 0
-        var last = SIMD2<Float>.zero, tense = -1000
-        _ = rig(BloomSong.frames() + BloomLongSong.frames()) { rig, display in
-            let corner = 2.2 * (rig.pace + rig.surge) * settings.speed
+        var last = SIMD2<Float>.zero, lastLean = SIMD2<Float>.zero, tense = -1000
+        _ = rig(BloomSong.frames() + BloomLongSong.frames(), from: BloomRig(destination: 0, progress: handoffStart(0) - 0.02)) { rig, display in
+            let d = BloomRig.destinations[rig.destination]
+            let turn = Float(atan2(d.scale.im, d.scale.re) / d.depth)
+            let reach = simd_length(SIMD2(1.6, 1) + abs(rig.focus))
+            let leaning = display > 0 ? simd_distance(rig.lean, lastLean) * 60 : 0
+            let corner = reach * (1 + turn * turn).squareRoot() * (rig.pace + rig.surge) * settings.speed + leaning
             fastestAnywhere = max(fastestAnywhere, corner)
             if rig.tension > 0.3 { tense = display }
             if display - tense > 240 { fastest = max(fastest, corner) }
             if display > 0 { glide = max(glide, simd_distance(rig.focus, last) * 60) }
             last = rig.focus
+            lastLean = rig.lean
         }
-        print(String(format: "Bloom comfort: corners move at most %.2f half-heights a second outside builds, %.2f in them; the centre at most %.3f",
+        print(String(format: "Bloom comfort: the far corner moves at most %.2f half-heights a second outside builds, %.2f in them; the centre at most %.3f",
                      fastest, fastestAnywhere, glide))
-        check(fastest < 0.25 && fastestAnywhere < 0.45, "the zoom must stay gentle (\(fastest) outside builds, \(fastestAnywhere) in them)")
-        check(glide < 0.08, "the zoom's centre must only glide (\(glide) a second)")
+        check(fastest < 0.25 && fastestAnywhere < 0.45, "the dive must stay gentle (\(fastest) outside builds, \(fastestAnywhere) in them)")
+        check(glide < 0.08, "the dive's centre must only glide (\(glide) a second)")
+
+        // Harmony leans the view a little toward the chord's side: C and G part,
+        // a key-less passage hardly leans, and silence holds the lean where it is.
+        let leanC = rig(BloomSong.held(pitch: 0, tonality: 1, seconds: 40)).lean
+        let leanG = rig(BloomSong.held(pitch: 7, tonality: 1, seconds: 40)).lean
+        let unkeyed = rig(BloomSong.held(pitch: 7, tonality: 0, seconds: 40)).lean
+        var hush = BloomSong.held(pitch: 7, tonality: 1, seconds: 10)
+        let leaning = rig(hush).lean
+        hush += Array(repeating: .quiet, count: 300)
+        let held = rig(hush).lean
+        print(String(format: "Bloom lean: C (%.3f, %.3f), G (%.3f, %.3f), no key %.3f; through 10 s of silence it moves %.4f",
+                     leanC.x, leanC.y, leanG.x, leanG.y, simd_length(unkeyed), simd_distance(held, leaning)))
+        check(simd_distance(leanC, leanG) > 0.1 && simd_length(leanC) <= BloomRig.leanReach * 1.01 && simd_length(unkeyed) < 0.02,
+              "harmony must lean the view a little, its own way for each chord (\(leanC), \(leanG), \(unkeyed))")
+        check(simd_distance(held, leaning) < 0.01, "silence must hold the lean (\(simd_distance(held, leaning)))")
 
         // Kick: a small push on, none at Bass punch 0.
         var kick = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
@@ -388,24 +481,29 @@ extension BackgroundTests {
         var calm = settings
         calm.punch = 0
         let unpushed = rig(Array(kick.prefix(46)), configuration: calm).surge
-        check(pushed > 0.015 && pushed < 0.06 && unpushed == 0, "a kick must push the zoom on a little (\(pushed), \(unpushed) at punch 0)")
+        check(pushed > 0.015 && pushed < 0.06 && unpushed == 0, "a kick must push the dive on a little (\(pushed), \(unpushed) at punch 0)")
 
-        // Sections: harmony picks the next shape; the centre heads elsewhere.
-        for pitch in [3, 7, 11] {
-            let settled = rig(showing(pitch, seconds: 6))
-            check(settled.layer.index == pitch && settled.incoming == nil, "pitch class \(pitch) must play its shape after a section change (\(settled.layer.index))")
+        // Harmony picks the next dive as the handoff begins; never the same one again, and with no clear key it moves on.
+        let count = BloomRig.destinations.count
+        for (pitch, tonality, expected) in [(3, 1, 3), (7, 1, 7), (11, 1, 11 % count), (0, 1, 1), (7, 0, 3)] as [(Int, Float, Int)] {
+            let start = BloomRig(destination: 0, progress: handoffStart(0) - 0.001)
+            let next = rig(BloomSong.held(pitch: Float(pitch), tonality: tonality, seconds: 3), from: start).next
+            check(next == expected, "pitch class \(pitch) at tonality \(tonality) must head for dive \(expected) next (\(String(describing: next)))")
         }
-        check(rig(showing(0, seconds: 6).enumerated().map { var f = $1; if $0 == 30 { f.layers.drop = 1 }; return f }).layer.index != 0,
-              "a new section on the same chord must still bring a new shape")
-        let moved = simd_distance(focuses[479], focuses.last!)
-        check(moved > 0.15, "a new section must move the zoom's centre (\(moved))")
-        var changes: [Float] = []
-        var index = 0
-        _ = rig(BloomLongSong.frames()) { rig, display in
-            if rig.layer.index != index { changes.append(Float(display) / 60); index = rig.layer.index }
+
+        // Over a long while the dives follow one another, each taking over where the last ended.
+        var loudFast = settings
+        loudFast.speed = 2
+        var order = [0], jumps: Float = 0
+        last = BloomRig().focus
+        _ = rig(BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 600), configuration: loudFast) { rig, _ in
+            if rig.destination != order.last! { order.append(rig.destination) }
+            jumps = max(jumps, simd_distance(rig.focus, last) * 60)
+            last = rig.focus
         }
-        print("Bloom long song: new shapes in at " + changes.map { String(format: "%.1f s", $0) }.joined(separator: ", "))
-        check(changes.count >= 1 && changes.count <= 3, "the long song must change shape at its sections, not more (\(changes))")
+        print("Bloom over ten minutes: dives " + order.map(String.init).joined(separator: " → "))
+        check(order.count >= 4 && zip(order, order.dropFirst()).allSatisfy { $0 != $1 }, "the dives must follow one another (\(order))")
+        check(jumps < 0.08, "the dive's centre must glide from one dive to the next (\(jumps) a second)")
 
         // Hat: a glint that's gone within 120 ms.
         var hat = BloomSong.held(pitch: 0, tonality: 1, seconds: 2)
@@ -423,8 +521,8 @@ extension BackgroundTests {
 
     // MARK: - Bloom renders
 
-    /// Renders for looking at, when FLOE_BLOOM_RENDERS names a directory: the
-    /// twelve pitch-class shapes, the scripted song frame by frame at 30 fps
+    /// Renders for looking at, when FLOE_BLOOM_RENDERS names a directory: each
+    /// dive on its way down, a handoff, the scripted song frame by frame at 30 fps
     /// with a contact sheet of every tenth frame, and the long song.
     static func bloomRenders(device: MTLDevice) {
         guard let directory = bloomOutput else { return }
@@ -432,46 +530,33 @@ extension BackgroundTests {
         try? FileManager.default.createDirectory(at: song, withIntermediateDirectories: true)
         let colors = Covers.palette(Covers.sunset)
         let settings = BackgroundConfiguration(kind: .bloom, colors: colors)
-
-        // The twelve shapes, each settled in with clear harmony.
         guard let small = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
-        let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
-        var shapes: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        for (pitch, name) in names.enumerated() {
-            var animator = BackgroundAnimator()
-            animator.configure(settings, animated: false)
-            var last: RenderedFrame?
-            playBloom(&animator, showing(pitch, seconds: 6), renderer: small) { _, frame, _ in last = frame }
-            let (p, q) = BloomRig.shapes[pitch]
-            shapes.append((last!, "\(name)  \(p)/\(q)", nil))
-        }
-        strip(shapes, to: directory.appendingPathComponent("shapes.png"), columns: 4, scale: 0.5)
+        bloomDiveRenders(device: device)
 
-        // One repeat of the zoom, in eight steps: the last frame leads back into the first.
-        var zoom: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        var animator = BackgroundAnimator()
-        animator.configure(settings, animated: false)
-        let loud = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.6, seconds: 1)[0]
-        for _ in 0..<60 { animator.advance(by: 1 / 30, frame: loud) }
+        // One handoff, in eight steps, from before the next dive fades in to after it takes over.
+        var handoff: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var animator = diving(0, at: handoffStart(0) - 0.2 / BloomRig.destinations[0].depth, settings)
+        let loud = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.6, seconds: 1)[0]
         for _ in 0..<8 {
-            zoom.append((small.render(animator), String(format: "phase %.3f", animator.bloom.layer.phase), nil))
-            let start = animator.bloom.layer.phase
-            var progress: Float = 0
-            while progress < 0.125 {
-                animator.advance(by: 1 / 60, frame: loud)
-                progress = animator.bloom.layer.phase - start
-                progress -= progress.rounded(.down)
-                if progress > 0.9 { progress = 0 }
+            handoff.append((small.render(animator), String(format: "dive %d at %.3f, blend %.2f", animator.bloom.destination, animator.bloom.progress, animator.bloom.blend), nil))
+            let efolds = 1.6 / 8
+            var travelled = 0.0
+            while travelled < efolds {
+                let before = animator.bloom.progress * BloomRig.destinations[animator.bloom.destination].depth
+                let was = animator.bloom.destination
+                animator.advance(by: 1 / 30, frame: loud)
+                travelled += was == animator.bloom.destination
+                    ? animator.bloom.progress * BloomRig.destinations[was].depth - before
+                    : animator.bloom.progress * BloomRig.destinations[animator.bloom.destination].depth + BloomRig.destinations[was].depth - before
             }
         }
-        strip(zoom, to: directory.appendingPathComponent("zoom.png"), columns: 4, scale: 0.5)
+        strip(handoff, to: directory.appendingPathComponent("handoff.png"), columns: 4, scale: 0.5)
 
         // Each kind of cover at the same moments: before the beat, the vocal swell, just after the drop.
         var palettes: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         for (name, cover) in [("sunset", Covers.palette(Covers.sunset)), ("ocean", Covers.palette(Covers.ocean)),
                               ("navy", Covers.palette(Covers.navy)), ("neutral", neutral)] {
-            var animator = BackgroundAnimator()
-            animator.configure(BackgroundConfiguration(kind: .bloom, colors: cover, neutral: name == "neutral"), animated: false)
+            var animator = diving(3, at: 0.45, BackgroundConfiguration(kind: .bloom, colors: cover, neutral: name == "neutral"))
             playBloom(&animator, BloomSong.frames().prefix(300).map { $0 }, renderer: small) { _, frame, i in
                 if [55, 172, 295].contains(i) { palettes.append((frame, "\(name), \(String(format: "%.1f s", Float(i) / 30))", nil)) }
             }
@@ -481,8 +566,7 @@ extension BackgroundTests {
         // At the drawable size of a 1440×900 pt window, as the app draws it, and a crop at 100%.
         let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1440, height: 900), scale: 2, kind: .bloom)
         if let large = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) {
-            var animator = BackgroundAnimator()
-            animator.configure(settings, animated: false)
+            var animator = diving(0, at: 0.5, settings)
             var shot: RenderedFrame?
             playBloom(&animator, BloomSong.frames().prefix(190).map { $0 }, renderer: large) { _, frame, i in
                 if i == 189 { shot = frame }
@@ -496,8 +580,7 @@ extension BackgroundTests {
 
         // The song, at 960×600, every frame.
         guard let renderer = try? OffscreenRenderer(device: device, width: 960, height: 600) else { return }
-        var player = BackgroundAnimator()
-        player.configure(settings, animated: false)
+        var player = diving(0, at: 0.3, settings)
         var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         let frames = BloomSong.frames()
         playBloom(&player, frames, renderer: renderer) { _, frame, i in
@@ -510,70 +593,78 @@ extension BackgroundTests {
             sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
         }
         strip(sheet, to: directory.appendingPathComponent("song-sheet.png"), columns: 6, scale: 0.3)
-        print("Bloom renders: \(directory.path)/shapes.png, zoom.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
+        print("Bloom renders: \(directory.path)/dives.png, handoff.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
         bloomHeartRenders(device: device, directory: directory)
         bloomLongSongRenders(device: device, directory: directory)
     }
 
-    /// The last frame of a shape held for `seconds` with the mids at `mid`, and which of its pixels lie in the bulbs.
-    static func heldHeart(pitch: Int, mid: Float, seconds: Float, renderer: OffscreenRenderer,
-                          settings: BackgroundConfiguration) -> (frame: RenderedFrame, heart: [Bool]) {
-        var animator = BackgroundAnimator()
-        animator.configure(settings, animated: false)
-        var last: RenderedFrame?
-        playBloom(&animator, showing(pitch, mid: mid, seconds: seconds), renderer: renderer) { _, frame, _ in last = frame }
-        let (width, height) = (last!.width, last!.height)
-        return (last!, heartPixels(animator.bloomUniforms(width: Float(width), height: Float(height)), width: width, height: height))
-    }
+    /// Each dive at five depths, settled in with some music.
+    static func bloomDiveRenders(device: MTLDevice) {
+        guard let directory = bloomOutput, let small = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let music = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.5, mid: 0.4, seconds: 1)
 
-    /// Which pixels of a frame lie in the bulbs (orbits that settle onto the
-    /// attracting cycle), from the uniforms the frame was drawn with, iterated
-    /// on the CPU the way the shader does.
-    static func heartPixels(_ u: BloomUniforms, width: Int, height: Int) -> [Bool] {
-        func times(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> SIMD2<Float> { SIMD2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x) }
-        let s = u.shapes.0
-        let aspect = Float(width) / Float(height)
-        let lambda = SIMD2(s.counts.x, s.counts.y)
-        let c = SIMD2(s.fixed.x, s.fixed.y), alpha = SIMD2(s.fixed.z, s.fixed.w), cycle = SIMD2(s.cycle.x, s.cycle.y)
-        let terms = [s.series.0, s.series.1, s.series.2, s.series.3].flatMap { [SIMD2($0.x, $0.y), SIMD2($0.z, $0.w)] }
-        let focus = SIMD2(u.size.z, u.size.w)
-        let n = Int(u.view.x)
-        var mask = [Bool](repeating: false, count: width * height)
-        for y in 0..<height {
-            for x in 0..<width {
-                // As in the shader: the series near α, then out to the set by steps of z ← z² + c.
-                let v = SIMD2((2 * (Float(x) + 0.5) / Float(width) - 1) * aspect, 1 - 2 * (Float(y) + 0.5) / Float(height))
-                let w = s.zoom.x * (v - focus)
-                let placing = min(160, max(0, Int(((logf(max(simd_length(w), 1e-15)) - s.zoom.w) / s.zoom.y).rounded(.up))))
-                let turn = -Float(placing) * s.zoom.z
-                let inward = expf(-Float(placing) * s.zoom.y) * SIMD2(cosf(turn), sinf(turn))
-                let point = times(w, inward)
-                var sum = terms[7], slope = SIMD2<Float>.zero
-                for k in stride(from: 6, through: 0, by: -1) {
-                    slope = times(slope, point) + sum
-                    sum = times(sum, point) + terms[k]
-                }
-                var d = times(point, sum), dz = s.zoom.x * times(sum + times(point, slope), inward)
-                var far = false
-                for _ in 0..<placing {
-                    dz = times(dz, lambda + 2 * d)
-                    d = times(d, lambda + d)
-                    if simd_length_squared(d) > 1024 { far = true; break }
-                }
-                if far { continue }
-                var z = alpha + d
-                var state = 0
-                for _ in 0..<n {
-                    dz = 2 * times(z, dz)
-                    z = times(z, z) + c
-                    if simd_length_squared(z) > 1024 { state = 1; break }
-                    if simd_distance_squared(z, cycle) < s.cycle.w { state = 2; break }
-                }
-                // As in the shader: an orbit still going that has stopped stretching is settling slowly.
-                mask[y * width + x] = state == 2 || state == 0 && simd_length_squared(dz) < 1e6
+        var dives: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        for (index, d) in BloomRig.destinations.enumerated() {
+            for progress in [0.15, 0.35, 0.55, 0.75, handoffStart(index) - 0.01] {
+                var animator = diving(index, at: progress, settings)
+                var last: RenderedFrame?
+                playBloom(&animator, music, renderer: small) { _, frame, _ in last = frame }
+                dives.append((last!, String(format: "dive %d (period %d), %.1f e-folds down", index, d.period, progress * d.depth), nil))
             }
         }
-        return mask
+        strip(dives, to: directory.appendingPathComponent("dives.png"), columns: 5, scale: 0.5)
+
+        // The deepest any dive goes, alone (no next dive fading in over it), at
+        // 100%: single precision must still tell every pixel apart down here.
+        if let large = try? OffscreenRenderer(device: device, width: 960, height: 600),
+           let deepest = BloomRig.destinations.indices.max(by: { BloomRig.destinations[$0].depth < BloomRig.destinations[$1].depth }) {
+            let frame = large.render(diving(deepest, at: 0.999, settings))
+            save(frame.composited(), to: directory.appendingPathComponent("deepest.png"))
+        }
+    }
+
+    /// A dive held a few seconds with the mids at `mid`, its last frame, and which of its pixels lie in the bulbs.
+    static func heldHeart(_ destination: Int, at progress: Double, mid: Float, renderer: OffscreenRenderer,
+                          settings: BackgroundConfiguration) -> (frame: RenderedFrame, heart: [Bool]) {
+        var animator = diving(destination, at: progress, settings)
+        var last: RenderedFrame?
+        playBloom(&animator, BloomSong.held(pitch: 0, tonality: 0, mid: mid, seconds: 3), renderer: renderer) { _, frame, _ in last = frame }
+        let (width, height) = (last!.width, last!.height)
+        return (last!, heartPixels(animator.bloom, iterations: Int(animator.bloomUniforms(width: 1, height: 1).view.x), width: width, height: height))
+    }
+
+    /// Which pixels of a frame lie in the bulbs (orbits that settle onto a
+    /// cycle), iterated in double precision on the CPU with the shader's test.
+    static func heartPixels(_ rig: BloomRig, iterations: Int, width: Int, height: Int) -> [Bool] {
+        let view = rig.views.current
+        let nucleus = BloomRig.destinations[rig.destination].nucleus
+        let aspect = Double(width) / Double(height)
+        let rows = UnsafeMutableBufferPointer<Bool>.allocate(capacity: width * height)
+        defer { rows.deallocate() }
+        rows.initialize(repeating: false)
+        nonisolated(unsafe) let mask = rows
+        DispatchQueue.concurrentPerform(iterations: height) { y in
+            var row = [Bool](repeating: false, count: width)
+            for x in 0..<width {
+                let v = Complex((2 * (Double(x) + 0.5) / Double(width) - 1) * aspect, 1 - 2 * (Double(y) + 0.5) / Double(height))
+                let c = nucleus + view.offset + view.perScreenUnit * v
+                var z = Complex(0, 0), dz = Complex(0, 0), dZ = Complex(1, 0)
+                var state = 0
+                for i in 0..<iterations {
+                    dz = 2 * z * dz + view.perScreenUnit
+                    if i > 0 { dZ = 2 * z * dZ }
+                    z = z * z + c
+                    if z.re * z.re + z.im * z.im > 1024 { state = 1; break }
+                    if i > 0, dZ.re * dZ.re + dZ.im * dZ.im < 1e-10 { state = 2; break }
+                }
+                // As in the shader: an orbit still going that has stopped stretching is settling slowly.
+                row[x] = state == 2 || state == 0 && dz.re * dz.re + dz.im * dz.im < 1e6
+            }
+            for x in 0..<width { mask[y * width + x] = row[x] }
+        }
+        return Array(rows)
     }
 
     /// Fine structure inside the bulbs: the mean absolute difference (0…1)
@@ -604,18 +695,17 @@ extension BackgroundTests {
         return (count > 0 ? sum / Float(count) : 0, Float(count) / Float(w * h))
     }
 
-    /// Three shapes' bulbs with and without a vocal, at 100%.
+    /// Bulbs with and without a vocal, at 100%.
     static func bloomHeartRenders(device: MTLDevice, directory: URL) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 1280, height: 800) else { return }
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
         var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        for pitch in [0, 3, 9] {
+        for (destination, progress) in hearts {
             for mid: Float in [0, 0.8] {
-                let (frame, heart) = heldHeart(pitch: pitch, mid: mid, seconds: 6, renderer: renderer, settings: settings)
+                let (frame, heart) = heldHeart(destination, at: progress, mid: mid, renderer: renderer, settings: settings)
                 let (lines, share) = heartLines(frame, heart: heart)
-                let (p, q) = BloomRig.shapes[pitch]
                 cells.append((frame.crop(x: 320, y: 200, width: 640, height: 400),
-                              String(format: "%d/%d, %@, lines %.4f over %.0f%%", p, q, mid > 0 ? "vocal" : "no vocal", lines, share * 100), nil))
+                              String(format: "dive %d at %.2f, %@, lines %.4f over %.0f%%", destination, progress, mid > 0 ? "vocal" : "no vocal", lines, share * 100), nil))
             }
         }
         strip(cells, to: directory.appendingPathComponent("heart.png"), columns: 2, scale: 1)
@@ -624,8 +714,7 @@ extension BackgroundTests {
     /// The long song, a frame every half second.
     static func bloomLongSongRenders(device: MTLDevice, directory: URL) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
-        var animator = BackgroundAnimator()
-        animator.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
+        var animator = diving(2, at: 0.3, BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)))
         var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         playBloom(&animator, BloomLongSong.frames(), renderer: renderer) { _, frame, i in
             guard i % 15 == 0 else { return }
@@ -638,25 +727,47 @@ extension BackgroundTests {
         strip(sheet, to: directory.appendingPathComponent("long-song-sheet.png"), columns: 8, scale: 0.3)
     }
 
-    /// GPU time per Bloom frame at the sizes the app draws, in its costliest
-    /// states (mid-dissolve, so two shapes, at full detail; and a seven-arm shape held).
+    /// GPU time per Bloom frame at the sizes the app draws, at full detail,
+    /// over every dive at several depths and through a handoff (two dives
+    /// drawn): first with a fresh block in 8 each frame, then as the app
+    /// draws it, a block in 16 wherever 8 would cost more than about 2 ms.
     static func bloomPerformance(device: MTLDevice) {
-        var dissolving = BackgroundAnimator()
-        dissolving.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
-        for frame in BloomSong.frames() + Array(BloomSong.held(pitch: 10, tonality: 1, seconds: 1)) { dissolving.advance(by: 1 / 30, frame: frame) }
-        var resting = BackgroundAnimator()
-        resting.configure(BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)), animated: false)
-        for frame in showing(10, seconds: 6) { resting.advance(by: 1 / 30, frame: frame) }
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        var bright = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.5, seconds: 2)
+        for i in bright.indices { bright[i].layers.high = 1; bright[i].layers.brightness = 1 }
+        var states: [(String, BackgroundAnimator)] = []
+        for (index, _) in BloomRig.destinations.enumerated() {
+            for progress in [0.1, 0.25, 0.5, 0.75, 1 - 0.4 / BloomRig.destinations[index].depth] {
+                var animator = diving(index, at: progress, settings)
+                for frame in bright { animator.advance(by: 1 / 30, frame: frame) }
+                states.append((String(format: "dive %d at %.2f", index, progress), animator))
+            }
+        }
         let windows: [(String, CGSize)] = [("1200x750 pt window", CGSize(width: 1200, height: 750)),
                                            ("1440x900 pt window", CGSize(width: 1440, height: 900)),
                                            ("1728x1117 pt full screen", CGSize(width: 1728, height: 1117))]
         for (name, points) in windows {
             let size = BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .bloom)
             guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
-            let both = renderer.gpuMilliseconds(dissolving)
-            let rest = renderer.gpuMilliseconds(resting)
-            print(String(format: "GPU per frame, %@, Bloom (%dx%d): %.2f ms dissolving (%@), %.2f ms on a seven-arm shape, %.1f%% of the GPU at 60 Hz",
-                         name, Int(size.width), Int(size.height), both, dissolving.bloom.incoming == nil ? "not" : "yes", rest, max(both, rest) * 6))
+            func turns(_ count: Int) {
+                for _ in 0..<200 { renderer.targets.recordBloomFrame(milliseconds: count == 16 ? 100 : 0) }
+            }
+            var eights: [Double] = [], adapted: [(String, Double)] = []
+            for (label, animator) in states {
+                turns(8)
+                let eight = renderer.gpuMilliseconds(animator, frames: 30)
+                eights.append(eight)
+                if eight > 2.2 { turns(16) }
+                adapted.append((label, eight > 2.2 ? renderer.gpuMilliseconds(animator, frames: 30) : eight))
+            }
+            let mean = adapted.map(\.1).reduce(0, +) / Double(adapted.count)
+            let worst = adapted.max { $0.1 < $1.1 }!
+            print(String(format: "GPU per frame, %@, Bloom (%dx%d): %.2f ms on average, %.2f ms at worst (%@), %.1f%% of the GPU at 30 Hz; a block in 8 every frame: %.2f ms on average, %.2f at worst",
+                         name, Int(size.width), Int(size.height), mean, worst.1, worst.0, mean * 3,
+                         eights.reduce(0, +) / Double(eights.count), eights.max()!))
+            if name.hasPrefix("1440") {
+                print("  " + adapted.map { String(format: "%@ %.1f", $0.0, $0.1) }.joined(separator: ", "))
+            }
         }
     }
 

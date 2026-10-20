@@ -38,7 +38,7 @@ final class WebAPI: Sendable {
         decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .custom { decoder in
-            // `added_at` has whole seconds, `played_at` fractional ones.
+            // `added_at` has whole seconds; accept fractional ones too.
             let text = try decoder.singleValueContainer().decode(String.self)
             if let date = try? Date(text, strategy: .iso8601) { return date }
             return try Date(text, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))

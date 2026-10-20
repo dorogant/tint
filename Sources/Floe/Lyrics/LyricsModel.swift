@@ -47,5 +47,4 @@ final class LyricsModel {
             LyricLine(id: index, time: start + Double(index) * spacing, text: texts[index % texts.count])
         }))
     }
-
 }

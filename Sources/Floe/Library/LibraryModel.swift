@@ -38,7 +38,7 @@ final class LibraryModel {
 
     init(api: WebAPI) {
         self.api = api
-        pinnedIDs = UserDefaults.standard.stringArray(forKey: "pinnedPlaylists") ?? []
+        pinnedIDs = UserDefaults.standard.stringArray(forKey: Self.pinnedKey) ?? []
         hiddenArtists = UserDefaults.standard.data(forKey: Self.hiddenArtistsKey)
             .flatMap { try? JSONDecoder().decode([HiddenArtist].self, from: $0) } ?? []
     }
@@ -122,6 +122,8 @@ final class LibraryModel {
 
     // MARK: - Pins
 
+    private static let pinnedKey = "pinnedPlaylists"
+
     func isPinned(_ id: String) -> Bool { pinnedIDs.contains(id) }
 
     func togglePin(_ id: String) {
@@ -130,7 +132,7 @@ final class LibraryModel {
         } else {
             pinnedIDs.append(id)
         }
-        UserDefaults.standard.set(pinnedIDs, forKey: "pinnedPlaylists")
+        UserDefaults.standard.set(pinnedIDs, forKey: Self.pinnedKey)
     }
 
     // MARK: - Hidden top artists

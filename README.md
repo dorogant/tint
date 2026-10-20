@@ -170,10 +170,15 @@ the app and packs the zip again.
 does it for an already-built app). Send that file. The other person needs an Apple
 Silicon Mac with macOS 26 and Spotify Premium.
 
-If your Client ID is built in, their library signs in through your developer app. Add
-their Spotify account's email in the dashboard under **User Management**, or they
-choose **Use your own Spotify developer app** in onboarding and paste their own. Without
-a built-in Client ID they always paste their own.
+For anyone you don't know personally, share a build **without** a Client ID built in
+(no `.spotify-client-id` file and no `FLOE_SPOTIFY_CLIENT_ID`). They paste their own in
+onboarding; the setup screen walks them through creating one. Spotify's Developer Terms
+don't allow handing out your Client ID, so never publish a build that contains yours.
+
+A build with your Client ID is only for people you add to your developer app: put their
+Spotify account's email in the dashboard under **User Management**. Development Mode
+allows at most 5 users per app. They can still choose **Use your own Spotify developer
+app** in onboarding instead.
 
 A build that isn't notarized is blocked the first time it opens. To open it anyway:
 

@@ -335,8 +335,13 @@ enum ReactiveShader {
         float stretch = rsqrt(max(dot(dz, dz), 1e-30f));
         float px = (state == 1 ? sqrt(r2) * lr * stretch : stretch) / pixel;
         float mu = steps - log2(max(lr, 1e-4f));
-        // Inside: Koenigs' coordinate φ = (z − α) / λⁿ, as log-radius and turns.
+        // Inside: Koenigs' coordinate φ = (z − α) / λⁿ, as log-radius and turns. Its
+        // second-order term, w + w²/(λ(1 − λ)), keeps the lace seamless where
+        // neighbouring orbits settled a step apart.
         float2 w = z - fixed;
+        float2 lambda = 2 * fixed;
+        float2 bend = complexMultiply(lambda, float2(1, 0) - lambda);
+        w += complexMultiply(float2(bend.x, -bend.y) / max(dot(bend, bend), 1e-6f), complexMultiply(w, w));
         float ring = 0.5 * log(max(dot(w, w), 1e-12f)) - steps * logRho;
         float spoke = (atan2(w.y, w.x) - steps * theta) * 0.15915494;
         float ripples = contour(mu * 0.5, 1);
@@ -344,8 +349,9 @@ enum ReactiveShader {
 
         // An orbit still going that has stopped stretching is in the heart, just
         // settling slowly (near the cardioid's edge); one still stretching is on the edge.
-        // Only a settled orbit has a true φ to draw the lace and light the centres with.
-        bool settled = state == 2;
+        // Only an orbit that has come close to α has a true φ to draw the lace and
+        // light the centres with; one still settling slowly fades in as it nears.
+        float settled = state == 2 ? 1.0 : smoothstep(0.15, 0.06, length(z - fixed));
         if (state == 0 && dot(dz, dz) < 1e6) state = 2;
         float3 light = 0;
         // Only the filaments themselves leave trails: halos and the heart would smear into mud.
@@ -368,15 +374,18 @@ enum ReactiveShader {
             // The heart: light gathers at the centre of every bulb, where φ is small,
             // and the lace of φ's rings and spokes glows through the rest.
             float3 tint = lightTint(u.colors, hue + 0.45 + 0.04 * ring);
-            float centre = settled ? exp(-exp(2 * ring) * 30) : 0.0;
-            lace = settled ? lace : 0.0;
-            light = tint * (0.012 + 0.03 * heart + lace * (0.06 + 0.3 * heart) + centre * (0.05 + 0.6 * heart));
+            // φ's scale shrinks as α weakens toward the cardioid's edge; the centres' light shrinks with it.
+            float reach = 0.002 + 20 * logRho * logRho;
+            float centre = exp(-exp(2 * ring) / reach) * settled;
+            lace *= settled;
+            light = tint * (0.008 + 0.03 * heart + lace * (0.06 + 0.3 * heart) + centre * (0.05 + 0.6 * heart));
         }
         light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * exp(-trap * 900) * u.light.z * 0.9;
         // The drop's single wave runs out from the middle, lighting the filaments it passes.
-        float wave = exp(-pow((length(v) - u.wave.x) / 0.18, 2.0f)) * u.wave.y;
-        float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 2.2 * wave);
+        float wave = exp(-pow((length(v) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
+        float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 3 * wave);
         light *= level;
+        light += lightTint(u.colors, hue + around) * wave * 0.05;
         ink *= level;
 
         // Trails: last frame, faded and drifting outward a little, under this one.
@@ -389,11 +398,13 @@ enum ReactiveShader {
             float2 was = complexMultiply(point - u.previous.xy, float2(span.x, -span.y)) / max(dot(span, span), 1e-12f);
             float2 st = float2(was.x / aspect * 0.5 + 0.5, 0.5 - was.y * 0.5); // textures run top-down
             st = 0.5 + (st - 0.5) * (1 - u.size.w);
-            kept = trails.sample(filtered, st).rgb * u.size.z;
+            // Off the kept frame's edge (as the view zooms out) there's nothing to keep.
+            bool inside = all(st >= 0.0) && all(st <= 1.0);
+            kept = inside ? trails.sample(filtered, st).rgb * u.size.z : 0.0;
         }
         float3 total = max(ink, kept);
         // Trails are kept at full strength but shown softer than the live outline.
-        float3 shown = max(light, kept * 0.6);
+        float3 shown = max(light, kept * 0.45);
 
         float3 average = (u.colors[0].rgb + u.colors[1].rgb + u.colors[2].rgb + u.colors[3].rgb + u.colors[4].rgb) * 0.2;
         float3 color = float3(0.008, 0.009, 0.013) + average * 0.02 + shown;

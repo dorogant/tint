@@ -264,6 +264,22 @@ extension BackgroundTests {
         }
         strip(palettes, to: directory.appendingPathComponent("palettes.png"), columns: 3, scale: 0.5)
 
+        // At the drawable size of a 1440×900 pt window, as the app draws it, and a crop at 100%.
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1440, height: 900), scale: 2, kind: .bloom)
+        if let large = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) {
+            var animator = BackgroundAnimator()
+            animator.configure(settings, animated: false)
+            var shot: RenderedFrame?
+            playBloom(&animator, BloomSong.frames().prefix(190).map { $0 }, renderer: large) { _, frame, i in
+                if i == 189 { shot = frame }
+            }
+            if let shot {
+                save(shot.composited(), to: directory.appendingPathComponent("window.png"))
+                save(shot.crop(x: shot.width / 4, y: shot.height / 4, width: shot.width / 2, height: shot.height / 2).composited(),
+                     to: directory.appendingPathComponent("window-crop.png"))
+            }
+        }
+
         // The song, at 960×600, every frame.
         guard let renderer = try? OffscreenRenderer(device: device, width: 960, height: 600) else { return }
         var animator = BackgroundAnimator()
@@ -280,6 +296,24 @@ extension BackgroundTests {
             sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
         }
         strip(sheet, to: directory.appendingPathComponent("song-sheet.png"), columns: 6, scale: 0.3)
+
+        // The same song as today's analyzer hears it: no harmony, brightness, build or drop.
+        var today = BackgroundAnimator()
+        today.configure(settings, animated: false)
+        var todaySheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        let plain = frames.map { frame -> SpectrumFrame in
+            var frame = frame
+            (frame.layers.pitchClass, frame.layers.tonality, frame.layers.brightness) = (0, 0, 0)
+            (frame.layers.build, frame.layers.drop) = (0, 0)
+            return frame
+        }
+        playBloom(&today, plain, renderer: renderer) { _, frame, i in
+            guard i % 10 == 0 else { return }
+            let m = BloomSong.moment(at: Float(i) / 30, frame: i)
+            todaySheet.append((frame, String(format: "%.1f s%@", Float(i) / 30, m.vocal > 0.1 ? " vocal" : ""),
+                               m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
+        }
+        strip(todaySheet, to: directory.appendingPathComponent("song-today-sheet.png"), columns: 6, scale: 0.3)
         print("Bloom renders: \(directory.path)/shapes.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
     }
 

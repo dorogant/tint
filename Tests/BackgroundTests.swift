@@ -24,6 +24,7 @@ struct BackgroundTests {
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
             bloomRenders(device: device)
             bloomPerformance(device: device)
+            bloomMappingChecks()
             bloomChecks(device: device)
             print("PASS: \(checks) Bloom checks")
             return
@@ -40,6 +41,7 @@ struct BackgroundTests {
         crispnessChecks(device: device)
         smokeChecks(device: device)
         presetPreviews(device: device)
+        bloomMappingChecks()
         bloomChecks(device: device)
         bloomRenders(device: device)
         performanceReport(device: device)

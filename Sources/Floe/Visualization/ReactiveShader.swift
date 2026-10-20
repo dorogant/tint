@@ -260,7 +260,7 @@ enum ReactiveShader {
     private static let bloom = #"""
     // c: c, then the plane per screen half-height (a complex scale and turn). view: centre, iterations, filament width (px).
     // size: width, height, trail fade, trail drift. light: glow, heart (mids), glint (hats), beat.
-    // traps: constellation turn (cos, sin), radius, palette walk. wave: drop ring radius, strength, level, neutral.
+    // traps: constellation turn (cos, sin), radius, palette walk. wave: drop ring radius, strength, level, spare.
     // flags: no trails yet, detail (highs), log of the fixed point's multiplier |λ|, its turn θ.
     // previous: the trails' centre and span, as drawn last frame.
     struct BloomUniforms {
@@ -347,11 +347,11 @@ enum ReactiveShader {
         float ripples = contour(mu * 0.5, 1);
         float lace = max(contour(ring * 1.4, 1), contour(spoke * 6, 2));
 
-        // An orbit still going that has stopped stretching is in the heart, just
-        // settling slowly (near the cardioid's edge); one still stretching is on the edge.
         // Only an orbit that has come close to α has a true φ to draw the lace and
         // light the centres with; one still settling slowly fades in as it nears.
         float settled = state == 2 ? 1.0 : smoothstep(0.15, 0.06, length(z - fixed));
+        // An orbit still going that has stopped stretching is in the heart, just
+        // settling slowly (near the cardioid's edge); one still stretching is on the edge.
         if (state == 0 && dot(dz, dz) < 1e6) state = 2;
         float3 light = 0;
         // Only the filaments themselves leave trails: halos and the heart would smear into mud.

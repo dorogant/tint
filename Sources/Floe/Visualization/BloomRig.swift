@@ -21,10 +21,11 @@ import simd
 /// clear harmony (drums, noise, or analysis that doesn't report it) the shape
 /// drifts slowly on its own; in silence it all but stops.
 struct BloomRig {
-    /// One shape per pitch class, C first: angles θ round the Mandelbrot set's
-    /// main cardioid, c(θ) = e^{iθ}/2 − e^{2iθ}/4, and how far out along it the
-    /// set sits (just under 1 is plump and joined, past 1 it turns to dust).
-    /// Rising round the circle, so a glide between neighbouring notes passes
+    /// One shape per pitch class, C first, as the multiplier λ = ρe^{iθ} of the
+    /// set's fixed point (see `c(theta:rho:)`): θ goes round the Mandelbrot set's
+    /// main cardioid, and ρ just under 1 is a plump, joined set while past 1 it
+    /// turns to dust. Picked from a contact sheet of the whole circle and
+    /// rising round it, so a glide between neighbouring notes passes
     /// only through the shapes between them. Each angle is one where a kick's
     /// push leaves the Mandelbrot set cleanly (into dust, not into a bulb);
     /// the lower half mirrors the upper, so the radii alternate between fine
@@ -38,9 +39,10 @@ struct BloomRig {
     static let facet = Float.pi / 6
     /// The deepest a build dives toward the set's edge.
     static let maximumZoom: Float = 4
-    /// How far past the cardioid a full kick throws the set (at Bass punch 100%):
-    /// far enough to break it into spirals of dust.
-    static let shatterReach: Float = 0.045
+    /// How far past the cardioid's edge a full kick throws the set (at Bass punch
+    /// 100%), wherever its shape sits: far enough to open it into spirals of dust.
+    /// Softer kicks only pinch it.
+    static let shatterPast: Float = 0.03
 
     /// The shape's angle round the cardioid (unwrapped) and its radius.
     private(set) var theta = Spring(position: shapes[0].theta)
@@ -80,7 +82,6 @@ struct BloomRig {
     private(set) var lastStep: Float = 1 / 60
     private var latest = BeatDetector.Pulse()
     private var layers = MusicLayers()
-    private var clock: Float = 0
     private var sinceSnare: Float = 1
     /// A kick's outward push lands a moment after its small inward pull.
     private var pendingKick: (delay: Float, strength: Float)?
@@ -99,14 +100,14 @@ struct BloomRig {
         }
         if pulse.snare > 0, punch > 0 {
             // A roll turns no faster than a facet every half second.
-            turnGoal += Self.facet * min(1.2, pulse.snare * punch * 1.4) * min(1, sinceSnare / 0.5)
+            turnGoal += Self.facet * min(1, pulse.snare * punch * 1.4) * min(1, sinceSnare / 0.5)
             sinceSnare = 0
         }
         if pulse.hat > 0 { glint = max(glint, min(1.2, pulse.hat * react)) }
         if layers.drop > 0 {
             let strength = min(1, layers.drop * react)
             wave = (0, max(strength, wave.age < 1 ? wave.strength : 0))
-            shatter.velocity += Self.shatterReach * Self.kickVelocity * strength * min(1.5, configuration.punch)
+            shatter.velocity += push(strength * min(1.5, configuration.punch))
         }
     }
 
@@ -127,7 +128,6 @@ struct BloomRig {
         follow(&tension, min(1, layers.build), attack: 0.5, release: 0.25)
         let sounding = BeatDetector.smoothstep(0, 0.12, energy)
         follow(&level, 0.5 + 0.5 * min(1, energy * react * 1.4), attack: 0.4, release: 1.6)
-        clock += dt * speed * (0.15 + 0.85 * sounding)
 
         // Harmony picks the shape; without it the shape wanders, at the bass's pace.
         let gate = BeatDetector.smoothstep(0.25, 0.6, tonality)
@@ -144,7 +144,7 @@ struct BloomRig {
         if var kick = pendingKick {
             kick.delay -= dt
             if kick.delay <= 0 {
-                shatter.velocity += Self.shatterReach * Self.kickVelocity * kick.strength
+                shatter.velocity += push(kick.strength)
                 pendingKick = nil
             } else {
                 pendingKick = kick
@@ -158,7 +158,7 @@ struct BloomRig {
         // springs back past rest when the build lets go.
         let depth = tension * tension * tension
         let rising = depth > dive.position
-        dive.step(toward: depth, frequency: rising ? 0.3 : 0.9, damping: rising ? 1 : 0.5, dt: dt)
+        dive.step(toward: depth, frequency: rising ? 0.4 : 0.9, damping: rising ? 1 : 0.5, dt: dt)
         let edge = SIMD2<Float>(1, 0) - SIMD2(cos(theta.position), sin(theta.position)) * radius.position / 2
         focus += (edge - focus) * BeatDetector.rate(dt, 0.5)
 
@@ -167,8 +167,7 @@ struct BloomRig {
         hue += dt * speed * 0.006 * (0.3 + sounding)
         wave.age += dt
         // A steady groove swells the glow on the beat, never a flash.
-        var phase = latest.beats - latest.beats.rounded(.down)
-        if latest.tempo > 0 { phase = min(1, phase) }
+        let phase = latest.beats - latest.beats.rounded(.down)
         let steady = BeatDetector.smoothstep(0.3, 0.7, latest.confidence) * (latest.tempo > 0 ? 1 : 0)
         follow(&beat, steady * expf(-phase * 5), attack: 0.03, release: 0.12)
     }
@@ -212,10 +211,16 @@ struct BloomRig {
         return lambda / 2 - SIMD2(lambda.x * lambda.x - lambda.y * lambda.y, 2 * lambda.x * lambda.y) / 4
     }
 
-    /// The shatter spring's pace; a kick's push is sized so it peaks at `shatterReach`.
+    /// The shatter spring's pace.
     static let shatterFrequency: Float = 2
-    /// The push that peaks a spring at 1 with damping 0.5: ω / e^(−ζ/√(1−ζ²)·acos ζ).
+    /// The push that peaks the shatter spring at 1 with damping 0.5: ω / e^(−ζ/√(1−ζ²)·acos ζ).
     static let kickVelocity: Float = 2 * .pi * shatterFrequency / 0.546
+
+    /// The push for a hit of `strength`: a full one carries the set from where it
+    /// rests to `shatterPast` beyond the edge.
+    private func push(_ strength: Float) -> Float {
+        Self.kickVelocity * strength * (max(0, 1 - radius.position) + Self.shatterPast)
+    }
 
     /// An angle difference brought into −π…π.
     static func wrap(_ angle: Float) -> Float {

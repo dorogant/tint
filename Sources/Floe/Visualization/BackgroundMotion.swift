@@ -64,7 +64,7 @@ struct BloomUniforms {
     var light: SIMD4<Float>
     /// The hat constellation's turn (cosine, sine), its radius, the palette's walk.
     var traps: SIMD4<Float>
-    /// The drop's wave (radius, strength), overall level, 1 for a neutral cover.
+    /// The drop's wave (radius, strength), overall level, a spare.
     var wave: SIMD4<Float>
     /// 1 when there are no trails to read yet, fine detail (the highs), the log of
     /// the fixed point's multiplier |λ| (the shape's radius, kick included), its turn θ.
@@ -204,7 +204,7 @@ struct BackgroundAnimator {
                              size: SIMD4(width, height, powf(0.9, frames), 0.0015 * frames),
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              traps: SIMD4(cos(rig.traps), sin(rig.traps), 0.42, rig.hue),
-                             wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, configuration.neutral ? 1 : 0),
+                             wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, 0),
                              flags: SIMD4(0, detail, logf(rig.rho), rig.theta.position),
                              previous: SIMD4(center.x, center.y, axis.x, axis.y))
     }

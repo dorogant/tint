@@ -146,11 +146,9 @@ extension BackgroundTests {
         var twinFrames: [RenderedFrame] = []
         playBloom(&twin, held, renderer: renderer) { _, frame, _ in twinFrames.append(frame) }
         var apart: [Float] = [], lumaRatio: [Float] = []
-        var shattered: RenderedFrame?
-        playBloom(&kicked, hit, renderer: renderer) { animator, frame, i in
+        playBloom(&kicked, hit, renderer: renderer) { _, frame, i in
             apart.append(frame.difference(from: twinFrames[i]))
             if i >= 60 { lumaRatio.append(frame.meanLuma / max(0.001, twinFrames[i].meanLuma)) }
-            if i == 64 { shattered = frame }
         }
         let peak = apart[60...75].max()!, after = apart[60 + 45]
         print(String(format: "Bloom kick: frames differ %.4f at the shatter, %.4f 1.5 s on; mean luma within %.0f%%…%.0f%% of the twin",
@@ -208,7 +206,86 @@ extension BackgroundTests {
             let frame = large.render(c)
             check(frame.meanLuma > 0.01 && frame.maxLuma <= legibleLuma, "the window-sized Bloom must render (\(frame.meanLuma))")
         }
-        _ = shattered
+    }
+
+    /// What plays what, frame by frame on the rig alone, as the app steps it
+    /// (analysis at 30 Hz, display at 60).
+    static func bloomMappingChecks() {
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        func rig(_ frames: [SpectrumFrame], configuration: BackgroundConfiguration = settings,
+                 each: (BloomRig, Int) -> Void = { _, _ in }) -> BloomRig {
+            var animator = BackgroundAnimator()
+            animator.configure(configuration, animated: false)
+            play(&animator, frames) { animator, _, display in each(animator.bloom, display) }
+            return animator.bloom
+        }
+
+        // Harmony: a held pitch class with clear tonality settles on its shape;
+        // with none the shape only wanders slowly.
+        for pitch in [0, 4, 7, 11] {
+            let settled = rig(BloomSong.held(pitch: Float(pitch), tonality: 1, seconds: 4))
+            let shape = BloomRig.shapes[pitch]
+            check(abs(BloomRig.wrap(settled.theta.position - shape.theta)) < 0.02 && abs(settled.radius.position - shape.radius) < 0.02,
+                  "pitch class \(pitch) must play its shape (θ \(settled.theta.position) vs \(shape.theta))")
+        }
+        var thetas: [Float] = []
+        _ = rig(BloomSong.held(pitch: 7, tonality: 0, seconds: 4)) { rig, _ in thetas.append(rig.theta.position) }
+        let drift = abs(thetas.last! - thetas.first!) / 4
+        check(drift > 0.005 && drift < 0.2, "with no clear harmony the shape must wander slowly (\(drift) rad a second)")
+
+        // Kick: a small pull in, then out past the cardioid's edge, and back within a second.
+        var kick = BloomSong.held(pitch: 0, tonality: 1, seconds: 6)
+        kick[90].layers.kick = 1
+        var rhos: [Float] = []
+        var rest: Float = 0
+        _ = rig(kick) { rig, display in
+            if display == 179 { rest = rig.rho }
+            if display >= 180 { rhos.append(rig.rho) }
+        }
+        let pulledIn = rhos.prefix(3).min()!, peak = rhos.max()!, peakAt = rhos.firstIndex(of: peak)!
+        print(String(format: "Bloom mapping: a kick pulls ρ in to %.3f, throws it to %.3f after %d ms, back to %.3f a second on (rest %.3f)",
+                     pulledIn, peak, peakAt * 1000 / 60, rhos[60], rest))
+        check(pulledIn < rest - 0.001, "a kick must gather the set in first (\(pulledIn) vs \(rest))")
+        check(peak > 1.01 && peakAt < 12, "a kick must throw the set past the edge into dust within 200 ms (\(peak) at \(peakAt))")
+        check(abs(rhos[60] - rest) < 0.01, "the set must knit back within a second (\(rhos[60]))")
+        var calm = settings
+        calm.punch = 0
+        var calmRhos: [Float] = []
+        _ = rig(kick, configuration: calm) { rig, display in if display >= 180 { calmRhos.append(rig.rho) } }
+        check(calmRhos.max()! - calmRhos.min()! < 0.002, "Bass punch at 0 must leave the set whole")
+
+        // Snare: the plane turns a facet, quickly, and stays there.
+        var snare = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
+        snare[45].layers.snare = 1
+        var turns: [Float] = []
+        _ = rig(snare) { rig, display in if display >= 90 { turns.append(rig.turn.position) } }
+        let turned = turns.last! - turns.first!, quick = turns[12] - turns.first!
+        check(abs(turned - BloomRig.facet) < 0.08 && quick > 0.8 * turned,
+              "a snare must turn the plane a twelfth of a turn within 200 ms (\(turned), \(quick) after 200 ms)")
+
+        // Hat: a glint that's gone within 120 ms.
+        var hat = BloomSong.held(pitch: 0, tonality: 1, seconds: 2)
+        hat[30].layers.hat = 1
+        var glints: [Float] = []
+        _ = rig(hat) { rig, display in if display >= 60 { glints.append(rig.glint) } }
+        check(glints[0] > 0.5 && glints[7] < 0.05, "a hat must glint and fade within 120 ms (\(glints[0]) → \(glints[7]))")
+
+        // Mids: a held vocal lights the heart; the drums alone don't.
+        var vocal = BloomSong.held(pitch: 0, tonality: 1, seconds: 3)
+        for i in vocal.indices { vocal[i].layers.mid = 0.8 }
+        let lit = rig(vocal).heart, unlit = rig(BloomSong.held(pitch: 0, tonality: 1, seconds: 3).map { var f = $0; f.layers.mid = 0; return f }).heart
+        check(lit > 0.4 && unlit < 0.05, "a vocal must light the heart (\(lit) vs \(unlit))")
+
+        // Build and drop: the dive deepens with the build, mostly at its end, and
+        // the drop releases it with one wave.
+        var build = BloomSong.held(pitch: 0, tonality: 1, seconds: 10)
+        for i in build.indices { build[i].layers.build = min(1, Float(i) / 240) }
+        for i in 240..<build.count { build[i].layers.build = 0 }
+        build[240].layers.drop = 1
+        var zooms: [Float] = [], waves: [Float] = []
+        _ = rig(build) { rig, _ in zooms.append(rig.zoom); waves.append(rig.wave.strength) }
+        check(zooms[240] < 1.4 && zooms[479] > 2.2, "a build must dive in, mostly in its last stretch (\(zooms[240]) halfway, \(zooms[479]) at the end)")
+        check(zooms[540] < 1.2 && waves[481] > 0.5, "the drop must release the dive with a wave (\(zooms[540]), wave \(waves[481]))")
     }
 
     // MARK: - Bloom renders

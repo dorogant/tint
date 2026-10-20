@@ -111,7 +111,7 @@ struct SettingsView: View {
             } header: {
                 Text("Motion")
             } footer: {
-                note("Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bloom is an endless, slow zoom into a fractal: the music sets its pace, kicks push it on, the bass makes it breathe, hi-hats make it glint, vocals light its bulbs, a build quickens it until the drop, and each new section brings the shape the harmony picks. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.")
+                note("Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bloom is an endless, slow dive into the Mandelbrot set, down one valley after another past seahorses, spirals and branches that change shape as it goes: the music sets its pace, kicks push it on, the bass makes its glow breathe, hi-hats send glints along it, vocals light its bulbs, a build quickens it until the drop, and the harmony picks the valley each new dive takes. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.")
             }
             SwiftUI.Section {
                 SettingsSlider("Blur", value: $visuals.backgroundBlur, range: 0...18,

@@ -125,7 +125,9 @@ actor ArtistGenres {
         loaded = true
         guard let file, let data = try? Data(contentsOf: file),
               let saved = try? JSONDecoder().decode([String: Entry].self, from: data) else { return }
-        entries = saved
+        // A stale answer is asked again anyway; dropping it keeps the file from
+        // holding every artist ever played until the capacity cap.
+        entries = saved.filter { isFresh($0.value) }
     }
 
     private func save() {

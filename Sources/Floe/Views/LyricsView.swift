@@ -248,10 +248,16 @@ private struct LyricRow: View, Equatable {
                 .padding(.vertical, scale(11))
                 .scaleEffect(current || still ? 1 : (hovering ? 0.955 : 0.94), anchor: .leading)
                 .blur(radius: blur)
+                #if LYRICS_FOLLOW_TESTING
+                .overlay { LyricsFollowProbe(kind: .row(line.id)) }
+                #endif
                 .background {
                     if current {
                         shape.fill(.white.opacity(0.1))
                             .overlay(shape.strokeBorder(.white.opacity(0.1)))
+                            #if LYRICS_FOLLOW_TESTING
+                            .overlay { LyricsFollowProbe(kind: .pill(line.id)) }
+                            #endif
                             .matchedGeometryEffect(id: "pill", in: pill)
                     } else if hovering {
                         shape.fill(.white.opacity(0.045))

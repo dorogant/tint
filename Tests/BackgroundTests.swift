@@ -26,6 +26,12 @@ struct BackgroundTests {
             print("PASS: \(checks) build checks")
             return
         }
+        // FLOE_BLOOM_COST=1: just Bloom's cost, and its dives sheet if FLOE_BLOOM_RENDERS is set.
+        if ProcessInfo.processInfo.environment["FLOE_BLOOM_COST"] != nil {
+            bloomDiveRenders(device: device)
+            bloomPerformance(device: device)
+            return
+        }
         // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
             bloomRenders(device: device)
@@ -1046,7 +1052,7 @@ struct BackgroundTests {
                         switch kind {
                         case .beams: sink += animator.beamUniforms(width: 1600, height: 1000).heads.0.x
                         case .fluid: sink += animator.fluidUniforms(width: 1600, height: 1000).motion.x
-                        case .bloom: sink += animator.bloomUniforms(width: 1600, height: 1000).shapes.0.zoom.x
+                        case .bloom: sink += animator.bloomUniforms(width: 1600, height: 1000).layers.0.view.x
                         }
                     }
                 }

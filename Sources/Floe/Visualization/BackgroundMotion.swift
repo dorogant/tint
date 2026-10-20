@@ -51,37 +51,44 @@ struct BeamUniforms {
     var tints: Heads
 }
 
-/// Matches `BloomShape` in `ReactiveShader`: one shape as the shader zooms into it.
-struct BloomShapeUniforms {
-    /// The zoom's linear coordinate per screen unit, log ρ, λ's angle, the log of the series' reach.
-    var zoom: SIMD4<Float>
-    /// c, then α.
-    var fixed: SIMD4<Float>
-    /// A point of the attracting cycle, the log of its contraction per pass, how close counts as settled (squared).
-    var cycle: SIMD4<Float>
-    /// λ, q, how far into the current repeat the zoom is (0…1).
+/// Matches `BloomLayer` in `ReactiveShader`: one dive as the shader draws it.
+struct BloomLayerUniforms {
+    /// The pixel's offset from the reference's c at screen point v is b + a·v: a, then b.
+    var view: SIMD4<Float>
+    /// The reference orbit's period, what brings escape counts to the whole set's, two spares.
     var counts: SIMD4<Float>
-    /// What straightens the passes near the cycle (complex), spare.
-    var straightening: SIMD4<Float>
-    /// The series' eight coefficients, as complex pairs.
-    var series: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+    /// The reference's c, and 1 over the scale its copy of the set is drawn at (complex).
+    var bulbs: SIMD4<Float>
+    /// The reference orbit, one period from 0.
+    var orbit: InlineArray<64, SIMD2<Float>>
+}
+
+/// Matches `BloomPass` in `ReactiveShader`: one dive's field pass.
+struct BloomPassUniforms {
+    /// Which of the uniforms' layers, which of `turns` sets of 8×8 blocks to work out afresh, 1 to work out all.
+    var layer: Int32
+    var phase: Int32
+    var all: Int32
+    var turns: Int32
+    /// Where screen point v was last frame: xy + zw·v (complex).
+    var history: SIMD4<Float>
 }
 
 /// Matches `BloomUniforms` in `ReactiveShader`.
 struct BloomUniforms {
     var colors: Palette
-    /// Iterations, filament width in pixels, how far the incoming shape has dissolved in, spare.
+    /// Iterations, filament width in pixels, how far the next dive has faded in, spare.
     var view: SIMD4<Float>
-    /// Drawable width and height, then where the zoom heads, in screen units.
+    /// Drawable width and height, then where the dive heads, in screen units.
     var size: SIMD4<Float>
     /// Glow, the heart's light (the mids), glints (hats and snares), the beat's swell.
     var light: SIMD4<Float>
-    /// The hat constellation's turn (cosine, sine), its radius, the palette's walk.
-    var traps: SIMD4<Float>
-    /// The drop's wave (radius, strength), overall level, a spare.
+    /// Where along the filaments the glints sit, two spares, the palette's walk.
+    var glints: SIMD4<Float>
+    /// The drop's wave (radius, strength), overall level, the bass's breath.
     var wave: SIMD4<Float>
-    /// The shape zoomed into, then the one dissolving in.
-    var shapes: (BloomShapeUniforms, BloomShapeUniforms)
+    /// The dive under way, then the one fading in.
+    var layers: (BloomLayerUniforms, BloomLayerUniforms)
 }
 
 /// The live background's state between frames, apart from Metal so tests can
@@ -101,7 +108,8 @@ struct BackgroundAnimator {
     private(set) var colors = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
     private(set) var fluid = FluidMotion()
     private(set) var beams = BeamRig()
-    private(set) var bloom = BloomRig()
+    /// Settable so a test can start Bloom partway down a dive.
+    var bloom = BloomRig()
     static let crossfade: Float = 1.6
     /// The analysis rate, which is the detector's time step whatever the display does.
     static let analysisInterval: Float = 1 / 30
@@ -197,27 +205,27 @@ struct BackgroundAnimator {
         let rig = bloom
         let detail = rig.detail
         let wave = rig.wave.strength * expf(-rig.wave.age / 0.6)
-        let shape = Self.shape(rig.layer)
+        let views = rig.views
+        let current = Self.layer(views.current, BloomRig.destinations[rig.destination])
+        let incoming = rig.next.map { Self.layer(views.incoming ?? views.current, BloomRig.destinations[$0]) }
         return BloomUniforms(colors: Self.palette(colors),
-                             view: SIMD4((64 + 40 * detail).rounded(), 1.15 - 0.45 * detail, rig.incoming == nil ? 0 : rig.blend, 0),
+                             view: SIMD4(BloomRig.iterations, 1.15 - 0.45 * detail, rig.blend, 0),
                              size: SIMD4(width, height, rig.focus.x, rig.focus.y),
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
-                             traps: SIMD4(cos(rig.traps), sin(rig.traps), 0.42, rig.hue),
-                             wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, 0),
-                             shapes: (shape, rig.incoming.map(Self.shape) ?? shape))
+                             glints: SIMD4(rig.sparkle, 0, 0, rig.hue),
+                             wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, rig.bass),
+                             layers: (current, incoming ?? current))
     }
 
-    /// A layer of Bloom as the shader draws it: the zoom's scale shrinks by ρ^q
-    /// over each repeat, so a whole repeat in it is the same picture again.
-    private static func shape(_ layer: BloomRig.Layer) -> BloomShapeUniforms {
-        let s = layer.shape
-        let a = s.series
-        return BloomShapeUniforms(zoom: SIMD4(BloomRig.span * expf(-layer.phase * s.period), s.period / Float(s.q), atan2(s.lambda.y, s.lambda.x), logf(s.reach)),
-                                  fixed: SIMD4(lowHalf: s.c, highHalf: s.alpha),
-                                  cycle: SIMD4(s.cycle.x, s.cycle.y, s.contraction, s.settling * s.settling),
-                                  counts: SIMD4(s.lambda.x, s.lambda.y, Float(s.q), layer.phase),
-                                  straightening: SIMD4(s.straightening.x, s.straightening.y, 0, 0),
-                                  series: (a.lowHalf.lowHalf, a.lowHalf.highHalf, a.highHalf.lowHalf, a.highHalf.highHalf))
+    /// A dive as the shader draws it: each pixel follows its tiny offset from
+    /// the destination's reference orbit, so single precision holds all the way down.
+    private static func layer(_ view: BloomView, _ destination: BloomDestination) -> BloomLayerUniforms {
+        BloomLayerUniforms(view: SIMD4(Float(view.perScreenUnit.re), Float(view.perScreenUnit.im),
+                                       Float(view.offset.re), Float(view.offset.im)),
+                           counts: SIMD4(Float(destination.period), Float(view.colorScale), 0, 0),
+                           bulbs: SIMD4(Float(destination.nucleus.re), Float(destination.nucleus.im),
+                                        Float(destination.inverseScale.re), Float(destination.inverseScale.im)),
+                           orbit: destination.orbit)
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

@@ -243,7 +243,7 @@ struct RenderedFrame {
     let height: Int
     private let queue: MTLCommandQueue
     private let pipelines: BackgroundRenderer.Pipelines
-    private let targets: BackgroundRenderer.Targets
+    let targets: BackgroundRenderer.Targets
     private let texture: MTLTexture
     private let buffer: MTLBuffer
 

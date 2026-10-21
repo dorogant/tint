@@ -353,6 +353,70 @@ extension BackgroundTests {
         }
         print(String(format: "Bloom afresh: a running renderer's frames differ from a new one's by at most %.5f", worst))
         check(worst == 0, "every Bloom frame must be worked out afresh (\(worst))")
+        bloomStabilityChecks(device: device)
+    }
+
+    /// A dense stretch of a dive, two seconds of it, stays steady: each frame
+    /// differs from the last, moved on by the dive's own motion, by little more
+    /// than the motion itself, where the same drawn at half the size and
+    /// blown up pixel by pixel crawls. And nothing
+    /// in it reads as a speck: no lone pixel far darker than all round it.
+    static func bloomStabilityChecks(device: MTLDevice) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400),
+              let coarse = try? OffscreenRenderer(device: device, width: 320, height: 200) else { return }
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset), speed: 2)
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.7, mid: 0.4, seconds: 2)
+        func shimmers(_ render: (BackgroundAnimator) -> RenderedFrame) -> Float {
+            var animator = diving(3, at: 0.75, settings)
+            var frames: [(LumaImage, BloomView)] = [], sum: Float = 0, count = 0
+            for frame in music {
+                animator.receive(frame)
+                animator.step(by: 1 / 60)
+                animator.step(by: 1 / 60)
+                let shown = render(animator)
+                frames.append((LumaImage(shown).blurred(2), animator.bloom.views.current))
+                if frames.count == 3 {
+                    sum += flicker(frames[0], frames[1], frames[2], screen: (640, 400))
+                    count += 1
+                    frames.removeFirst()
+                }
+            }
+            return sum / Float(max(count, 1))
+        }
+        let steady = shimmers { renderer.render($0) }
+        let aliased = shimmers { animator in
+            let small = coarse.render(animator)
+            var bytes = [UInt8](repeating: 0, count: 640 * 400 * 4)
+            for y in 0..<400 { for x in 0..<640 { for c in 0..<4 { bytes[(y * 640 + x) * 4 + c] = small.bytes[((y / 2) * 320 + x / 2) * 4 + c] } } }
+            return RenderedFrame(width: 640, height: 400, bytes: bytes)
+        }
+        // Specks, at the size of a full-screen window: the dense stretch and an outline by open space.
+        var specks = 0
+        if let screen = try? OffscreenRenderer(device: device, width: 2880, height: 1864) {
+            for (destination, progress) in [(3, 0.75), (0, 0.5)] {
+                var animator = diving(destination, at: progress, BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)))
+                for frame in music { animator.advance(by: 1 / 30, frame: frame) }
+                specks = max(specks, speckCount(screen.render(animator)))
+            }
+        }
+        print(String(format: "Bloom stability: a dense stretch shimmers %.4f a frame beyond its motion (blocky: %.4f); at most %d specks in a full-screen frame",
+                     steady, aliased, specks))
+        check(steady < 0.0025 && aliased > 0.0025, "Bloom must not shimmer (\(steady), blocky \(aliased))")
+        check(specks <= 5, "Bloom must show no specks (\(specks))")
+    }
+
+    /// Lone dark pixels in light: each pixel darker than half the darkest of
+    /// the eight round it, where those are all clearly lit.
+    static func speckCount(_ frame: RenderedFrame) -> Int {
+        var count = 0
+        for y in 1..<(frame.height - 1) {
+            for x in 1..<(frame.width - 1) {
+                var darkest: Float = 1
+                for dy in -1...1 { for dx in -1...1 where dx != 0 || dy != 0 { darkest = min(darkest, frame.luma(x + dx, y + dy)) } }
+                if darkest > 0.08 && frame.luma(x, y) < 0.5 * darkest { count += 1 }
+            }
+        }
+        return count
     }
 
     /// Where the bulbs are big: the whole set, and two dives passing large ones early on.
@@ -868,6 +932,30 @@ extension BackgroundTests {
             previous = (luma, view)
         }
         print(String(format: "Bloom proof: dense stretch shimmers %.5f a frame beyond its motion", shimmers.reduce(0, +) / Float(shimmers.count)))
+        bloomStabilityChecks(device: device)
+    }
+
+    /// How much a frame flickers: the frames before and after it, each moved
+    /// to where the dive's views put its points, against twice it, the mean
+    /// absolute difference in luma. Steady change, the dive's own motion and
+    /// the music's slow swells, cancels out; a pixel that flips cannot.
+    static func flicker(_ before: (LumaImage, BloomView), _ now: (LumaImage, BloomView), _ after: (LumaImage, BloomView),
+                        screen: (width: Int, height: Int)) -> Float {
+        let width = Double(screen.width), height = Double(screen.height), aspect = width / height
+        func at(_ image: (LumaImage, BloomView), _ v: Complex) -> Float? {
+            let was = (now.1.offset - image.1.offset + now.1.perScreenUnit * v) / image.1.perScreenUnit
+            return image.0.sample(Float((was.re / aspect + 1) * width / 2 - 0.5), Float((1 - was.im) * height / 2 - 0.5))
+        }
+        var sum: Float = 0, count = 0
+        for y in 8..<(now.0.height - 8) {
+            for x in 8..<(now.0.width - 8) {
+                let v = Complex((2 * (Double(x) + 0.5) / width - 1) * aspect, 1 - 2 * (Double(y) + 0.5) / height)
+                guard let a = at(before, v), let c = at(after, v) else { continue }
+                sum += abs(a + c - 2 * now.0.values[y * now.0.width + x])
+                count += 1
+            }
+        }
+        return count > 0 ? sum / Float(count) : 0
     }
 
     /// How much `current` changed from `previous` beyond the dive's own motion:

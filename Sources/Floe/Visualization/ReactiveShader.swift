@@ -480,9 +480,12 @@ enum ReactiveShader {
         float3 mean = (u.colors[0].rgb + u.colors[1].rgb + u.colors[2].rgb + u.colors[3].rgb + u.colors[4].rgb) * 0.2;
         float3 tint = mix(paletteLoop(u.colors, hue + bands + 0.05 * around), mean, blend);
         // Far from the set the ground is dim; it brightens toward the set's
-        // structure, where the bands crowd.
+        // structure, where the bands crowd, and breathes there with the glow.
         float near = exp(-px / (60.0 / scale));
-        float3 outside = tint * (0.12 + 0.5 * near);
+        // A pale cover's near-white colours are toned down to a mid level, so
+        // text stays readable over them; darker ones keep theirs.
+        tint *= min(1.0f, 0.6f / max(dot(tint, float3(0.2126, 0.7152, 0.0722)), 1e-3f));
+        float3 outside = tint * (0.1 + 0.4 * near * (0.8 + 0.2 * glow));
         // Lit from the upper left along the slope toward the set, so the
         // structure stands out in relief, where the field can tell its slope.
         outside *= 1 + 0.35 * (1 - blend) * dot(t.zw, float2(0.7071, 0.7071));

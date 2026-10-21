@@ -400,11 +400,11 @@ extension BackgroundTests {
     }
 
     /// A dense stretch of a dive, two seconds of it, stays steady: with the
-    /// dive's own motion taken out, its frames flicker well under the same
-    /// drawn at half the size and blown up pixel by pixel, which crawls. (Against
-    /// a render of itself, so a look with more contrast isn't counted as less
-    /// steady.) And nothing in it reads as a speck: no lone pixel far darker
-    /// than all round it.
+    /// dive's own motion taken out, its frames flicker under an absolute
+    /// bound, as a whole and in their worst tiles at the size a full screen
+    /// shows them. (The same drawn at half the size and blown up pixel by
+    /// pixel, which crawls, is printed for comparison.) And nothing in it
+    /// reads as a speck: few small dark islands in light, frame after frame.
     static func bloomStabilityChecks(device: MTLDevice) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400),
               let coarse = try? OffscreenRenderer(device: device, width: 320, height: 200) else { return }
@@ -420,7 +420,7 @@ extension BackgroundTests {
                 let shown = render(animator)
                 frames.append((LumaImage(shown).blurred(2), animator.bloom.views.current))
                 if frames.count == 3 {
-                    sum += flicker(frames[0], frames[1], frames[2], screen: (640, 400))
+                    sum += flicker(frames[0], frames[1], frames[2], screen: (640, 400)).mean
                     count += 1
                     frames.removeFirst()
                 }
@@ -434,21 +434,42 @@ extension BackgroundTests {
             for y in 0..<400 { for x in 0..<640 { for c in 0..<4 { bytes[(y * 640 + x) * 4 + c] = small.bytes[((y / 2) * 320 + x / 2) * 4 + c] } } }
             return RenderedFrame(width: 640, height: 400, bytes: bytes)
         }
+        let tiles = bloomFlickerTiles(device: device)
         // Specks, at the size of a full-screen window: the dense stretch and an outline by open space.
-        var specks = 0, dots = 0
+        var specks = 0
         if let screen = try? OffscreenRenderer(device: device, width: 2880, height: 1864) {
             for (destination, progress) in [(3, 0.75), (0, 0.5)] {
                 var animator = diving(destination, at: progress, BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)))
                 for frame in music { animator.advance(by: 1 / 30, frame: frame) }
-                let count = speckCount(screen.render(animator))
-                specks = max(specks, count.specks)
-                dots = max(dots, count.all)
+                playBloom(&animator, Array(music.prefix(4)), renderer: screen) { _, frame, _ in specks = max(specks, darkIslands(frame)) }
             }
         }
-        print(String(format: "Bloom stability: a dense stretch shimmers %.4f a frame beyond its motion (blocky: %.4f); at most %d specks in a full-screen frame (%d lone dark pixels, in fine structure too)",
-                     steady, aliased, specks, dots))
-        check(steady < 0.75 * aliased, "Bloom must shimmer well under a blocky render of itself (\(steady), blocky \(aliased))")
-        check(specks <= 5, "Bloom must show no specks (\(specks))")
+        print(String(format: "Bloom stability: a dense stretch shimmers %.4f a frame beyond its motion (blocky: %.4f); at full-screen scale its tiles %.4f at the 95th percentile, %.4f at worst; at most %d dark specks in a full-screen frame",
+                     steady, aliased, tiles.p95, tiles.worst, specks))
+        check(steady <= 0.0025, "Bloom must not flicker (\(steady) a frame)")
+        check(tiles.p95 <= 0.030 && tiles.worst <= 0.046, "no stretch of Bloom may flicker (tiles \(tiles.p95) at the 95th percentile, \(tiles.worst) at worst)")
+        check(specks <= 400, "Bloom must show no specks (\(specks))")
+    }
+
+    /// How much the dense stretch flickers in 60×60 tiles of a 960×600 crop,
+    /// as a full-screen window shows it at 100%: the proof's dense crop.
+    static func bloomFlickerTiles(device: MTLDevice) -> (p95: Float, worst: Float) {
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2, kind: .bloom)
+        guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)),
+              let at = bloomProofCrops["dense"] else { return (0, 0) }
+        let screen = (width: Int(size.width), height: Int(size.height))
+        var animator = diving(3, at: 0.75, BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)))
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 2.4)
+        for frame in music.prefix(60) { animator.advance(by: 1 / 30, frame: frame) }
+        var frames: [(LumaImage, BloomView)] = [], tiles: [Float] = []
+        playBloom(&animator, Array(music.dropFirst(60)), renderer: renderer) { animator, frame, _ in
+            frames.append((LumaImage(frame.crop(x: at.x, y: at.y, width: 960, height: 600)).blurred(2), animator.bloom.views.current))
+            guard frames.count == 3 else { return }
+            tiles += flicker(frames[0], frames[1], frames[2], screen: screen, crop: at, tile: 60).tiles
+            frames.removeFirst()
+        }
+        tiles.sort()
+        return tiles.isEmpty ? (0, 0) : (tiles[tiles.count * 95 / 100], tiles.last!)
     }
 
     /// The contrast white text has over the brightest lyrics-sized region of
@@ -468,28 +489,40 @@ extension BackgroundTests {
         return worst
     }
 
-    /// Lone dark pixels in light: each pixel darker than half the darkest of
-    /// the eight round it, where those are all clearly lit; and of them, the
-    /// ones in even light (the eight within a quarter of each other), which
-    /// read as specks, where in a weave of fine structure they're its texture.
-    static func speckCount(_ frame: RenderedFrame) -> (all: Int, specks: Int) {
-        var all = 0, specks = 0
-        for y in 1..<(frame.height - 1) {
-            for x in 1..<(frame.width - 1) {
-                var darkest: Float = 1, brightest: Float = 0
-                for dy in -1...1 {
-                    for dx in -1...1 where dx != 0 || dy != 0 {
-                        let luma = frame.luma(x + dx, y + dy)
-                        darkest = min(darkest, luma)
-                        brightest = max(brightest, luma)
-                    }
+    /// Small dark islands in light: groups of pixels, up to three across,
+    /// each darker than half the darkest pixel of the ring two out from it,
+    /// where that ring is all clearly lit. Neighbouring ones count as one.
+    static func darkIslands(_ frame: RenderedFrame) -> Int {
+        let w = frame.width, h = frame.height
+        var dark = [Bool](repeating: false, count: w * h)
+        for y in 2..<(h - 2) {
+            for x in 2..<(w - 2) {
+                let luma = frame.luma(x, y)
+                guard luma < 0.5 else { continue } // darker than half of any lit ring
+                var ring: Float = 1
+                for d in -2...2 {
+                    ring = min(ring, frame.luma(x + d, y - 2), frame.luma(x + d, y + 2), frame.luma(x - 2, y + d), frame.luma(x + 2, y + d))
                 }
-                guard darkest > 0.08 && frame.luma(x, y) < 0.5 * darkest else { continue }
-                all += 1
-                if brightest - darkest < 0.25 * darkest { specks += 1 }
+                dark[y * w + x] = ring > 0.08 && luma < 0.5 * ring
             }
         }
-        return (all, specks)
+        var islands = 0, stack: [Int] = []
+        for start in dark.indices where dark[start] {
+            islands += 1
+            dark[start] = false
+            stack.append(start)
+            while let i = stack.popLast() {
+                for dy in -1...1 {
+                    for dx in -1...1 {
+                        let x = i % w + dx, y = i / w + dy
+                        guard x >= 0, y >= 0, x < w, y < h, dark[y * w + x] else { continue }
+                        dark[y * w + x] = false
+                        stack.append(y * w + x)
+                    }
+                }
+            }
+        }
+        return islands
     }
 
     /// Where the bulbs are big: the whole set, and two dives passing large ones early on.
@@ -1017,25 +1050,36 @@ extension BackgroundTests {
 
     /// How much a frame flickers: the frames before and after it, each moved
     /// to where the dive's views put its points, against twice it, the mean
-    /// absolute difference in luma. Steady change, the dive's own motion and
-    /// the music's slow swells, cancels out; a pixel that flips cannot.
+    /// absolute difference in luma, over the frame and over each `tile`-sized
+    /// square of it. Steady change, the dive's own motion and the music's slow
+    /// swells, cancels out; a pixel that flips cannot. The frames are `crop`s
+    /// of a screen of `screen` pixels.
     static func flicker(_ before: (LumaImage, BloomView), _ now: (LumaImage, BloomView), _ after: (LumaImage, BloomView),
-                        screen: (width: Int, height: Int)) -> Float {
+                        screen: (width: Int, height: Int), crop: (x: Int, y: Int) = (0, 0), tile: Int = 0) -> (mean: Float, tiles: [Float]) {
         let width = Double(screen.width), height = Double(screen.height), aspect = width / height
         func at(_ image: (LumaImage, BloomView), _ v: Complex) -> Float? {
             let was = (now.1.offset - image.1.offset + now.1.perScreenUnit * v) / image.1.perScreenUnit
-            return image.0.sample(Float((was.re / aspect + 1) * width / 2 - 0.5), Float((1 - was.im) * height / 2 - 0.5))
+            return image.0.sample(Float((was.re / aspect + 1) * width / 2 - 0.5) - Float(crop.x),
+                                  Float((1 - was.im) * height / 2 - 0.5) - Float(crop.y))
         }
+        let columns = tile > 0 ? now.0.width / tile : 0, rows = tile > 0 ? now.0.height / tile : 0
+        var tileSums = [Float](repeating: 0, count: columns * rows), tileCounts = [Int](repeating: 0, count: columns * rows)
         var sum: Float = 0, count = 0
         for y in 8..<(now.0.height - 8) {
             for x in 8..<(now.0.width - 8) {
-                let v = Complex((2 * (Double(x) + 0.5) / width - 1) * aspect, 1 - 2 * (Double(y) + 0.5) / height)
+                let v = Complex((2 * (Double(crop.x + x) + 0.5) / width - 1) * aspect, 1 - 2 * (Double(crop.y + y) + 0.5) / height)
                 guard let a = at(before, v), let c = at(after, v) else { continue }
-                sum += abs(a + c - 2 * now.0.values[y * now.0.width + x])
+                let residual = abs(a + c - 2 * now.0.values[y * now.0.width + x])
+                sum += residual
                 count += 1
+                if tile > 0, x / tile < columns, y / tile < rows {
+                    tileSums[y / tile * columns + x / tile] += residual
+                    tileCounts[y / tile * columns + x / tile] += 1
+                }
             }
         }
-        return count > 0 ? sum / Float(count) : 0
+        let tiles = zip(tileSums, tileCounts).compactMap { $1 > tile * tile / 2 ? $0 / Float($1) : nil }
+        return (count > 0 ? sum / Float(count) : 0, tiles)
     }
 
     /// How much `current` changed from `previous` beyond the dive's own motion:

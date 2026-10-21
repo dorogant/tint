@@ -320,10 +320,10 @@ enum ReactiveShader {
         float3 a = loop[i % 5].xyz, b = loop[(i + 1) % 5].xyz;
         float turn = b.z - a.z;
         turn -= tau * round(turn / tau);
-        float3 round = oklab(float3(mix(a.xy, b.xy, f), a.z + turn * f));
+        float3 lab = oklab(float3(mix(a.xy, b.xy, f), a.z + turn * f));
         float across = smoothstep(2.4f, 3.1416f, abs(turn));
-        if (across > 0) round = mix(round, mix(oklab(a), oklab(b), f), across);
-        return linearFromOklab(round);
+        if (across > 0) lab = mix(lab, mix(oklab(a), oklab(b), f), across);
+        return linearFromOklab(lab);
     }
     static float3 bandColor(constant float4 *loop, float t) { return encoded(bandLight(loop, t)); }
     static float2 complexSqrt(float2 w) {
@@ -466,6 +466,39 @@ enum ReactiveShader {
         }
         return min(sum, 4.0f) * 0.25;
     }
+    /// What the bands' light follows round each two by two field pixels, into
+    /// a field half the size: how tangled their outlines are with the ones
+    /// right of and below them, and how far off the set is. Both are smoothed
+    /// before they light anything.
+    fragment float2 floeBloomStats(Vertex in [[stage_in]], texture2d<float, access::read> field [[texture(0)]]) {
+        int2 at = int2(in.position.xy) * 2, last = int2(field.get_width(), field.get_height()) - 1;
+        float4 f[3][3];
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 3; dx++) f[dy][dx] = field.read(uint2(min(at + int2(dx, dy), last)));
+        float2 sum = 0;
+        for (int dy = 0; dy < 2; dy++)
+            for (int dx = 0; dx < 2; dx++) sum += float2(tangle(f[dy][dx], f[dy][dx + 1], f[dy + 1][dx]), max(f[dy][dx].x, 0.0f));
+        return sum / 4;
+    }
+    /// Those smoothed over about eight field pixels: read straight off a weave
+    /// finer than the field can tell apart, they change from frame to frame as
+    /// the dive moves, which the light would show as flicker. The filaments
+    /// and the set's edge are drawn from the field itself, so they stay as
+    /// sharp. Sixteen filtered reads, each between four of the stats.
+    fragment float2 floeBloomSmooth(Vertex in [[stage_in]], texture2d<float> stats [[texture(0)]]) {
+        constexpr sampler filtered(filter::linear, address::clamp_to_edge);
+        float2 size = float2(stats.get_width(), stats.get_height());
+        float2 sum = 0;
+        float weights = 0;
+        for (int dy = -3; dy <= 3; dy += 2)
+            for (int dx = -3; dx <= 3; dx += 2) {
+                float2 o = float2(dx, dy); // in field pixels
+                float w = exp(-dot(o, o) * 0.1f);
+                sum += w * stats.sample(filtered, (in.position.xy + o / 2) / size).xy;
+                weights += w;
+            }
+        return sum / weights;
+    }
     /// One dive's colour, worked out once per field pixel since all of it is
     /// smooth: outside the set, inside it, and the colour of the outline's
     /// filaments (in alpha, how sharply they draw there), each already lit for
@@ -474,7 +507,9 @@ enum ReactiveShader {
     /// set's edge sharp between them.
     struct BloomSoft { float4 outside [[color(0)]]; float4 inside [[color(1)]]; float4 core [[color(2)]]; };
     fragment BloomSoft floeBloomSoft(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
-                                     constant BloomPass& pass [[buffer(1)]], texture2d<float, access::read> field [[texture(0)]]) {
+                                     constant BloomPass& pass [[buffer(1)]], texture2d<float, access::read> field [[texture(0)]],
+                                     texture2d<float> smooth [[texture(1)]]) {
+        constexpr sampler filtered(filter::linear, address::clamp_to_edge);
         int2 at = int2(in.position.xy), last = int2(field.get_width(), field.get_height()) - 1;
         float4 neighbours[3][3];
         float within = 0;
@@ -506,19 +541,24 @@ enum ReactiveShader {
         float bands = hue + log2(m) * 0.4 + 0.04 * around;
         // How many turns of the loop the bands go through within this pixel:
         // the escape count's slope is 1 over ln 2 times the distance to the
-        // set. Over that stretch the colours are averaged, a few samples
-        // across it, so bands finer than a pixel blend into the colours they
-        // average to there rather than breaking into noise.
+        // set. Over that stretch the colours are averaged, eight samples
+        // across it (up to a whole turn, their mean), so bands finer than a
+        // pixel blend into the colours they average to there rather than
+        // breaking into noise. Four left enough of the bands to flicker.
         float density = 0.4 / (m * 0.4805 * max(px, 1e-3f));
         float span = min(2 * density, 1.0f);
         float3 tint;
         if (span < 0.08) tint = bandColor(u.loop, bands);
-        else tint = encoded(0.25 * (bandLight(u.loop, bands - 0.375 * span) + bandLight(u.loop, bands - 0.125 * span)
-                                    + bandLight(u.loop, bands + 0.125 * span) + bandLight(u.loop, bands + 0.375 * span)));
+        else {
+            float3 sum = 0;
+            for (int k = 0; k < 8; k++) sum += bandLight(u.loop, bands + (float(k) - 3.5) / 8 * span);
+            tint = encoded(sum / 8);
+        }
         // Light where the detail is: the bands are brightest close to the
         // set's outline and fall away into a dark ground in open space, where
         // the text sits. The glow breathes it.
-        float closeness = exp(-around9 * scale / (0.013 * u.size.y)); // within about 1% of the screen
+        float2 nearby = smooth.sample(filtered, in.position.xy / float2(field.get_width(), field.get_height())).xy;
+        float closeness = exp(-nearby.y * scale / (0.013 * u.size.y)); // within about 1% of the screen
         // Right by the outline, where the bands crowd finer than a pixel, the
         // structure is lit toward the loop's bright accent, as filaments of
         // light, so the detail is where the light is.
@@ -527,19 +567,21 @@ enum ReactiveShader {
         // pixels round this one, the structure is a weave too fine to show:
         // that keeps the darker colour it averages to, and the light goes to
         // the edges the field can draw.
-        float tangled = 0;
-        for (int dy = 0; dy < 2; dy++)
-            for (int dx = 0; dx < 2; dx++) tangled += tangle(neighbours[dy][dx], neighbours[dy][dx + 1], neighbours[dy + 1][dx]);
-        tangled = smoothstep(0.06f, 0.3f, tangled / 4);
+        float tangled = smoothstep(0.06f, 0.3f, nearby.x);
         tint = mix(tint, fromOklch(u.loop[2].xyz), 0.35 * crowded * closeness * (1 - tangled));
         float3 outside = tint * (0.22 + 0.78 * closeness) * (0.85 + 0.15 * glow);
         // Relief: lit from the upper left, the slope toward the set read as a
-        // surface (the potential's own normal), where the field can tell it.
+        // surface (the potential's own normal), where the field can tell it:
+        // not in bands finer than a pixel, nor in a weave.
         float3 normal = normalize(float3(-t.zw, 1.2));
         float lit = saturate(dot(normal, normalize(float3(-1, -1, 1.4))));
-        outside *= mix(1.0f, 0.35 + 0.95 * lit, 1 - smoothstep(0.3f, 1.0f, density));
-        // Hats and snares: glints in bands of the escape count that move on with each one.
-        if (u.light.z > 0.01) outside += tint * smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * tau)) * u.light.z * 0.25 * closeness;
+        outside *= mix(1.0f, 0.35 + 0.95 * lit, (1 - smoothstep(0.3f, 1.0f, density)) * (1 - tangled));
+        // Hats and snares: glints in bands of the escape count that move on
+        // with each one, gone where they'd run finer than a pixel (the escape
+        // count climbs about 1.44 a pixel over the distance to the set).
+        float glints = 1 - smoothstep(0.25f, 0.5f, 0.35 * 1.4427 / (tau * max(px, 1e-3f)));
+        if (u.light.z > 0.01 && glints > 0)
+            outside += tint * smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * tau)) * u.light.z * 0.25 * closeness * glints;
         // The outline's light rim; where filaments run finer than the field can
         // tell apart, the darker even weave they'd average to, and no sharp line.
         float3 filament = mix(tint, float3(1), 0.4) * 0.6 * sqrt(glow);

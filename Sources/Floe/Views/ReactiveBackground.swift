@@ -93,6 +93,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         let haze: MTLRenderPipelineState
         let bloom: MTLRenderPipelineState
         let bloomField: MTLRenderPipelineState
+        let bloomStats: MTLRenderPipelineState
+        let bloomSmooth: MTLRenderPipelineState
         let bloomSoft: MTLRenderPipelineState
     }
     /// Pixels per frame at most: a large window draws Beams at about one pixel
@@ -175,6 +177,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
                          haze: try pipeline("floeHazeFragment", Targets.hazeFormat),
                          bloom: try pipeline("floeBloomFragment", pixelFormat),
                          bloomField: try pipeline("floeBloomField", Targets.fieldFormat),
+                         bloomStats: try pipeline("floeBloomStats", Targets.statsFormat),
+                         bloomSmooth: try pipeline("floeBloomSmooth", Targets.statsFormat),
                          bloomSoft: try soft())
     }
 
@@ -184,12 +188,20 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
         static let fieldFormat = MTLPixelFormat.rgba16Float
+        /// What the bands' light follows round each field pixel, before and after smoothing.
+        static let statsFormat = MTLPixelFormat.rg16Float
         /// Bloom's smooth colour per dive: outside the set, inside it, the filaments'.
         static let softFormats: [MTLPixelFormat] = [.rg11b10Float, .rg11b10Float, .rgba16Float]
-        /// What a dive found per pixel, its smooth colour, and the passes that draw them.
+        /// What a dive found per pixel, what its light follows round them (at
+        /// half the size, then smoothed), its smooth colour, and the passes
+        /// that draw them.
         struct BloomField {
             let texture: MTLTexture
             let pass: MTLRenderPassDescriptor
+            let stats: MTLTexture
+            let statsPass: MTLRenderPassDescriptor
+            let smooth: MTLTexture
+            let smoothPass: MTLRenderPassDescriptor
             let soft: [MTLTexture]
             let softPass: MTLRenderPassDescriptor
         }
@@ -227,7 +239,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         func bloomField(layer: Int, width: Int, height: Int) -> BloomField? {
             if let field = fields[layer], field.texture.width == width, field.texture.height == height { return field }
             let made = ([Self.fieldFormat] + Self.softFormats).compactMap { texture($0, width: width, height: height) }
-            guard made.count == 1 + Self.softFormats.count else { return nil }
+            let half = [Self.statsFormat, Self.statsFormat].compactMap { texture($0, width: (width + 1) / 2, height: (height + 1) / 2) }
+            guard made.count == 1 + Self.softFormats.count, half.count == 2 else { return nil }
             func pass(_ textures: ArraySlice<MTLTexture>) -> MTLRenderPassDescriptor {
                 let pass = MTLRenderPassDescriptor()
                 for (index, texture) in textures.enumerated() {
@@ -237,7 +250,9 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
                 }
                 return pass
             }
-            fields[layer] = BloomField(texture: made[0], pass: pass(made.prefix(1)), soft: Array(made.dropFirst()), softPass: pass(made.dropFirst()))
+            fields[layer] = BloomField(texture: made[0], pass: pass(made[0...0]), stats: half[0], statsPass: pass(half[0...0]),
+                                       smooth: half[1], smoothPass: pass(half[1...1]),
+                                       soft: Array(made.dropFirst()), softPass: pass(made.dropFirst()))
             return fields[layer]
         }
 
@@ -344,7 +359,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         return true
     }
 
-    /// One dive's field, worked out afresh, then its smooth colour from it.
+    /// One dive's field, worked out afresh, then what its light follows round
+    /// each pixel, smoothed, then its smooth colour from them.
     private static func encodeDive(_ command: MTLCommandBuffer, target: Targets.BloomField, layer: Int,
                                    uniforms: inout BloomUniforms, pipelines: Pipelines) -> Bool {
         var dive = BloomPassUniforms(layer: Int32(layer), pixel: 2 / Float(target.texture.height))
@@ -354,11 +370,22 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         field.setFragmentBytes(&dive, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
         field.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         field.endEncoding()
+        guard let stats = command.makeRenderCommandEncoder(descriptor: target.statsPass) else { return false }
+        stats.setRenderPipelineState(pipelines.bloomStats)
+        stats.setFragmentTexture(target.texture, index: 0)
+        stats.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        stats.endEncoding()
+        guard let smooth = command.makeRenderCommandEncoder(descriptor: target.smoothPass) else { return false }
+        smooth.setRenderPipelineState(pipelines.bloomSmooth)
+        smooth.setFragmentTexture(target.stats, index: 0)
+        smooth.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        smooth.endEncoding()
         guard let soft = command.makeRenderCommandEncoder(descriptor: target.softPass) else { return false }
         soft.setRenderPipelineState(pipelines.bloomSoft)
         soft.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
         soft.setFragmentBytes(&dive, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
         soft.setFragmentTexture(target.texture, index: 0)
+        soft.setFragmentTexture(target.smooth, index: 1)
         soft.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         soft.endEncoding()
         return true

@@ -374,11 +374,11 @@ enum ReactiveShader {
     /// A dive's field read between its pixels' centres, at `q` (in its pixels),
     /// from the four round it. Each outside pixel knows how far off the
     /// outline nearest it runs and which way, so it tells how far that outline
-    /// runs from q as well, as if straight across. So a filament between pixels
-    /// stays as sharp as it is wherever it falls, and carried from frame to
-    /// frame it neither blurs nor wanders. `side` is below 0 inside the set,
-    /// `inside` the inside pixels' share of q.
-    struct BloomSample { float distance; float spread; float count; float2 toward; float side; float settle; float inside; float sure; };
+    /// runs from q as well, as if straight across: a filament between pixels
+    /// stays as sharp as it is wherever it falls. `side` is below 0 inside the
+    /// set, `inside` is the inside pixels' share of q, and `sure` how well the
+    /// outside ones know where the set's edge runs.
+    struct BloomSample { float distance; float side; float inside; float sure; };
     static BloomSample bloomRead(texture2d<float, access::read> field, float2 q) {
         float2 size = float2(field.get_width(), field.get_height());
         q = clamp(q, float2(0), size - 1);
@@ -394,37 +394,28 @@ enum ReactiveShader {
         float4 e = x - (nx * ox + ny * oy);
         bool4 out = x >= 0;
         float4 shares = select(float4(0), w, out);
-        float outside = shares.x + shares.y + shares.z + shares.w, inside = 1 - outside;
+        float outside = shares.x + shares.y + shares.z + shares.w;
         BloomSample s;
         // Where the pixels agree on one outline (or know none) this is plain
-        // interpolation; across a filament it keeps its sharp crease.
-        // A few pixels off, the estimate is smooth but no exact distance:
-        // there plain interpolation, which leaves no trace of the pixels.
+        // interpolation; across a filament it keeps its sharp crease. A few
+        // pixels off, the estimate is smooth but no exact distance: there plain
+        // interpolation, which leaves no trace of the pixels.
         float plain = dot(shares, x) / max(outside, 1e-6f), far = smoothstep(2.0f, 4.0f, plain);
         s.distance = outside > 0 ? mix(dot(shares, abs(e)) / outside, plain, far) : 1e4;
-        // Where they disagree, filaments run finer than the pixels can tell apart.
-        s.spread = (1 - far) * dot(shares, abs(abs(e) - s.distance)) / max(outside, 1e-6f);
-        s.count = dot(shares, float4(t0.y, t1.y, t2.y, t3.y)) / max(outside, 1e-6f);
-        s.inside = inside;
-        s.settle = dot(w - shares, x) / max(inside, 1e-6f);
-        // Which way the set lies, as the pixels agree on it; past an outline the
-        // set lies back the other way. Where filaments are finer than the
-        // pixels they don't agree, and it's no way in particular.
-        float4 flip = select(float4(1), float4(-1), e < 0) * shares;
-        s.toward = (flip.x * t0.zw + flip.y * t1.zw + flip.z * t2.zw + flip.w * t3.zw) / max(outside, 1e-6f);
+        s.inside = 1 - outside;
+        s.sure = 0;
+        s.side = 0;
+        if (s.inside <= 0) return s;
         // Inside the set or not: each pixel votes half a pixel's worth for its
         // own side, so the edge falls halfway between, unless outside pixels
         // near it know where their outline runs; then it falls there, between
         // pixels, the inside ones agreeing.
-        s.sure = 0;
-        s.side = 0;
-        if (inside <= 0) return s;
         float4 sure = select(float4(0), saturate(nx * nx + ny * ny) * saturate(2 - x), out);
         float4 votes = mix(float4(0.5), clamp(e, -0.5f, 0.5f), sure);
         float known = dot(shares, sure);
         float line = known > 0 ? clamp(dot(shares * sure, e) / known, -0.5f, -0.02f) : -0.5f;
         s.sure = known / max(outside, 1e-6f);
-        s.side = dot(shares, votes) + inside * mix(-0.5f, line, s.sure);
+        s.side = dot(shares, votes) + s.inside * mix(-0.5f, line, s.sure);
         return s;
     }
     /// How much a field pixel and the ones right of and below it disagree on
@@ -484,8 +475,8 @@ enum ReactiveShader {
         float near = exp(-px / (60.0 / scale));
         // A pale cover's near-white colours are toned down to a mid level, so
         // text stays readable over them; darker ones keep theirs.
-        tint *= min(1.0f, 0.6f / max(dot(tint, float3(0.2126, 0.7152, 0.0722)), 1e-3f));
-        float3 outside = tint * (0.1 + 0.4 * near * (0.8 + 0.2 * glow));
+        tint *= min(1.0f, 0.5f / max(dot(tint, float3(0.2126, 0.7152, 0.0722)), 1e-3f));
+        float3 outside = tint * (0.1 + 0.47 * near * (0.8 + 0.2 * glow));
         // Lit from the upper left along the slope toward the set, so the
         // structure stands out in relief, where the field can tell its slope.
         outside *= 1 + 0.35 * (1 - blend) * dot(t.zw, float2(0.7071, 0.7071));
@@ -497,7 +488,7 @@ enum ReactiveShader {
         // apart, the even glow they'd average to, and no sharp line.
         float tangled = smoothstep(0.15f, 0.5f, tangle(t, neighbours[1][2], neighbours[2][1]));
         float3 filament = mix(lightTint(u.colors, hue + 0.05 * around), float3(1), 0.4) * 0.6 * sqrt(glow);
-        outside *= 1 - 0.5 * near * tangled;
+        outside *= 1 - 0.35 * near * tangled;
         // Inside, dark, with a faint pool of light that the mids bring up. Only
         // a piece of the set a few pixels across shows as dark; specks and
         // scattered clusters of it take the light round them, and their
@@ -533,7 +524,7 @@ enum ReactiveShader {
         float cover = smoothstep(0.5f, -0.5f, s.side * mix(1.0f, scale, s.sure)) * min(1.0f, 4 * s.inside);
         if (cover > 0) light = mix(light, insides.sample(filtered, uv).rgb, cover);
         float4 filament = cores.sample(filtered, uv);
-        return light * (1 - 0.85 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
+        return light * (1 - 0.6 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
     }
     fragment float4 floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
                                       texture2d<float, access::read> current [[texture(0)]],

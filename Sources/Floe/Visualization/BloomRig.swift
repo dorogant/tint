@@ -5,22 +5,24 @@ import simd
 /// Each dive sets out from the whole set and spirals down one of its valleys,
 /// past seahorses, spirals, fans and branches that keep changing as it goes,
 /// to a small copy of the set; that copy is framed just as the whole set was,
-/// so the next dive fades in over it and sets out again. Its outline glows as
-/// thin filaments in the cover's colours on a dark ground, and light pools in
-/// the bulbs. Nothing jumps or shakes: the music sets how fast the dive goes,
-/// which way it leans and which valley the next one takes.
+/// so the next dive fades in over it and sets out again. It's coloured the
+/// classic way, muted to sit behind the text: the cover's colours run in smooth
+/// bands by how fast each point escapes, ever finer toward the set, whose
+/// outline is drawn as fine lace; the set itself is dark. Nothing jumps or
+/// shakes: the music sets how fast the dive goes, which way it leans and which
+/// valley the next one takes.
 ///
 /// | Music                              | Fractal                                                          |
 /// |------------------------------------|------------------------------------------------------------------|
 /// | Harmony (pitch class)              | which way the view leans, and the valley the next dive takes     |
 /// | Loudness                           | the dive's pace                                                  |
-/// | Bass envelope                      | a slow breath of the glow round the filaments                    |
+/// | Bass envelope                      | a slow breath of the light round the set's structure             |
 /// | Kick                               | a small push forward in the dive                                 |
-/// | Snare, hat                         | glints running along the filaments                               |
-/// | Mids envelope (vocals, leads)      | light pooling in the bulbs                                       |
-/// | Highs envelope and brightness      | finer filaments, and quicker glints                              |
+/// | Snare, hat                         | glints running along the bands                                   |
+/// | Mids envelope (vocals, leads)      | a faint light in the set's bulbs                                 |
+/// | Highs envelope and brightness      | a finer outline, and quicker glints                              |
 /// | Build, then drop                   | the dive quickens, then eases, with one wave of light from its centre |
-/// | Beat phase (a steady groove)       | a faint swell of the glow on each beat                           |
+/// | Beat phase (a steady groove)       | a faint swell of the light on each beat                          |
 ///
 /// Hits change the pace, never the brightness, so nothing flashes. In silence
 /// the dive all but stops.
@@ -50,8 +52,7 @@ struct BloomRig {
     /// How many e-folds before a dive's end the next one starts fading in.
     static let handoff = 1.2
     /// Iterations per pixel. Pixels that haven't escaped or settled onto a
-    /// cycle by then are drawn as the edge of a bulb. It never changes, so a
-    /// pixel carried over from the last frame matches one worked out afresh.
+    /// cycle by then are drawn as the set, as classic renderings do.
     static let iterations: Float = 600
 
     /// The dive under way, and how far down it is (0…1).

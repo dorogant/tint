@@ -884,7 +884,7 @@ extension BackgroundTests {
     /// The moments the before/after proof shows, each after two seconds of
     /// music so most of the field has been carried over, as in the app.
     static let proofMoments: [(name: String, destination: Int, progress: Double)] = [
-        ("edge", 0, 0.5), ("dense", 3, 0.75), ("deep", 1, 0.97), ("handoff", 0, 0.94),
+        ("edge", 0, 0.5), ("dense", 3, 0.75), ("deep", 1, 0.97), ("handoff", 0, 0.94), ("seahorse", 0, 0.38),
     ]
     /// Where each proof moment's 100% crop sits on the screen.
     static let bloomProofCrops: [String: (x: Int, y: Int)] = [

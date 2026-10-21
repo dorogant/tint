@@ -341,6 +341,44 @@ extension BackgroundTests {
             check(frame.meanLuma > 0.01 && frame.maxLuma <= legibleLuma, "the window-sized Bloom must render (\(frame.meanLuma))")
         }
         bloomFreshChecks(device: device)
+        bloomPaletteFadeChecks(renderer: renderer)
+    }
+
+    /// A new cover's colours fade in over the old ones' without a flash, even
+    /// where the two trade ranks in lightness midway: no band's hue jumps, and
+    /// no frame changes more than its twin, which keeps the old cover, by more
+    /// than the fade spreads over its 1.6 s.
+    static func bloomPaletteFadeChecks(renderer: OffscreenRenderer) {
+        let old = [RGB(r: 0.95, g: 0.3, b: 0.3), RGB(r: 0.1, g: 0.1, b: 0.4), RGB(r: 0.3, g: 0.6, b: 0.3),
+                   RGB(r: 0.9, g: 0.85, b: 0.3), RGB(r: 0.45, g: 0.2, b: 0.55)]
+        let new = [RGB(r: 0.3, g: 0.05, b: 0.05), RGB(r: 0.55, g: 0.65, b: 1), RGB(r: 0.15, g: 0.3, b: 0.12),
+                   RGB(r: 0.35, g: 0.3, b: 0.05), RGB(r: 0.85, g: 0.7, b: 0.95)]
+        func hues(_ animator: BackgroundAnimator) -> [Float] {
+            let loop = animator.bloomUniforms(width: 1, height: 1).loop
+            return [loop.0.z, loop.1.z, loop.2.z, loop.3.z, loop.4.z]
+        }
+        var twin = diving(3, at: 0.5, BackgroundConfiguration(kind: .bloom, colors: old)), animator = twin
+        var configuration = animator.configuration
+        configuration.colors = new
+        animator.configure(configuration, animated: true)
+        let first = renderer.render(twin)
+        var previous = (first, first), previousHues = hues(animator), worstExcess: Float = 0, worstTurn: Float = 0
+        // No analysis frames: in silence the dive all but stops, so it's mostly the colours that change.
+        for _ in 0..<Int(BackgroundAnimator.crossfade * 60) + 6 {
+            animator.step(by: 1 / 60)
+            twin.step(by: 1 / 60)
+            let frame = (renderer.render(animator), renderer.render(twin)), now = hues(animator)
+            worstExcess = max(worstExcess, frame.0.difference(from: previous.0) - frame.1.difference(from: previous.1))
+            for (a, b) in zip(previousHues, now) {
+                var turn = b - a
+                turn -= 2 * .pi * (turn / (2 * .pi)).rounded()
+                worstTurn = max(worstTurn, abs(turn))
+            }
+            (previous, previousHues) = (frame, now)
+        }
+        print(String(format: "Bloom palette fade: at most %.4f a frame beyond the dive's own motion (%.4f over the whole fade), a band's hue turns at most %.3f rad a frame",
+                     worstExcess, previous.0.difference(from: first), worstTurn))
+        check(worstTurn < 0.15 && worstExcess < 0.0025, "a new cover must fade in without a jump (\(worstExcess) a frame, hue \(worstTurn) rad)")
     }
 
     /// Every frame is worked out afresh, nothing carried over from the last:

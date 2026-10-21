@@ -37,6 +37,19 @@ struct BackgroundTests {
             bloomPerformance(device: device)
             return
         }
+        // FLOE_BLOOM_CHECK=fade,stability: just those of Bloom's checks, for tuning them.
+        if let names = ProcessInfo.processInfo.environment["FLOE_BLOOM_CHECK"]?.split(separator: ",") {
+            guard let renderer = try? OffscreenRenderer(device: device, width: 480, height: 300) else { fail("no offscreen renderer") }
+            for name in names {
+                switch name {
+                case "fade": bloomPaletteFadeChecks(renderer: renderer)
+                case "stability": bloomStabilityChecks(device: device)
+                default: fail("no Bloom check named \(name)")
+                }
+            }
+            print("PASS: \(checks) Bloom checks")
+            return
+        }
         // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
             bloomRenders(device: device)

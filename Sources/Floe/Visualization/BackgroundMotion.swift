@@ -105,6 +105,10 @@ struct BackgroundAnimator {
     /// The palette as drawn now, eased between the old cover's colours and the new.
     /// Kept up to date as the crossfade moves, so drawing a frame allocates nothing.
     private(set) var colors = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
+    /// Bloom's bands as drawn now, eased between the old cover's loop and the new.
+    private(set) var bloomLoop = BloomPalette.Loop(repeating: .zero)
+    private var loopFrom = BloomPalette.Loop(repeating: .zero)
+    private var loopTo = BloomPalette.Loop(repeating: .zero)
     private(set) var fluid = FluidMotion()
     private(set) var beams = BeamRig()
     /// Settable so a test can start Bloom partway down a dive.
@@ -117,9 +121,12 @@ struct BackgroundAnimator {
     mutating func configure(_ configuration: BackgroundConfiguration, animated: Bool) {
         self.configuration = configuration
         let target = Self.prepare(configuration.colors, vividness: configuration.vividness)
-        guard target != to else { return }
+        let loop = BloomPalette.loop(target, neutral: configuration.neutral)
+        guard target != to || !BloomPalette.same(loop, loopTo) else { return }
         from = animated ? colors : target
         to = target
+        loopFrom = animated ? bloomLoop : loop
+        loopTo = loop
         fade = animated ? 0 : 1
         blend()
     }
@@ -166,11 +173,13 @@ struct BackgroundAnimator {
     /// moment, so the ink changes colour blob by blob instead of every colour
     /// passing through grey together.
     private mutating func blend() {
-        for i in colors.indices {
-            let start = Float(i) * 0.12
-            let x = min(1, max(0, (fade - start) / 0.52))
-            colors[i] = from[i] + (to[i] - from[i]) * (x * x * (3 - 2 * x))
+        let fade = fade
+        func share(_ i: Int) -> Float {
+            let x = min(1, max(0, (fade - Float(i) * 0.12) / 0.52))
+            return x * x * (3 - 2 * x)
         }
+        for i in colors.indices { colors[i] = from[i] + (to[i] - from[i]) * share(i) }
+        bloomLoop = BloomPalette.mix(loopFrom, loopTo, share: share)
     }
 
     func fluidUniforms(width: Float, height: Float) -> FluidUniforms {
@@ -211,7 +220,7 @@ struct BackgroundAnimator {
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              glints: SIMD4(rig.sparkle, 0, 0, rig.hue),
                              wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, rig.bass),
-                             loop: BloomPalette.loop(colors, neutral: configuration.neutral),
+                             loop: BloomPalette.uniforms(bloomLoop),
                              layers: (current, incoming ?? current))
     }
 

@@ -288,9 +288,9 @@ enum ReactiveShader {
         float aspect = u.size.x / max(u.size.y, 1.0f);
         return float2((uv.x * 2 - 1) * aspect, uv.y * 2 - 1);
     }
-    /// OKLCH (hue in radians) to linear sRGB, clipped to what it can show.
-    static float3 linearFromOklch(float3 c) {
-        float a = c.y * cos(c.z), b = c.y * sin(c.z);
+    /// OKLab to linear sRGB, clipped to what it can show.
+    static float3 linearFromOklab(float3 c) {
+        float a = c.y, b = c.z;
         float l = c.x + 0.3963377774 * a + 0.2158037573 * b;
         float m = c.x - 0.1055613458 * a - 0.0638541728 * b;
         float s = c.x - 0.0894841775 * a - 1.2914855480 * b;
@@ -299,6 +299,9 @@ enum ReactiveShader {
                                -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
                                -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s));
     }
+    static float3 oklab(float3 lch) { return float3(lch.x, lch.y * cos(lch.z), lch.y * sin(lch.z)); }
+    /// OKLCH (hue in radians) to linear sRGB, clipped to what it can show.
+    static float3 linearFromOklch(float3 c) { return linearFromOklab(oklab(c)); }
     /// Linear sRGB gamma-encoded, as the drawable takes it.
     static float3 encoded(float3 linear) {
         return select(1.055 * pow(linear, 1 / 2.4) - 0.055, 12.92 * linear, linear <= 0.0031308);
@@ -306,7 +309,9 @@ enum ReactiveShader {
     static float3 fromOklch(float3 c) { return encoded(linearFromOklch(c)); }
     /// The bands' colour `t` turns round their loop, eased from colour to
     /// colour in OKLCH the short way round the hue circle, so neighbours blend
-    /// through their own hues, never through grey or brown.
+    /// through their own hues, never through grey or brown. Neighbours all
+    /// but opposite blend straight across instead: there the short way flips
+    /// sides as a new cover's hues fade in, which would flash.
     static float3 bandLight(constant float4 *loop, float t) {
         t = fract(t) * 5;
         int i = int(t);
@@ -315,7 +320,10 @@ enum ReactiveShader {
         float3 a = loop[i % 5].xyz, b = loop[(i + 1) % 5].xyz;
         float turn = b.z - a.z;
         turn -= tau * round(turn / tau);
-        return linearFromOklch(float3(mix(a.xy, b.xy, f), a.z + turn * f));
+        float3 round = oklab(float3(mix(a.xy, b.xy, f), a.z + turn * f));
+        float across = smoothstep(2.4f, 3.1416f, abs(turn));
+        if (across > 0) round = mix(round, mix(oklab(a), oklab(b), f), across);
+        return linearFromOklab(round);
     }
     static float3 bandColor(constant float4 *loop, float t) { return encoded(bandLight(loop, t)); }
     static float2 complexSqrt(float2 w) {

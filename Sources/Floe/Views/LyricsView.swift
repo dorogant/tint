@@ -117,7 +117,9 @@ private struct SyncedLyricsView: View {
         GeometryReader { geometry in
             let fontSize = min(scale.text(34), max(scale.text(22), geometry.size.width * scale.factor / 18))
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: scale(2)) {
+                // Eager: synced lyrics rarely pass 150 lines, and a lazy stack's
+                // estimated heights made Follow stop short of a far line, then jump.
+                VStack(alignment: .leading, spacing: scale(2)) {
                     ForEach(lines) { line in
                         // Decoder rounding can report a position just before the tag when paused.
                         // Only a gap's "…" cares whether music plays. Equatable rows

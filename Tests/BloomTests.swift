@@ -1051,6 +1051,64 @@ extension BackgroundTests {
         bloomStabilityChecks(device: device)
     }
 
+    /// The proof moments' 100% crops, each held still and drawn as Bloom draws
+    /// it today, then from a field of a sample per pixel, alone and averaged in
+    /// linear light over 4 and 16 views nudged between pixels: what keyframes
+    /// that many samples deep would show. Full frames of the 16-sample ones too.
+    static func bloomSupersampleProof(device: MTLDevice, directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2, kind: .bloom)
+        let (width, height) = (Int(size.width), Int(size.height))
+        guard let renderer = try? OffscreenRenderer(device: device, width: width, height: height) else { return }
+        let screen = (width: width, height: height)
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 2)
+        let crop = (width: 960, height: 600)
+        let today = BackgroundRenderer.bloomFieldBudget(.high)
+        func grid(_ n: Int) -> [SIMD2<Float>] {
+            (0..<n * n).map { SIMD2((Float($0 % n) + 0.5) / Float(n) - 0.5, (Float($0 / n) + 0.5) / Float(n) - 0.5) }
+        }
+        let variants: [(label: String, budget: Int, offsets: [SIMD2<Float>])] = [
+            ("today: field \(today / 1000)k, 1 sample", today, [.zero]),
+            ("today's field, 16 nudged", today, grid(4)),
+            ("field 1 per pixel", width * height, [.zero]),
+            ("1 per pixel, 4 nudged", width * height, grid(2)),
+            ("1 per pixel, 16 nudged", width * height, grid(4)),
+        ]
+        func toLinear(_ v: UInt8) -> Float { let c = Float(v) / 255; return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        func toEncoded(_ c: Float) -> UInt8 {
+            let v = c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1 / 2.4) - 0.055
+            return UInt8(max(0, min(255, (v * 255).rounded())))
+        }
+        let table = (0..<256).map { toLinear(UInt8($0)) }
+        var cells: [SheetCell] = []
+        for moment in proofMoments {
+            var animator = diving(moment.destination, at: moment.progress, settings)
+            playBloom(&animator, music, renderer: renderer) { _, _, _ in }
+            let at = bloomProofCrops[moment.name] ?? (x: (width - crop.width) / 2, y: (height - crop.height) / 2)
+            for (v, variant) in variants.enumerated() {
+                renderer.targets.fieldBudget = variant.budget
+                var sum = [Float](repeating: 0, count: width * height * 4)
+                for offset in variant.offsets {
+                    renderer.targets.jitter = offset
+                    let frame = renderer.render(animator)
+                    for i in 0..<sum.count { sum[i] += i % 4 == 3 ? Float(frame.bytes[i]) / 255 : table[Int(frame.bytes[i])] }
+                }
+                let n = Float(variant.offsets.count)
+                let bytes = (0..<sum.count).map { i in i % 4 == 3 ? UInt8((sum[i] / n * 255).rounded()) : toEncoded(sum[i] / n) }
+                let frame = RenderedFrame(width: width, height: height, bytes: bytes)
+                let shown = frame.shown(on: screen, x: at.x, y: at.y, width: crop.width, height: crop.height)
+                save(shown.composited(), to: directory.appendingPathComponent("\(moment.name)-\(v).png"))
+                if v == variants.count - 1 { save(frame.composited(), to: directory.appendingPathComponent("\(moment.name)-full-16.png")) }
+                cells.append((shown, "\(moment.name): \(variant.label)", nil))
+            }
+        }
+        renderer.targets.fieldBudget = nil
+        renderer.targets.jitter = .zero
+        strip(cells, to: directory.appendingPathComponent("supersample.png"), columns: variants.count, scale: 0.5)
+        print("Bloom supersample proof: \(directory.path)/supersample.png and <moment>-<variant>.png at 100%")
+    }
+
     /// How much a frame flickers: the frames before and after it, each moved
     /// to where the dive's views put its points, against twice it, the mean
     /// absolute difference in luma, over the frame and over each `tile`-sized

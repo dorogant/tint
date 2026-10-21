@@ -224,6 +224,10 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         private static let overloadFrames = 15, underloadFrames = 60
         static let fadeFrames = 11
         private(set) var bloomShare = 0
+        /// For proofs: a field budget of their own in place of the setting's,
+        /// and how far to nudge Bloom's view, in pixels, to sample between them.
+        var fieldBudget: Int?
+        var jitter = SIMD2<Float>.zero
         /// The share a step left, while its crossfade runs.
         private(set) var fadingShare: Int?
         private var fadeDrawn = 0
@@ -377,8 +381,17 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         var uniforms = animator.bloomUniforms(width: width, height: height)
         let fade = targets.nextFade()
         uniforms.view.w = fade ?? 0
+        if targets.jitter != .zero {
+            func nudge(_ view: inout SIMD4<Float>) {
+                let by = targets.jitter * 2 / height // pixels to screen units
+                view.z += view.x * by.x - view.y * by.y
+                view.w += view.x * by.y + view.y * by.x
+            }
+            nudge(&uniforms.layers.0.view)
+            nudge(&uniforms.layers.1.view)
+        }
         let rig = animator.bloom
-        let budget = Double(bloomFieldBudget(animator.configuration.bloomQuality))
+        let budget = Double(targets.fieldBudget ?? bloomFieldBudget(animator.configuration.bloomQuality))
         func dive(_ layer: Int, faint: Bool, share: Int, slot: Int) -> Targets.BloomField? {
             let full = bloomFieldSize(width: Int(width), height: Int(height), budget: Int(budget * Targets.bloomShares[share]))
             let size = faint ? (width: max(1, full.width / 2), height: max(1, full.height / 2)) : full

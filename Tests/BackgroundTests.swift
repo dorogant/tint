@@ -31,6 +31,12 @@ struct BackgroundTests {
             bloomProof(device: device, directory: URL(fileURLWithPath: proof))
             return
         }
+        // FLOE_BLOOM_SUPERSAMPLE=<dir>: 100% crops of Bloom at its field today, at a
+        // sample a pixel, and at 4 and 16 a pixel, for what supersampling would show.
+        if let proof = ProcessInfo.processInfo.environment["FLOE_BLOOM_SUPERSAMPLE"] {
+            bloomSupersampleProof(device: device, directory: URL(fileURLWithPath: proof))
+            return
+        }
         // FLOE_BLOOM_COST=1: just Bloom's cost, and its dives sheet if FLOE_BLOOM_RENDERS is set.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_COST"] != nil {
             bloomDiveRenders(device: device)

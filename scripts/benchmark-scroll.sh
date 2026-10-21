@@ -22,8 +22,9 @@ swiftc -swift-version 6 -O -module-name Floe -parse-as-library -D SCROLL_BENCHMA
     -I "$ROOT/Sources/CFloeCore" -L "$ROOT/core/target/release" \
     -framework Security -framework SystemConfiguration -framework CoreFoundation -framework IOKit \
     "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" \
-    "$ROOT/Tests/ScrollBenchmarkFixture.swift" "$ROOT/Tests/ScrollBenchmark.swift" \
+    "$ROOT/Tests/ScrollBenchmarkFixture.swift" "$ROOT/Tests/ScrollBenchmark.swift" "$ROOT/Tests/TestDefaults.swift" \
     -o "$TEMP/scroll-benchmark"
-# A private home keeps the harness's preferences and caches away from Tint's.
+# A private home keeps the harness's caches away from Tint's; its settings
+# live in temporary plists (Tests/TestDefaults.swift).
 mkdir -p "$TEMP/home"
 CFFIXED_USER_HOME="$TEMP/home" "$TEMP/scroll-benchmark"

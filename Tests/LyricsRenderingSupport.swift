@@ -6,7 +6,7 @@ import SwiftUI
 // The benchmark compiles the production view against a synthetic playback clock.
 @MainActor @Observable final class PlayerModel {
     struct Track { let uri: String }
-    let displayTrack: Track? = Track(uri: "synthetic:lyrics-rendering")
+    var displayTrack: Track? = Track(uri: "synthetic:lyrics-rendering")
     var isPlaying = true
     private(set) var playbackAnchor = Date()
     private var offset = 0.0
@@ -26,7 +26,7 @@ import SwiftUI
 @MainActor @Observable final class LyricsModel {
     enum Content: Equatable { case instrumental, missing, plain(String), synced([LyricLine]) }
     enum State: Equatable { case idle, loading, loaded(Content), failed(String) }
-    let trackURI: String? = "synthetic:lyrics-rendering"
+    var trackURI: String? = "synthetic:lyrics-rendering"
     let isSynthetic = true
     var state: State = .idle
     func load(_ track: PlayerModel.Track?) async {}

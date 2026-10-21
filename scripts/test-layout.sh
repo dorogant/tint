@@ -18,8 +18,9 @@ while IFS= read -r file; do SOURCES+=("$file"); done < <(
 swiftc -swift-version 6 -O -module-name Floe -parse-as-library \
     -I "$ROOT/Sources/CFloeCore" -L "$ROOT/core/target/release" \
     -framework Security -framework SystemConfiguration -framework CoreFoundation -framework IOKit \
-    "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" "$ROOT/Tests/LayoutRender.swift" \
+    "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" "$ROOT/Tests/LayoutRender.swift" "$ROOT/Tests/TestDefaults.swift" \
     -o "$TEMP/layout-render"
-# A private home keeps the harness's preferences and caches away from Tint's.
+# A private home keeps the harness's caches away from Tint's; its settings
+# live in temporary plists (Tests/TestDefaults.swift).
 mkdir -p "$TEMP/home"
 CFFIXED_USER_HOME="$TEMP/home" "$TEMP/layout-render"

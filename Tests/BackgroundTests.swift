@@ -37,6 +37,21 @@ struct BackgroundTests {
             bloomPerformance(device: device)
             return
         }
+        // FLOE_BLOOM_CHECK=fade,stability,oracle,resolution: just those of Bloom's checks, for tuning them.
+        if let names = ProcessInfo.processInfo.environment["FLOE_BLOOM_CHECK"]?.split(separator: ",") {
+            guard let renderer = try? OffscreenRenderer(device: device, width: 480, height: 300) else { fail("no offscreen renderer") }
+            for name in names {
+                switch name {
+                case "fade": bloomPaletteFadeChecks(renderer: renderer)
+                case "stability": bloomStabilityChecks(device: device)
+                case "oracle": bloomOracleChecks(device: device)
+                case "resolution": bloomResolutionChecks(device: device)
+                default: fail("no Bloom check named \(name)")
+                }
+            }
+            print("PASS: \(checks) Bloom checks")
+            return
+        }
         // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
             bloomRenders(device: device)
@@ -141,9 +156,7 @@ struct BackgroundTests {
 
     static func pausedSwiftUIResize() {
         let status = VisualizationModel()
-        let suite = "floe-background-tests-\(UUID().uuidString)"
-        defer { UserDefaults().removePersistentDomain(forName: suite) }
-        let settings = VisualSettings(defaults: UserDefaults(suiteName: suite)!)
+        let settings = VisualSettings(defaults: TestDefaults.make())
         let host = NSHostingView(rootView: ReactiveBackground(colors: Covers.palette(Covers.sunset))
             .environment(status).environment(settings))
         let bounds = CGRect(x: 0, y: 0, width: 512, height: 320)
@@ -215,9 +228,7 @@ struct BackgroundTests {
     // MARK: - Settings
 
     static func settingsChecks() {
-        let suite = "floe-background-settings-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults.make()
         let fresh = VisualSettings(defaults: defaults)
         check(fresh.backgroundPreset == .balanced && fresh.backgroundLook == BackgroundPreset.balanced.look && !fresh.strobe,
               "a fresh install must start on Balanced, with the strobe off")
@@ -240,8 +251,7 @@ struct BackgroundTests {
               "background settings must persist")
 
         // The old Shake scaled Fluid's random jolt, which is gone: it's dropped, not carried into Punch.
-        let old = UserDefaults(suiteName: suite + "-old")!
-        defer { old.removePersistentDomain(forName: suite + "-old") }
+        let old = TestDefaults.make()
         old.set(0.26, forKey: "backgroundShake")
         old.set(0.54, forKey: "backgroundSpeed")
         let migrated = VisualSettings(defaults: old)
@@ -254,9 +264,7 @@ struct BackgroundTests {
     /// One click per preset; touching a knob makes it Custom; Custom keeps the
     /// last hand-tuned values to compare against; all of it persists.
     static func presetChecks() {
-        let suite = "floe-background-presets-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults.make()
         let settings = VisualSettings(defaults: defaults)
         settings.reactivity = 1.59; settings.glow = 1.86; settings.punch = 2; settings.vividness = 1.5; settings.motionSpeed = 0.91
         check(settings.backgroundPreset == .custom, "touching a knob must switch to Custom")

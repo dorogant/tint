@@ -8,7 +8,7 @@ final class VisualSettings {
     enum Shape: String, CaseIterable, Identifiable { case bars, wave; var id: Self { self } }
     enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams, bloom; var id: Self { self } }
     /// How finely Bloom works out its fractal: High at about a pixel per
-    /// point, Lighter at about half as many pixels for a smaller GPU.
+    /// point, Lighter at a bit over half a pixel per point, for a smaller GPU.
     enum BloomQuality: String, CaseIterable, Identifiable { case high, lighter; var id: Self { self } }
     nonisolated static let speedRange = 0.25...2.0
     nonisolated static let glowRange = 0.0...2.0

@@ -17,8 +17,8 @@ struct LayoutRender {
         let only = environment["FLOE_LAYOUT_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
 
         FixtureProtocol.install()
-        // Flat glass (the snapshot path); the app's own preferences are untouched
-        // because the script points the harness at a temporary home.
+        // Flat glass (the snapshot path). Volatile, and the settings below live in
+        // temporary plists, so the app's own preferences are untouched.
         // FLOE_LAYOUT_REAL_GLASS=1 keeps Liquid Glass, which renders in the toolbar but not in the content;
         // FLOE_LAYOUT_REDUCE_MOTION=1 renders with the app's Reduce Motion on.
         var defaults: [String: Any] = ["appLanguage": "en",
@@ -37,8 +37,8 @@ struct LayoutRender {
         let navigator = Navigator()
         let search = SearchModel()
         let appearance = CoverAppearance()
-        let visuals = VisualSettings()
-        let settings = AppSettings()
+        let visuals = VisualSettings(defaults: TestDefaults.make())
+        let settings = AppSettings(defaults: TestDefaults.make())
 
         await library.refresh()
         let nowPlaying = TrackInfo(Track(id: "np", uri: "spotify:track:np", name: "New Person, Same Old Mistakes",

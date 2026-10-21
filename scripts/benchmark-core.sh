@@ -12,7 +12,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 swiftc -swift-version 6 -O \
     "$ROOT/Sources/Floe/Images/Artwork.swift" "$ROOT/Sources/Floe/Images/CoverAppearance.swift" \
     "$ROOT/Sources/Floe/Images/CoverPalette.swift" "$ROOT/Sources/Floe/Core/CoreEvent.swift" \
-    "$ROOT/Sources/Floe/API/Models.swift" "$ROOT/Sources/Floe/Support/ViewState.swift" \
+    "$ROOT/Sources/Floe/API/Models.swift" "$ROOT/Sources/Floe/Support/ViewState.swift" "$ROOT/Sources/Floe/Support/ListMotion.swift" \
     "$ROOT/Sources/Floe/Views/Motion.swift" "$ROOT/Tests/CoreBenchmarks.swift" \
     -o "$TEMP/core-benchmarks"
 mkdir -p "$TEMP/home"

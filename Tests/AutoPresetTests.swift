@@ -140,9 +140,7 @@ struct AutoPresetTests {
     }
 
     static func makeSettings() -> (VisualSettings, UserDefaults) {
-        let suite = "tint-autopreset-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
+        let defaults = TestDefaults.make()
         return (VisualSettings(defaults: defaults), defaults)
     }
 

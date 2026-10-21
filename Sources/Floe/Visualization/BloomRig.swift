@@ -60,10 +60,6 @@ struct BloomRig {
     private(set) var progress: Double
     /// The dive fading in over this one's last stretch.
     private(set) var next: Int?
-    /// How many dives have been taken, so the renderer can tell one dive's
-    /// frames from another's, and which rig they belong to.
-    private(set) var dive = 0
-    let run = UInt64.random(in: 0...UInt64.max)
     /// The dive's pace (e-folds a second), and the kicks' extra push on top.
     private(set) var pace: Float = idlePace
     private(set) var surge: Float = 0
@@ -110,12 +106,13 @@ struct BloomRig {
     /// How far the next dive has faded in (0…1).
     var blend: Float {
         guard next != nil else { return 0 }
-        let start = handoffStart
+        let start = Self.handoffStart(destination)
         let x = Float(max(0, min(1, (progress - start) / (1 - start))))
         return x * x * (3 - 2 * x)
     }
 
-    private var handoffStart: Double { 1 - Self.handoff / Self.destinations[destination].depth }
+    /// How far along the dive into `destination` the next one starts fading in.
+    static func handoffStart(_ destination: Int) -> Double { 1 - handoff / destinations[destination].depth }
 
     /// The next dive: the one the harmony names when it's clear, else three on.
     static func destination(after current: Int, pitchClass: Float, tonality: Float) -> Int {
@@ -200,14 +197,13 @@ struct BloomRig {
     private mutating func advance(by efolds: Double) {
         var depth = Self.destinations[destination].depth
         progress += efolds / depth
-        if next == nil, progress >= handoffStart {
+        if next == nil, progress >= Self.handoffStart(destination) {
             next = Self.destination(after: destination, pitchClass: layers.pitchClass, tonality: tonality)
         }
         while progress >= 1 {
             let past = (progress - 1) * depth
             destination = next ?? Self.destination(after: destination, pitchClass: layers.pitchClass, tonality: tonality)
             next = nil
-            dive += 1
             depth = Self.destinations[destination].depth
             progress = past / depth
         }
@@ -283,14 +279,21 @@ struct BloomDestination {
 /// bright accent and back, and a chroma vivid enough to read as colour,
 /// whatever the cover: the lightest of them becomes the accent, the darkest
 /// the deep. A black-and-white cover stays grey.
+///
+/// Worked out once per cover, not per frame. A new cover's loop is reached
+/// place by place from the old one's, never by sorting the colours mid-fade:
+/// two colours trading ranks would swap places, and their hues, in one frame.
 enum BloomPalette {
+    /// Per place round the loop: lightness, chroma, hue in radians.
+    typealias Loop = InlineArray<5, SIMD3<Float>>
+
     /// Lightness per place round the loop, from its darkest colour.
     static let lightness: InlineArray<5, Float> = [0.17, 0.4, 0.8, 0.58, 0.3]
     /// The least chroma a colour is given, and how much more each gets.
     static let minimumChroma: Float = 0.12
     static let boost: Float = 1.5
 
-    static func loop(_ colors: [SIMD3<Float>], neutral: Bool) -> Palette {
+    static func loop(_ colors: [SIMD3<Float>], neutral: Bool) -> Loop {
         var lch = InlineArray<5, SIMD3<Float>>(repeating: .zero)
         var order = InlineArray<5, Int>(repeating: 0)
         for i in 0..<5 {
@@ -309,16 +312,39 @@ enum BloomPalette {
         // dark side's way down, the mid way up, the mid way down, the accent.
         let places: InlineArray<5, Int> = [0, 4, 1, 3, 2]
         let accentHue = lch[order[4]].z
-        var out = InlineArray<5, SIMD4<Float>>(repeating: .zero)
+        var out = Loop(repeating: .zero)
         for rank in 0..<5 {
             var c = lch[order[rank]]
             // A grey has no hue of its own to keep: it takes the accent's.
             if c.y < 0.02 { c.z = accentHue }
             c.y = neutral ? min(c.y, 0.02) : max(minimumChroma, c.y * boost)
             c.x = lightness[places[rank]]
-            out[places[rank]] = SIMD4(c.x, inGamut(c), c.z, 0)
+            out[places[rank]] = SIMD3(c.x, inGamut(c), c.z)
         }
-        return (out[0], out[1], out[2], out[3], out[4])
+        return out
+    }
+
+    /// `a` turned `share(place)` of the way to `b`, place by place: chroma
+    /// straight across, hue the short way round, within what sRGB can show.
+    /// Each place keeps its lightness, so nothing flashes.
+    static func mix(_ a: Loop, _ b: Loop, share: (Int) -> Float) -> Loop {
+        var out = b
+        for i in 0..<5 {
+            let x = share(i)
+            guard x < 1 else { continue }
+            var turn = b[i].z - a[i].z
+            turn -= 2 * .pi * (turn / (2 * .pi)).rounded()
+            let c = SIMD3(b[i].x, a[i].y + (b[i].y - a[i].y) * x, a[i].z + turn * x)
+            out[i] = SIMD3(c.x, inGamut(c), c.z)
+        }
+        return out
+    }
+
+    static func same(_ a: Loop, _ b: Loop) -> Bool { (0..<5).allSatisfy { a[$0] == b[$0] } }
+
+    /// As the shader takes it.
+    static func uniforms(_ loop: Loop) -> Palette {
+        (SIMD4(loop[0], 0), SIMD4(loop[1], 0), SIMD4(loop[2], 0), SIMD4(loop[3], 0), SIMD4(loop[4], 0))
     }
 
     /// The most chroma up to `c`'s that sRGB can show at its lightness and hue.

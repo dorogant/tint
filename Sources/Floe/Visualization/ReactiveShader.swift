@@ -277,24 +277,16 @@ enum ReactiveShader {
     // bulbs: the reference's c, and 1 over the scale its copy of the set is drawn at (complex). orbit: one period from 0.
     struct BloomLayer { float4 view; float4 counts; float4 bulbs; float2 orbit[64]; };
     struct BloomUniforms {
-        float4 colors[5]; float4 view; float4 size; float4 light; float4 glints; float4 wave; float4 loop[5]; BloomLayer layers[2];
+        float4 view; float4 size; float4 light; float4 glints; float4 wave; float4 loop[5]; BloomLayer layers[2];
     };
     // The field pass for one dive: which of the uniforms' layers, and how far apart its pixels are in screen units.
     struct BloomPass { int layer; float pixel; };
+    constant float tau = 6.2831853;
     static float2 complexMultiply(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
-    /// The palette as a loop, eased from colour to colour.
-    static float3 paletteLoop(constant float4 *colors, float t) {
-        t = fract(t) * 5;
-        int i = int(t);
-        float f = t - float(i);
-        f = f * f * (3 - 2 * f);
-        return mix(colors[i % 5].rgb, colors[(i + 1) % 5].rgb, f);
-    }
-    /// A palette colour as light: dark slots are lifted to full strength, so a
-    /// navy reads as blue neon rather than mud. Greys stay grey.
-    static float3 lightTint(constant float4 *colors, float t) {
-        float3 c = paletteLoop(colors, t);
-        return c / max(max(c.r, max(c.g, c.b)), 0.08f);
+    /// The screen point under `uv`: y runs −1…1, x the same times the aspect ratio.
+    static float2 screenPoint(constant BloomUniforms& u, float2 uv) {
+        float aspect = u.size.x / max(u.size.y, 1.0f);
+        return float2((uv.x * 2 - 1) * aspect, uv.y * 2 - 1);
     }
     /// OKLCH (hue in radians) to linear sRGB, clipped to what it can show.
     static float3 linearFromOklch(float3 c) {
@@ -322,7 +314,7 @@ enum ReactiveShader {
         f = f * f * (3 - 2 * f);
         float3 a = loop[i % 5].xyz, b = loop[(i + 1) % 5].xyz;
         float turn = b.z - a.z;
-        turn -= 6.2831853 * round(turn / 6.2831853);
+        turn -= tau * round(turn / tau);
         return linearFromOklch(float3(mix(a.xy, b.xy, f), a.z + turn * f));
     }
     static float3 bandColor(constant float4 *loop, float t) { return encoded(bandLight(loop, t)); }
@@ -399,9 +391,7 @@ enum ReactiveShader {
     }
     fragment float4 floeBloomField(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
                                    constant BloomPass& pass [[buffer(1)]]) {
-        float aspect = u.size.x / max(u.size.y, 1.0f);
-        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
-        return bloomPoint(u, u.layers[pass.layer], v, pass.pixel);
+        return bloomPoint(u, u.layers[pass.layer], screenPoint(u, in.uv), pass.pixel);
     }
     /// A dive's field read between its pixels' centres, at `q` (in its pixels),
     /// from the four round it. Each outside pixel knows how far off the
@@ -463,11 +453,11 @@ enum ReactiveShader {
         return min(sum, 4.0f) * 0.25;
     }
     /// One dive's colour, worked out once per field pixel since all of it is
-    /// smooth: outside the set (and, in alpha, how strongly the bands glint
-    /// there), inside it, and the colour of the outline's filaments, each
-    /// already lit for the frame and weighted by the dive's share of it, so
-    /// the two dives of a handoff just add up. The screen-sized pass draws the
-    /// filaments and the set's edge sharp between them.
+    /// smooth: outside the set, inside it, and the colour of the outline's
+    /// filaments (in alpha, how sharply they draw there), each already lit for
+    /// the frame and weighted by the dive's share of it, so the two dives of a
+    /// handoff just add up. The screen-sized pass draws the filaments and the
+    /// set's edge sharp between them.
     struct BloomSoft { float4 outside [[color(0)]]; float4 inside [[color(1)]]; float4 core [[color(2)]]; };
     fragment BloomSoft floeBloomSoft(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
                                      constant BloomPass& pass [[buffer(1)]], texture2d<float, access::read> field [[texture(0)]]) {
@@ -480,8 +470,7 @@ enum ReactiveShader {
                 within += neighbours[dy + 1][dx + 1].x < 0 ? 1 : 0;
             }
         float4 t = neighbours[1][1];
-        float aspect = u.size.x / max(u.size.y, 1.0f);
-        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
+        float2 v = screenPoint(u, in.uv);
         float scale = u.size.y / float(field.get_height());
         float glow = u.light.x * (0.8 + 0.4 * u.wave.w), heart = u.light.y, hue = u.glints.w;
         // The cover's colours lie round the dive's centre, a little differently on each side.
@@ -536,7 +525,7 @@ enum ReactiveShader {
         float lit = saturate(dot(normal, normalize(float3(-1, -1, 1.4))));
         outside *= mix(1.0f, 0.35 + 0.95 * lit, 1 - smoothstep(0.3f, 1.0f, density));
         // Hats and snares: glints in bands of the escape count that move on with each one.
-        if (u.light.z > 0.01) outside += tint * smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * 6.2831853)) * u.light.z * 0.25 * closeness;
+        if (u.light.z > 0.01) outside += tint * smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * tau)) * u.light.z * 0.25 * closeness;
         // The outline's light rim; where filaments run finer than the field can
         // tell apart, the darker even weave they'd average to, and no sharp line.
         float3 filament = mix(tint, float3(1), 0.4) * 0.6 * sqrt(glow);
@@ -562,14 +551,15 @@ enum ReactiveShader {
         float3 ground = next ? float3(0) : float3(0.008, 0.009, 0.013);
         return { float4(outside * level + ground, 0), float4(inside * level + ground, 0), float4(filament * level, 1 - tangled) };
     }
-    /// One dive's light at screen pixel `uv`, from its field read there
-    /// (`scale` screen pixels to a field pixel) and its smooth colours: the
-    /// outline's filaments at the screen's own pixels, pre-filtered so one
-    /// thinner than a pixel dims rather than breaking up, and the set's edge as sharp.
+    /// One dive's light at screen pixel `uv`, from its field read there and
+    /// its smooth colours: the outline's filaments at the screen's own pixels,
+    /// pre-filtered so one thinner than a pixel dims rather than breaking up,
+    /// and the set's edge as sharp.
     static float3 bloomDetail(constant BloomUniforms& u, texture2d<float, access::read> field, texture2d<float> outsides,
-                              texture2d<float> insides, texture2d<float> cores, float2 uv, float scale) {
+                              texture2d<float> insides, texture2d<float> cores, float2 uv) {
         constexpr sampler filtered(filter::linear, address::clamp_to_edge);
         float2 size = float2(field.get_width(), field.get_height());
+        float scale = u.size.y / size.y; // screen pixels to a field pixel
         BloomSample s = bloomRead(field, uv * size - 0.5);
         float across = s.distance * scale, width = u.view.y, footprint = width * width + 0.3;
         float core = exp(-0.5 * across * across / footprint) * width * rsqrt(footprint);
@@ -589,9 +579,9 @@ enum ReactiveShader {
                                       texture2d<float> cores [[texture(4)]], texture2d<float> nextOutsides [[texture(5)]],
                                       texture2d<float> nextInsides [[texture(6)]], texture2d<float> nextCores [[texture(7)]]) {
         float2 uv = float2(in.uv.x, 1 - in.uv.y); // textures run top-down
-        float3 light = bloomDetail(u, current, outsides, insides, cores, uv, u.size.y / float(current.get_height()));
+        float3 light = bloomDetail(u, current, outsides, insides, cores, uv);
         // The next dive fades in over this one's last stretch: both dive on together meanwhile.
-        if (u.view.z > 0) light += bloomDetail(u, incoming, nextOutsides, nextInsides, nextCores, uv, u.size.y / float(incoming.get_height()));
+        if (u.view.z > 0) light += bloomDetail(u, incoming, nextOutsides, nextInsides, nextCores, uv);
         float3 color = 1 - exp(-light * 1.2); // highlights roll off instead of clipping
         color = limitLuma(color, 0.38, 0.6);
         float alpha = 0.92;

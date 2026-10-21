@@ -202,11 +202,6 @@ extension BackgroundTests {
         return animator
     }
 
-    /// Where along the dive into `destination` the next one starts fading in.
-    static func handoffStart(_ destination: Int) -> Double {
-        1 - BloomRig.handoff / BloomRig.destinations[destination].depth
-    }
-
     static func bloomChecks(device: MTLDevice) {
         let renderer: OffscreenRenderer
         do { renderer = try OffscreenRenderer(device: device, width: 480, height: 300) } catch { fail("cannot build the offscreen renderer: \(error)") }
@@ -230,7 +225,7 @@ extension BackgroundTests {
         // The dive is endless: as one dive hands over to the next, and where the
         // next takes over, the picture changes no more than between any two frames.
         let fast = BackgroundConfiguration(kind: .bloom, colors: sunset, speed: 2)
-        var music = diving(0, at: handoffStart(0) - 0.4 / BloomRig.destinations[0].depth, fast)
+        var music = diving(0, at: BloomRig.handoffStart(0) - 0.4 / BloomRig.destinations[0].depth, fast)
         var steps: [Float] = [], blending: [Int] = [], takeover: Int?
         var previous: RenderedFrame?
         playBloom(&music, BloomSong.held(pitch: 7, tonality: 1, loudness: 0.6, seconds: 18), renderer: renderer) { animator, frame, _ in
@@ -271,7 +266,7 @@ extension BackgroundTests {
         // Harmony picks the next dive: G as the handoff begins sends it down a
         // different valley from C. Every dive sets out from the whole set, so
         // they part only once the next has taken over.
-        let early = handoffStart(0) - 0.15 / BloomRig.destinations[0].depth
+        let early = BloomRig.handoffStart(0) - 0.15 / BloomRig.destinations[0].depth
         var c = diving(0, at: early, fast), g = diving(0, at: early, fast)
         var cFrame: RenderedFrame?, gFrame: RenderedFrame?
         playBloom(&c, BloomSong.held(pitch: 0, tonality: 1, loudness: 0.6, seconds: 22), renderer: renderer) { _, frame, _ in cFrame = frame }
@@ -308,7 +303,7 @@ extension BackgroundTests {
         }
         for (name, frames, configuration) in [("song, defaults", BloomSong.frames(), settings), ("frantic, brightest", franticFrames, brightest),
                                               ("frantic, defaults", franticFrames, settings)] {
-            for (destination, progress) in [(0, 0.0), (3, 0.5), (1, handoffStart(1))] {
+            for (destination, progress) in [(0, 0.0), (3, 0.5), (1, BloomRig.handoffStart(1))] {
                 var animator = diving(destination, at: progress, configuration)
                 var cells: [[Float]] = Array(repeating: [], count: 17)
                 var brightestLuma: Float = 0, meanest: Float = 0, contrast: Float = 21
@@ -356,7 +351,7 @@ extension BackgroundTests {
               let fresh = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
         var worst: Float = 0
-        var animator = diving(1, at: handoffStart(1) - 0.05, settings)
+        var animator = diving(1, at: BloomRig.handoffStart(1) - 0.05, settings)
         playBloom(&animator, BloomSong.frames(), renderer: running) { animator, frame, i in
             guard i % 30 == 29 else { return }
             worst = max(worst, frame.difference(from: fresh.render(animator)))
@@ -516,7 +511,7 @@ extension BackgroundTests {
         // dive heads, turning and leaning included, and that point only glides.
         var fastest: Float = 0, fastestAnywhere: Float = 0, glide: Float = 0
         var last = SIMD2<Float>.zero, lastLean = SIMD2<Float>.zero, tense = -1000
-        _ = rig(BloomSong.frames() + BloomLongSong.frames(), from: BloomRig(destination: 0, progress: handoffStart(0) - 0.02)) { rig, display in
+        _ = rig(BloomSong.frames() + BloomLongSong.frames(), from: BloomRig(destination: 0, progress: BloomRig.handoffStart(0) - 0.02)) { rig, display in
             let d = BloomRig.destinations[rig.destination]
             let turn = Float(atan2(d.scale.im, d.scale.re) / d.depth)
             let reach = simd_length(SIMD2(1.6, 1) + abs(rig.focus))
@@ -561,7 +556,7 @@ extension BackgroundTests {
         // Harmony picks the next dive as the handoff begins; never the same one again, and with no clear key it moves on.
         let count = BloomRig.destinations.count
         for (pitch, tonality, expected) in [(3, 1, 3), (7, 1, 7), (11, 1, 11 % count), (0, 1, 1), (7, 0, 3)] as [(Int, Float, Int)] {
-            let start = BloomRig(destination: 0, progress: handoffStart(0) - 0.001)
+            let start = BloomRig(destination: 0, progress: BloomRig.handoffStart(0) - 0.001)
             let next = rig(BloomSong.held(pitch: Float(pitch), tonality: tonality, seconds: 3), from: start).next
             check(next == expected, "pitch class \(pitch) at tonality \(tonality) must head for dive \(expected) next (\(String(describing: next)))")
         }
@@ -609,8 +604,8 @@ extension BackgroundTests {
         bloomDiveRenders(device: device)
 
         // One handoff, in eight steps, from before the next dive fades in to after it takes over.
-        var handoff: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        var animator = diving(0, at: handoffStart(0) - 0.2 / BloomRig.destinations[0].depth, settings)
+        var handoff: [SheetCell] = []
+        var animator = diving(0, at: BloomRig.handoffStart(0) - 0.2 / BloomRig.destinations[0].depth, settings)
         let loud = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.6, seconds: 1)[0]
         for _ in 0..<8 {
             handoff.append((small.render(animator), String(format: "dive %d at %.3f, blend %.2f", animator.bloom.destination, animator.bloom.progress, animator.bloom.blend), nil))
@@ -628,7 +623,7 @@ extension BackgroundTests {
         strip(handoff, to: directory.appendingPathComponent("handoff.png"), columns: 4, scale: 0.5)
 
         // Each kind of cover at the same moments: before the beat, the vocal swell, just after the drop.
-        var palettes: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var palettes: [SheetCell] = []
         for (name, cover) in [("sunset", Covers.palette(Covers.sunset)), ("ocean", Covers.palette(Covers.ocean)),
                               ("navy", Covers.palette(Covers.navy)), ("neutral", neutral)] {
             var animator = diving(3, at: 0.45, BackgroundConfiguration(kind: .bloom, colors: cover, neutral: name == "neutral"))
@@ -656,7 +651,7 @@ extension BackgroundTests {
         // The song, at 960×600, every frame.
         guard let renderer = try? OffscreenRenderer(device: device, width: 960, height: 600) else { return }
         var player = diving(0, at: 0.3, settings)
-        var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var sheet: [SheetCell] = []
         let frames = BloomSong.frames()
         playBloom(&player, frames, renderer: renderer) { _, frame, i in
             save(frame.composited(), to: song.appendingPathComponent(String(format: "frame-%03d.png", i)))
@@ -665,7 +660,7 @@ extension BackgroundTests {
             var label = String(format: "%.1f s", Float(i) / 30)
             if m.build > 0 { label += String(format: " build %.2f", m.build) }
             if m.vocal > 0.1 { label += " vocal" }
-            sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
+            sheet.append((frame, label, hitMark(m)))
         }
         strip(sheet, to: directory.appendingPathComponent("song-sheet.png"), columns: 6, scale: 0.3)
         print("Bloom renders: \(directory.path)/dives.png, handoff.png, song-sheet.png and song/frame-000…\(frames.count - 1).png")
@@ -680,9 +675,9 @@ extension BackgroundTests {
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
         let music = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.5, mid: 0.4, seconds: 1)
 
-        var dives: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var dives: [SheetCell] = []
         for (index, d) in BloomRig.destinations.enumerated() {
-            for progress in [0.15, 0.35, 0.55, 0.75, handoffStart(index) - 0.01] {
+            for progress in [0.15, 0.35, 0.55, 0.75, BloomRig.handoffStart(index) - 0.01] {
                 var animator = diving(index, at: progress, settings)
                 var last: RenderedFrame?
                 playBloom(&animator, music, renderer: small) { _, frame, _ in last = frame }
@@ -774,7 +769,7 @@ extension BackgroundTests {
     static func bloomHeartRenders(device: MTLDevice, directory: URL) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 1280, height: 800) else { return }
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
-        var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var cells: [SheetCell] = []
         for (destination, progress) in hearts {
             for mid: Float in [0, 0.8] {
                 let (frame, heart) = heldHeart(destination, at: progress, mid: mid, renderer: renderer, settings: settings)
@@ -790,14 +785,14 @@ extension BackgroundTests {
     static func bloomLongSongRenders(device: MTLDevice, directory: URL) {
         guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
         var animator = diving(2, at: 0.3, BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)))
-        var sheet: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
+        var sheet: [SheetCell] = []
         playBloom(&animator, BloomLongSong.frames(), renderer: renderer) { _, frame, i in
             guard i % 15 == 0 else { return }
             let t = Float(i) / 30
             let m = BloomLongSong.moment(at: t, frame: i)
             var label = String(format: "%.1f s %@", t, BloomLongSong.section(at: t))
             if m.vocal > 0.1 { label += " vocal" }
-            sheet.append((frame, label, m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)))
+            sheet.append((frame, label, hitMark(m)))
         }
         strip(sheet, to: directory.appendingPathComponent("long-song-sheet.png"), columns: 8, scale: 0.3)
     }
@@ -853,8 +848,16 @@ extension BackgroundTests {
         }
     }
 
+    /// A thumbnail on a contact sheet, its caption, and the colour of the bar under it.
+    typealias SheetCell = (frame: RenderedFrame, label: String, mark: CGColor?)
+
+    /// Kicks are marked red on a song's contact sheet, snares blue.
+    static func hitMark(_ m: BloomSong.Moment) -> CGColor? {
+        m.kick ? CGColor(red: 1, green: 0.4, blue: 0.3, alpha: 1) : (m.snare ? CGColor(red: 0.4, green: 0.7, blue: 1, alpha: 1) : nil)
+    }
+
     /// Labelled thumbnails in rows, written to `url`.
-    static func strip(_ cells: [(frame: RenderedFrame, label: String, mark: CGColor?)], to url: URL, columns: Int, scale: CGFloat) {
+    static func strip(_ cells: [SheetCell], to url: URL, columns: Int, scale: CGFloat) {
         guard let first = cells.first?.frame else { return }
         let cellW = Int(CGFloat(first.width) * scale), cellH = Int(CGFloat(first.height) * scale)
         let gap = 4, caption = 18
@@ -921,8 +924,7 @@ extension RenderedFrame {
 }
 
 extension BackgroundTests {
-    /// The moments the before/after proof shows, each after two seconds of
-    /// music so most of the field has been carried over, as in the app.
+    /// The moments the before/after proof shows, each after two seconds of music.
     static let proofMoments: [(name: String, destination: Int, progress: Double)] = [
         ("edge", 0, 0.5), ("dense", 3, 0.75), ("deep", 1, 0.97), ("handoff", 0, 0.94), ("seahorse", 0, 0.38), ("bright", 1, 0.91),
     ]
@@ -957,7 +959,7 @@ extension BackgroundTests {
         }
         let sequence = directory.appendingPathComponent("dense-sequence")
         try? FileManager.default.createDirectory(at: sequence, withIntermediateDirectories: true)
-        let at = bloomProofCrops["dense"] ?? (x: 1248, y: 817)
+        let at = bloomProofCrops["dense"]!
         var animator = diving(3, at: 0.75, settings)
         var previous: (luma: LumaImage, view: BloomView)?, shimmers: [Float] = []
         playBloom(&animator, music + BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 4), renderer: renderer) { animator, frame, i in
@@ -1008,7 +1010,7 @@ extension BackgroundTests {
         let width = Double(screen.width), height = Double(screen.height), aspect = width / height
         var sum: Float = 0, count = 0
         var residual = [UInt8](repeating: 255, count: current.width * current.height * 4)
-        for y in stride(from: 8, to: current.height - 8, by: 1) {
+        for y in 8..<(current.height - 8) {
             for x in 8..<(current.width - 8) {
                 let v = Complex((2 * (Double(crop.x + x) + 0.5) / width - 1) * aspect, 1 - 2 * (Double(crop.y + y) + 0.5) / height)
                 let was = (to.offset - from.offset + to.perScreenUnit * v) / from.perScreenUnit
@@ -1030,13 +1032,9 @@ struct LumaImage {
     let width: Int
     let height: Int
     var values: [Float]
+}
 
-    init(width: Int, height: Int, values: [Float]) {
-        self.width = width
-        self.height = height
-        self.values = values
-    }
-
+extension LumaImage {
     init(_ frame: RenderedFrame) {
         var values = [Float](repeating: 0, count: frame.width * frame.height)
         for y in 0..<frame.height { for x in 0..<frame.width { values[y * frame.width + x] = frame.luma(x, y) } }

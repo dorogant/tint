@@ -28,8 +28,7 @@ struct LyricsFollowProbe: NSViewRepresentable {
 struct Sample {
     let time: Double
     let rows: [Int: CGRect]
-    /// While the pill moves to a new line, the old line's copy fades out on
-    /// the same matched frame; copies apart would be a box with no line under it.
+    /// Every pill drawn; more than one apart would be a box with no line under it.
     let pills: [(id: Int, frame: CGRect)]
     var pillIDs: Set<Int> { Set(pills.map(\.id)) }
     var split: Bool {
@@ -334,8 +333,7 @@ struct LyricsFollowTests {
         setvbuf(stdout, nil, _IOLBF, 0)
         NSApplication.shared.setActivationPolicy(.prohibited)
         let only = ProcessInfo.processInfo.environment["FLOE_FOLLOW_ONLY"]
-        // Volatile, so nothing reaches the harness's saved preferences (the
-        // private CFFIXED_USER_HOME doesn't move them).
+        // Volatile, so nothing reaches ~/Library/Preferences.
         UserDefaults.standard.setVolatileDomain(["reduceMotion": false], forName: UserDefaults.argumentDomain)
         let judge = Judge()
         for size in sizes { await motion(size: size, only: only, judge: judge) }

@@ -60,10 +60,6 @@ struct BloomRig {
     private(set) var progress: Double
     /// The dive fading in over this one's last stretch.
     private(set) var next: Int?
-    /// How many dives have been taken, so the renderer can tell one dive's
-    /// frames from another's, and which rig they belong to.
-    private(set) var dive = 0
-    let run = UInt64.random(in: 0...UInt64.max)
     /// The dive's pace (e-folds a second), and the kicks' extra push on top.
     private(set) var pace: Float = idlePace
     private(set) var surge: Float = 0
@@ -110,12 +106,13 @@ struct BloomRig {
     /// How far the next dive has faded in (0…1).
     var blend: Float {
         guard next != nil else { return 0 }
-        let start = handoffStart
+        let start = Self.handoffStart(destination)
         let x = Float(max(0, min(1, (progress - start) / (1 - start))))
         return x * x * (3 - 2 * x)
     }
 
-    private var handoffStart: Double { 1 - Self.handoff / Self.destinations[destination].depth }
+    /// How far along the dive into `destination` the next one starts fading in.
+    static func handoffStart(_ destination: Int) -> Double { 1 - handoff / destinations[destination].depth }
 
     /// The next dive: the one the harmony names when it's clear, else three on.
     static func destination(after current: Int, pitchClass: Float, tonality: Float) -> Int {
@@ -200,14 +197,13 @@ struct BloomRig {
     private mutating func advance(by efolds: Double) {
         var depth = Self.destinations[destination].depth
         progress += efolds / depth
-        if next == nil, progress >= handoffStart {
+        if next == nil, progress >= Self.handoffStart(destination) {
             next = Self.destination(after: destination, pitchClass: layers.pitchClass, tonality: tonality)
         }
         while progress >= 1 {
             let past = (progress - 1) * depth
             destination = next ?? Self.destination(after: destination, pitchClass: layers.pitchClass, tonality: tonality)
             next = nil
-            dive += 1
             depth = Self.destinations[destination].depth
             progress = past / depth
         }

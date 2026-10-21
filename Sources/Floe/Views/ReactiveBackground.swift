@@ -179,8 +179,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     /// Beams' smoke at a quarter of the drawable's resolution, with the pass
-    /// that draws it, and Bloom's fields, each made again only when the
-    /// drawable's size changes.
+    /// that draws it, and Bloom's fields, each made again only when its size
+    /// changes.
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
         static let fieldFormat = MTLPixelFormat.rgba16Float
@@ -194,9 +194,11 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             let softPass: MTLRenderPassDescriptor
         }
         /// Bloom's field shrinks a step, a share of its pixels, while a stretch
-        /// of the dive would cost the GPU more than about 4.2 ms a frame, and
-        /// grows back once it would cost well under that again.
+        /// of the dive would cost the GPU more than `costCeiling` a frame, and
+        /// grows back once the bigger field would cost under `costFloor`.
         static let bloomShares = [1.0, 0.7, 0.5, 0.35, 0.25]
+        /// Milliseconds of GPU time per Bloom frame.
+        private static let costCeiling = 4.2, costFloor = 3.3
         private(set) var bloomShare = 0
         /// Bloom's GPU time per frame, smoothed, in milliseconds.
         private var bloomCost = 0.0
@@ -250,10 +252,10 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         func recordBloomFrame(milliseconds: Double) {
             bloomCost += (milliseconds - bloomCost) * 0.15
             let shares = Self.bloomShares
-            if bloomCost > 4.2, bloomShare < shares.count - 1 {
+            if bloomCost > Self.costCeiling, bloomShare < shares.count - 1 {
                 bloomShare += 1
                 bloomCost *= shares[bloomShare] / shares[bloomShare - 1]
-            } else if bloomShare > 0, bloomCost * shares[bloomShare - 1] / shares[bloomShare] < 3.3 {
+            } else if bloomShare > 0, bloomCost * shares[bloomShare - 1] / shares[bloomShare] < Self.costFloor {
                 bloomShare -= 1
                 bloomCost *= shares[bloomShare] / shares[bloomShare + 1]
             }
@@ -272,8 +274,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         return CGSize(width: max(1, (points.width * s).rounded()), height: max(1, (points.height * s).rounded()))
     }
 
-    /// Encodes one frame of the animator's current state: Beams first draws its
-    /// smoke small, then the light over it into `pass`.
+    /// Encodes one frame of the animator's current state into `pass`.
     @discardableResult
     static func encode(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
                        animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
@@ -286,57 +287,80 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<FluidUniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
+            return true
         case .beams:
-            var uniforms = animator.beamUniforms(width: width, height: height)
-            guard let (haze, smoke) = targets.haze(width: Int(width), height: Int(height)),
-                  let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
-            first.setRenderPipelineState(pipelines.haze)
-            first.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
-            first.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-            first.endEncoding()
-            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
-            encoder.setRenderPipelineState(pipelines.beams)
-            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
-            encoder.setFragmentTexture(haze, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-            encoder.endEncoding()
+            return encodeBeams(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator, width: width, height: height)
         case .bloom:
-            var uniforms = animator.bloomUniforms(width: width, height: height)
-            let rig = animator.bloom
-            let budget = Double(bloomFieldBudget(animator.configuration.bloomQuality)) * Targets.bloomShares[targets.bloomShare]
-            let fieldSize = bloomFieldSize(width: Int(width), height: Int(height), budget: Int(budget))
-            // Each dive's field afresh, then its smooth colour, then the light
-            // from them at the drawable's size. While one dive hands over to the
-            // next, the fainter of the two is worked out at half the resolution.
-            func dive(_ layer: Int, faint: Bool) -> Targets.BloomField? {
-                let size = faint ? (max(1, fieldSize.width / 2), max(1, fieldSize.height / 2)) : fieldSize
-                guard let target = targets.bloomField(layer: layer, width: size.0, height: size.1),
-                      let encoder = command.makeRenderCommandEncoder(descriptor: target.pass) else { return nil }
-                var passUniforms = BloomPassUniforms(layer: Int32(layer), pixel: 2 / Float(size.1))
-                encoder.setRenderPipelineState(pipelines.bloomField)
-                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-                encoder.setFragmentBytes(&passUniforms, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-                encoder.endEncoding()
-                guard let soft = command.makeRenderCommandEncoder(descriptor: target.softPass) else { return nil }
-                soft.setRenderPipelineState(pipelines.bloomSoft)
-                soft.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-                soft.setFragmentBytes(&passUniforms, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
-                soft.setFragmentTexture(target.texture, index: 0)
-                soft.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-                soft.endEncoding()
-                return target
-            }
-            let handing = rig.next != nil
-            guard let current = dive(0, faint: handing && rig.blend > 0.5) else { return false }
-            let next = handing ? dive(1, faint: rig.blend <= 0.5) ?? current : current
-            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
-            encoder.setRenderPipelineState(pipelines.bloom)
-            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-            encoder.setFragmentTextures([current.texture, next.texture] + current.soft + next.soft, range: 0..<8)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-            encoder.endEncoding()
+            return encodeBloom(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator, width: width, height: height)
         }
+    }
+
+    /// Beams draws its smoke small first, then the light over it.
+    private static func encodeBeams(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
+                                    animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
+        var uniforms = animator.beamUniforms(width: width, height: height)
+        guard let (haze, smoke) = targets.haze(width: Int(width), height: Int(height)),
+              let first = command.makeRenderCommandEncoder(descriptor: smoke) else { return false }
+        first.setRenderPipelineState(pipelines.haze)
+        first.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
+        first.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        first.endEncoding()
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
+        encoder.setRenderPipelineState(pipelines.beams)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BeamUniforms>.stride, index: 0)
+        encoder.setFragmentTexture(haze, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        return true
+    }
+
+    /// Each dive's field and smooth colour, then the light from them at the
+    /// drawable's size. While one dive hands over to the next, the fainter of
+    /// the two is worked out at half the resolution.
+    private static func encodeBloom(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
+                                    animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
+        var uniforms = animator.bloomUniforms(width: width, height: height)
+        let rig = animator.bloom
+        let budget = Double(bloomFieldBudget(animator.configuration.bloomQuality)) * Targets.bloomShares[targets.bloomShare]
+        let full = bloomFieldSize(width: Int(width), height: Int(height), budget: Int(budget))
+        func dive(_ layer: Int, faint: Bool) -> Targets.BloomField? {
+            let size = faint ? (width: max(1, full.width / 2), height: max(1, full.height / 2)) : full
+            guard let target = targets.bloomField(layer: layer, width: size.width, height: size.height) else { return nil }
+            return encodeDive(command, target: target, layer: layer, uniforms: &uniforms, pipelines: pipelines) ? target : nil
+        }
+        let handing = rig.next != nil
+        guard let current = dive(0, faint: handing && rig.blend > 0.5) else { return false }
+        let next = handing ? dive(1, faint: rig.blend <= 0.5) ?? current : current
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
+        encoder.setRenderPipelineState(pipelines.bloom)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
+        // One by one: an array of them would be made anew every frame.
+        encoder.setFragmentTexture(current.texture, index: 0)
+        encoder.setFragmentTexture(next.texture, index: 1)
+        for (index, texture) in current.soft.enumerated() { encoder.setFragmentTexture(texture, index: 2 + index) }
+        for (index, texture) in next.soft.enumerated() { encoder.setFragmentTexture(texture, index: 2 + current.soft.count + index) }
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        return true
+    }
+
+    /// One dive's field, worked out afresh, then its smooth colour from it.
+    private static func encodeDive(_ command: MTLCommandBuffer, target: Targets.BloomField, layer: Int,
+                                   uniforms: inout BloomUniforms, pipelines: Pipelines) -> Bool {
+        var dive = BloomPassUniforms(layer: Int32(layer), pixel: 2 / Float(target.texture.height))
+        guard let field = command.makeRenderCommandEncoder(descriptor: target.pass) else { return false }
+        field.setRenderPipelineState(pipelines.bloomField)
+        field.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
+        field.setFragmentBytes(&dive, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
+        field.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        field.endEncoding()
+        guard let soft = command.makeRenderCommandEncoder(descriptor: target.softPass) else { return false }
+        soft.setRenderPipelineState(pipelines.bloomSoft)
+        soft.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
+        soft.setFragmentBytes(&dive, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
+        soft.setFragmentTexture(target.texture, index: 0)
+        soft.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        soft.endEncoding()
         return true
     }
 

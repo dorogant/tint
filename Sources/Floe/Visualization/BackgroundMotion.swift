@@ -74,7 +74,6 @@ struct BloomPassUniforms {
 
 /// Matches `BloomUniforms` in `ReactiveShader`.
 struct BloomUniforms {
-    var colors: Palette
     /// Iterations, filament width in drawable pixels, how far the next dive has faded in, spare.
     var view: SIMD4<Float>
     /// Drawable width and height, then where the dive heads, in screen units.
@@ -203,13 +202,11 @@ struct BackgroundAnimator {
 
     func bloomUniforms(width: Float, height: Float) -> BloomUniforms {
         let rig = bloom
-        let detail = rig.detail
         let wave = rig.wave.strength * expf(-rig.wave.age / 0.6)
         let views = rig.views
         let current = Self.layer(views.current, BloomRig.destinations[rig.destination])
         let incoming = rig.next.map { Self.layer(views.incoming ?? views.current, BloomRig.destinations[$0]) }
-        return BloomUniforms(colors: Self.palette(colors),
-                             view: SIMD4(BloomRig.iterations, 1.3 - 0.5 * detail, rig.blend, 0),
+        return BloomUniforms(view: SIMD4(BloomRig.iterations, 1.3 - 0.5 * rig.detail, rig.blend, 0),
                              size: SIMD4(width, height, rig.focus.x, rig.focus.y),
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              glints: SIMD4(rig.sparkle, 0, 0, rig.hue),

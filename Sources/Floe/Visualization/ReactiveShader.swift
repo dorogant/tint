@@ -341,7 +341,8 @@ enum ReactiveShader {
     /// What one dive finds at screen point `v`, `pixel` screen units apart:
     /// outside the set, the distance to it in pixels, the smooth escape count
     /// (in the whole set's steps) and which way the set lies (a unit step in
-    /// pixels, y down; 0 where that's unknown); inside, −1 and 0s.
+    /// pixels, y down; 0 where that's unknown); inside, −1, how surely it's
+    /// a small copy's slow halo rather than the set (0…1), and 0s.
     static float4 bloomPoint(constant BloomUniforms& u, constant BloomLayer& l, float2 v, float pixel) {
         float2 a = l.view.xy, dc = l.view.zw + complexMultiply(a, v);
         int period = int(l.counts.x), n = 0;
@@ -381,8 +382,13 @@ enum ReactiveShader {
         // Neither out nor settled by the last step. An orbit that has stopped
         // stretching is near a bulb's rim, settling too slowly to tell: the
         // set. One still stretching is in a small copy's slow halo, outside
-        // it: drawn with the set's edge, but in a colour of its own.
-        if (i == limit) return float4(dot(dz, dz) * pixel * pixel < 100 ? -1 : -2, 0, 0, 0);
+        // it: drawn with the set's edge, but in a colour of its own. Which it
+        // is fades over two decades of stretch per screen pixel (not field
+        // pixel, which changes with the field's size), so no pixel flips.
+        if (i == limit) {
+            float screen = 2 / max(u.size.y, 1.0f);
+            return float4(-1, smoothstep(log(6.0f), log(600.0f), log(max(dot(dz, dz) * screen * screen, 1e-30f))), 0, 0);
+        }
         // Distance to the set in pixels (dz is per screen unit), from the potential and its slope.
         float lr = 0.5 * log(r2);
         float stretch = rsqrt(max(dot(dz, dz), 1e-30f));
@@ -550,7 +556,9 @@ enum ReactiveShader {
         // A small copy's slow halo, where orbits neither escaped nor settled in
         // time, takes the loop's deepest colour, so the copy itself, black,
         // shows at its true size within it.
-        float3 deep = t.x < -1.5 ? fromOklch(u.loop[0].xyz) * 0.6 : bandColor(u.loop, hue + 0.4 + 0.1 * around) * (0.01 + 0.05 * heart);
+        float halo = t.x < 0 ? t.y : 0;
+        float3 deep = halo < 1 ? bandColor(u.loop, hue + 0.4 + 0.1 * around) * (0.01 + 0.05 * heart) : 0;
+        if (halo > 0) deep = mix(deep, fromOklch(u.loop[0].xyz) * 0.6, halo);
         float3 inside = mix(outside, deep, smoothstep(14.0, 22.0, within));
         // The drop's single wave runs out from the dive's centre, lighting what it passes.
         float wave = exp(-pow((length(from) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;

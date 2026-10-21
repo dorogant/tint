@@ -101,9 +101,13 @@ private struct SyncedLyricsView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var still
-    @Namespace private var pill
     @ViewState private var active: Int?
     @ViewState private var position = ScrollPosition(idType: Int.self)
+    /// While following, the list is drawn `jumped - glided` below where it
+    /// scrolled to, easing to zero on each line's glide. See `advance(to:animated:)`.
+    @ViewState private var jumped: CGFloat = 0
+    @ViewState private var glided: CGFloat = 0
+    @ViewState private var layout = ListLayout()
 
     /// Lines switch slightly early so the glide lands with the vocal.
     private static let lead: TimeInterval = 0.15
@@ -112,25 +116,51 @@ private struct SyncedLyricsView: View {
     /// The list easing a new line into place, and back to it on Follow. The
     /// rows and the pill move on it too, so they travel with the scroll.
     fileprivate static let glide = Animation.easeInOut(duration: 0.35)
+    private nonisolated static let list = "lyrics"
 
     var body: some View {
         GeometryReader { geometry in
             let fontSize = min(scale.text(34), max(scale.text(22), geometry.size.width * scale.factor / 18))
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: scale(2)) {
+                // Eager: synced lyrics rarely pass 150 lines, and a lazy stack's
+                // estimated heights made Follow stop short of a far line, then jump.
+                VStack(alignment: .leading, spacing: scale(2)) {
                     ForEach(lines) { line in
                         // Decoder rounding can report a position just before the tag when paused.
                         // Only a gap's "…" cares whether music plays. Equatable rows
                         // skip their body when nothing they show changed.
                         LyricRow(line: line, distance: distance(of: line), fontSize: fontSize,
                                  softened: follow && !still, still: still,
-                                 playing: line.text.isEmpty && player.isPlaying, pill: pill) {
+                                 playing: line.text.isEmpty && player.isPlaying) {
                             player.seek(toMs: line.time * 1000 + 50)
                         }
                         .equatable()
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.list)) } action: {
+                            layout.rows[line.id] = $0
+                        }
                     }
                 }
                 .scrollTargetLayout()
+                .coordinateSpace(.named(Self.list))
+                // Drawn in the list, not matched across rows in the window, so
+                // the pill scrolls with the rows on every frame.
+                .backgroundPreferenceValue(PillBounds.self) { bounds in
+                    GeometryReader { proxy in
+                        if let bounds {
+                            let frame = proxy[bounds]
+                            LyricPill()
+                                #if LYRICS_FOLLOW_TESTING
+                                .overlay { LyricsFollowProbe(kind: .pill(active ?? -1)) }
+                                #endif
+                                .frame(width: frame.width, height: frame.height)
+                                .offset(x: frame.minX, y: frame.minY)
+                        }
+                    }
+                }
+                // Two offsets: `jumped` never animates, so a new glide adds to one
+                // still in flight instead of cutting it short.
+                .offset(y: jumped)
+                .offset(y: -glided)
                 .padding(.horizontal, scale(12))
                 .padding(.top, geometry.size.height * Self.anchor.y)
                 .padding(.bottom, geometry.size.height * (1 - Self.anchor.y))
@@ -140,6 +170,7 @@ private struct SyncedLyricsView: View {
             .mask(edgeFade)
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting { follow = false }
+                layout.settled = phase == .idle
             }
             .onChange(of: follow) {
                 guard follow, let active else { return }
@@ -194,6 +225,25 @@ private struct SyncedLyricsView: View {
     }
 
     private func advance(to index: Int?, animated: Bool) {
+        // The scroll view runs its animated scrolls on a slower clock than
+        // SwiftUI's animations, so the text stepped behind the pill while
+        // following. Instead the list jumps to the line, is drawn back where it
+        // was, and glides there on the pill's transaction.
+        if animated, !still, follow, layout.settled, let index, let active,
+           let from = layout.rows[active], let to = layout.rows[index] {
+            let distance = Self.restingPoint(of: to) - Self.restingPoint(of: from)
+            // No animation, but not `disablesAnimations`: that would also finish
+            // a glide still in flight at once.
+            withTransaction(Transaction()) {
+                jumped += distance
+                position.scrollTo(id: index, anchor: Self.anchor)
+            }
+            withAnimation(Self.glide) {
+                self.active = index
+                glided += distance
+            }
+            return
+        }
         var transaction = Transaction(animation: animated && !still ? Self.glide : nil)
         transaction.disablesAnimations = !animated || still
         withTransaction(transaction) {
@@ -201,6 +251,16 @@ private struct SyncedLyricsView: View {
             if follow, let index { position.scrollTo(id: index, anchor: Self.anchor) }
         }
     }
+
+    /// The point of a row that rests on the anchor.
+    private static func restingPoint(of row: CGRect) -> CGFloat { row.minY + row.height * anchor.y }
+}
+
+/// Where each row sits in the list, and whether the list is still; kept out
+/// of SwiftUI's state, so measuring never redraws.
+@MainActor private final class ListLayout {
+    var rows: [Int: CGRect] = [:]
+    var settled = true
 }
 
 /// The current line sits on the frosted pill; the rest dim, shrink and soften with distance.
@@ -214,7 +274,6 @@ private struct LyricRow: View, Equatable {
     let softened: Bool
     let still: Bool
     let playing: Bool
-    let pill: Namespace.ID
     let seek: () -> Void
     @Environment(\.coverPalette) private var palette
     @Environment(\.interfaceScale) private var scale
@@ -227,7 +286,7 @@ private struct LyricRow: View, Equatable {
     /// compares equal, which made every visible row redraw on each line change.
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.line == b.line && a.distance == b.distance && a.fontSize == b.fontSize && a.softened == b.softened
-            && a.still == b.still && a.playing == b.playing && a.pill == b.pill
+            && a.still == b.still && a.playing == b.playing
     }
 
     var body: some View {
@@ -248,12 +307,12 @@ private struct LyricRow: View, Equatable {
                 .padding(.vertical, scale(11))
                 .scaleEffect(current || still ? 1 : (hovering ? 0.955 : 0.94), anchor: .leading)
                 .blur(radius: blur)
+                #if LYRICS_FOLLOW_TESTING
+                .overlay { LyricsFollowProbe(kind: .row(line.id)) }
+                #endif
+                .anchorPreference(key: PillBounds.self, value: .bounds) { current ? $0 : nil }
                 .background {
-                    if current {
-                        shape.fill(.white.opacity(0.1))
-                            .overlay(shape.strokeBorder(.white.opacity(0.1)))
-                            .matchedGeometryEffect(id: "pill", in: pill)
-                    } else if hovering {
+                    if !current && hovering {
                         shape.fill(.white.opacity(0.045))
                             .overlay(shape.strokeBorder(.white.opacity(0.05)))
                     }
@@ -318,11 +377,30 @@ private struct LyricRow: View, Equatable {
         return CGFloat(min(abs(distance), 4)) * 0.6
     }
 
-    /// The scroll's own curve, with no cascade: while following, a row (and the
-    /// pill on the current one) on a different curve or delay drifted off the
-    /// scrolling list and caught up late, which read as lag.
+    /// The list's own curve, with no cascade: while following, a row on a
+    /// different curve or delay drifted off the gliding list and caught up
+    /// late, which read as lag.
     private var rowAnimation: Animation? {
         still ? nil : SyncedLyricsView.glide
+    }
+}
+
+/// The frosted pill behind the current line. The list draws it at the bounds
+/// the current row reports, and moves it on the same transaction as the line.
+private struct LyricPill: View {
+    @Environment(\.interfaceScale) private var scale
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: scale(18), style: .continuous)
+        shape.fill(.white.opacity(0.1)).overlay(shape.strokeBorder(.white.opacity(0.1)))
+    }
+}
+
+/// The current row's bounds; other rows report none.
+private struct PillBounds: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
     }
 }
 

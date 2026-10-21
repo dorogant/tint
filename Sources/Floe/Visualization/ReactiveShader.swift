@@ -271,13 +271,13 @@ enum ReactiveShader {
     // view: iterations, filament width (screen pixels), how far the next dive has faded in, spare.
     // size: drawable width, height, where the dive heads (screen units: y runs −1…1, x the same times the aspect ratio).
     // light: glow, heart (mids), glint (hats, snares), beat. glints: where along the bands they sit, spares, palette walk.
-    // wave: drop ring radius, strength, level, bass.
+    // wave: drop ring radius, strength, level, bass. loop: the bands' colours in OKLCH (lightness, chroma, hue in radians).
     // Per dive. view: the pixel's offset from the reference's c is b + a·v at screen point v: a, then b.
     // counts: the reference's period, what brings escape counts to the whole set's, spares.
     // bulbs: the reference's c, and 1 over the scale its copy of the set is drawn at (complex). orbit: one period from 0.
     struct BloomLayer { float4 view; float4 counts; float4 bulbs; float2 orbit[64]; };
     struct BloomUniforms {
-        float4 colors[5]; float4 view; float4 size; float4 light; float4 glints; float4 wave; BloomLayer layers[2];
+        float4 colors[5]; float4 view; float4 size; float4 light; float4 glints; float4 wave; float4 loop[5]; BloomLayer layers[2];
     };
     // The field pass for one dive: which of the uniforms' layers, and how far apart its pixels are in screen units.
     struct BloomPass { int layer; float pixel; };
@@ -296,6 +296,36 @@ enum ReactiveShader {
         float3 c = paletteLoop(colors, t);
         return c / max(max(c.r, max(c.g, c.b)), 0.08f);
     }
+    /// OKLCH (hue in radians) to linear sRGB, clipped to what it can show.
+    static float3 linearFromOklch(float3 c) {
+        float a = c.y * cos(c.z), b = c.y * sin(c.z);
+        float l = c.x + 0.3963377774 * a + 0.2158037573 * b;
+        float m = c.x - 0.1055613458 * a - 0.0638541728 * b;
+        float s = c.x - 0.0894841775 * a - 1.2914855480 * b;
+        l = l * l * l; m = m * m * m; s = s * s * s;
+        return saturate(float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                               -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                               -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s));
+    }
+    /// Linear sRGB gamma-encoded, as the drawable takes it.
+    static float3 encoded(float3 linear) {
+        return select(1.055 * pow(linear, 1 / 2.4) - 0.055, 12.92 * linear, linear <= 0.0031308);
+    }
+    static float3 fromOklch(float3 c) { return encoded(linearFromOklch(c)); }
+    /// The bands' colour `t` turns round their loop, eased from colour to
+    /// colour in OKLCH the short way round the hue circle, so neighbours blend
+    /// through their own hues, never through grey or brown.
+    static float3 bandLight(constant float4 *loop, float t) {
+        t = fract(t) * 5;
+        int i = int(t);
+        float f = t - float(i);
+        f = f * f * (3 - 2 * f);
+        float3 a = loop[i % 5].xyz, b = loop[(i + 1) % 5].xyz;
+        float turn = b.z - a.z;
+        turn -= 6.2831853 * round(turn / 6.2831853);
+        return linearFromOklch(float3(mix(a.xy, b.xy, f), a.z + turn * f));
+    }
+    static float3 bandColor(constant float4 *loop, float t) { return encoded(bandLight(loop, t)); }
     static float2 complexSqrt(float2 w) {
         float r = length(w);
         float2 root = float2(sqrt(max(0.0f, 0.5f * (r + w.x))), sqrt(max(0.0f, 0.5f * (r - w.x))));
@@ -347,10 +377,12 @@ enum ReactiveShader {
                 if (i >= checkpoint) { saved = d; savedDz = dz; savedN = n; checkpoint *= 2; }
             }
         }
-        // Settled, or neither out nor settled by the last step: drawn as the
-        // set, as classic renderings do, so a small copy's slow halo reads as
-        // part of it. Lone pixels of it are drawn as outline, not as dark specks.
-        if (settled || i == limit) return float4(-1, 0, 0, 0);
+        if (settled) return float4(-1, 0, 0, 0);
+        // Neither out nor settled by the last step. An orbit that has stopped
+        // stretching is near a bulb's rim, settling too slowly to tell: the
+        // set. One still stretching is in a small copy's slow halo, outside
+        // it: drawn with the set's edge, but in a colour of its own.
+        if (i == limit) return float4(dot(dz, dz) * pixel * pixel < 100 ? -1 : -2, 0, 0, 0);
         // Distance to the set in pixels (dz is per screen unit), from the potential and its slope.
         float lr = 0.5 * log(r2);
         float stretch = rsqrt(max(dot(dz, dz), 1e-30f));
@@ -454,51 +486,75 @@ enum ReactiveShader {
         float glow = u.light.x * (0.8 + 0.4 * u.wave.w), heart = u.light.y, hue = u.glints.w;
         // The cover's colours lie round the dive's centre, a little differently on each side.
         float2 from = v - u.size.zw;
-        float around = atan2(from.y, from.x) * 0.15915494;
+        float around = from.y * rsqrt(max(dot(from, from), 1e-6f)); // the sine of its angle, so no seam where the angle wraps
         float px = max(t.x, 0.0f);
-        // The bands: the cover's colours by the escape count's logarithm, a
-        // turn of the palette every few doublings, so they run in slow
-        // gradients far from the set and on through the colours across its
-        // structure, ever finer toward the outline.
+        // How far off the set is round this pixel, over its eight neighbours
+        // too: what's lit by closeness to the set follows that, smoothly, not
+        // each pixel's own glimpse of filaments finer than it.
+        float around9 = 0;
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 3; dx++) around9 += max(neighbours[dy][dx].x, 0.0f);
+        around9 /= 9;
+        // The bands: the loop of the cover's colours by the escape count's
+        // logarithm, a turn every few doublings, so they run in slow gradients
+        // far from the set and on through the colours across its structure,
+        // ever finer toward the outline.
         float m = max(t.y, 1.0f);
-        float bands = log2(m) * 0.4;
-        // How many times round the palette the bands go within a pixel: the
-        // escape count's slope is 1 over ln 2 times the distance to the set.
-        // Where that's more than the field can follow, the bands blend into the
-        // colour they average to rather than breaking into noise.
+        float bands = hue + log2(m) * 0.4 + 0.04 * around;
+        // How many turns of the loop the bands go through within this pixel:
+        // the escape count's slope is 1 over ln 2 times the distance to the
+        // set. Over that stretch the colours are averaged, a few samples
+        // across it, so bands finer than a pixel blend into the colours they
+        // average to there rather than breaking into noise.
         float density = 0.4 / (m * 0.4805 * max(px, 1e-3f));
-        float blend = smoothstep(0.3, 0.8, density);
-        float3 mean = (u.colors[0].rgb + u.colors[1].rgb + u.colors[2].rgb + u.colors[3].rgb + u.colors[4].rgb) * 0.2;
-        float3 tint = mix(paletteLoop(u.colors, hue + bands + 0.05 * around), mean, blend);
-        // Far from the set the ground is dim; it brightens toward the set's
-        // structure, where the bands crowd, and breathes there with the glow.
-        float near = exp(-px / (60.0 / scale));
-        // A pale cover's near-white colours are toned down to a mid level, so
-        // text stays readable over them; darker ones keep theirs.
-        tint *= min(1.0f, 0.5f / max(dot(tint, float3(0.2126, 0.7152, 0.0722)), 1e-3f));
-        float3 outside = tint * (0.1 + 0.47 * near * (0.8 + 0.2 * glow));
-        // Lit from the upper left along the slope toward the set, so the
-        // structure stands out in relief, where the field can tell its slope.
-        outside *= 1 + 0.35 * (1 - blend) * dot(t.zw, float2(0.7071, 0.7071));
+        float span = min(density, 1.0f);
+        float3 tint;
+        if (span < 0.08) tint = bandColor(u.loop, bands);
+        else tint = encoded(0.25 * (bandLight(u.loop, bands - 0.375 * span) + bandLight(u.loop, bands - 0.125 * span)
+                                    + bandLight(u.loop, bands + 0.125 * span) + bandLight(u.loop, bands + 0.375 * span)));
+        // Light where the detail is: the bands are brightest close to the
+        // set's outline and fall away into a dark ground in open space, where
+        // the text sits. The glow breathes it.
+        float closeness = exp(-around9 * scale / (0.013 * u.size.y)); // within about 1% of the screen
+        // Right by the outline, where the bands crowd finer than a pixel, the
+        // structure is lit toward the loop's bright accent, as filaments of
+        // light, so the detail is where the light is.
+        float crowded = 1 - smoothstep(0.5f, 2.5f, around9);
+        // Where filaments run finer than the field can tell apart, over a few
+        // pixels round this one, the structure is a weave too fine to show:
+        // that keeps the darker colour it averages to, and the light goes to
+        // the edges the field can draw.
+        float tangled = 0;
+        for (int dy = 0; dy < 2; dy++)
+            for (int dx = 0; dx < 2; dx++) tangled += tangle(neighbours[dy][dx], neighbours[dy][dx + 1], neighbours[dy + 1][dx]);
+        tangled = smoothstep(0.15f, 0.5f, tangled / 4);
+        tint = mix(tint, fromOklch(u.loop[2].xyz), 0.35 * crowded * closeness * (1 - tangled));
+        float3 outside = tint * (0.22 + 0.78 * closeness) * (0.85 + 0.15 * glow);
+        // Relief: lit from the upper left, the slope toward the set read as a
+        // surface (the potential's own normal), where the field can tell it.
+        float3 normal = normalize(float3(-t.zw, 1.2));
+        float lit = saturate(dot(normal, normalize(float3(-1, -1, 1.4))));
+        outside *= mix(1.0f, 0.35 + 0.95 * lit, 1 - smoothstep(0.3f, 1.0f, density));
         // Hats and snares: glints in bands of the escape count that move on with each one.
-        float glint = 0;
-        if (u.light.z > 0.01) glint = smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * 6.2831853)) * u.light.z * 0.25 * near * (1 - blend);
-        outside += tint * glint;
-        // The filaments' colour; where they run finer than the field can tell
-        // apart, the even glow they'd average to, and no sharp line.
-        float tangled = smoothstep(0.15f, 0.5f, tangle(t, neighbours[1][2], neighbours[2][1]));
-        float3 filament = mix(lightTint(u.colors, hue + 0.05 * around), float3(1), 0.4) * 0.6 * sqrt(glow);
-        outside *= 1 - 0.35 * near * tangled;
-        // Inside, dark, with a faint pool of light that the mids bring up. Only
-        // a piece of the set a few pixels across shows as dark; specks and
+        if (u.light.z > 0.01) outside += tint * smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * 6.2831853)) * u.light.z * 0.25 * closeness;
+        // The outline's light rim; where filaments run finer than the field can
+        // tell apart, the darker even weave they'd average to, and no sharp line.
+        float3 filament = mix(tint, float3(1), 0.4) * 0.6 * sqrt(glow);
+        outside *= 1 - 0.45 * closeness * tangled;
+        // Inside, all but black, with a faint light that the mids bring up.
+        // Only a piece of the set a few pixels across shows as dark; specks and
         // scattered clusters of it take the light round them, and their
-        // outline glows there instead.
+        // outline draws them instead.
         if (t.x < 0) {
             for (int dy = -2; dy <= 2; dy++)
                 for (int dx = -2; dx <= 2; dx++)
                     if (abs(dx) == 2 || abs(dy) == 2) within += field.read(uint2(clamp(at + int2(dx, dy), int2(0), last))).x < 0 ? 1 : 0;
         }
-        float3 inside = mix(outside, lightTint(u.colors, hue + 0.45 + around) * (0.008 + 0.03 * heart), smoothstep(14.0, 22.0, within));
+        // A small copy's slow halo, where orbits neither escaped nor settled in
+        // time, takes the loop's deepest colour, so the copy itself, black,
+        // shows at its true size within it.
+        float3 deep = t.x < -1.5 ? fromOklch(u.loop[0].xyz) * 0.6 : bandColor(u.loop, hue + 0.4 + 0.1 * around) * (0.01 + 0.05 * heart);
+        float3 inside = mix(outside, deep, smoothstep(14.0, 22.0, within));
         // The drop's single wave runs out from the dive's centre, lighting what it passes.
         float wave = exp(-pow((length(from) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
         bool next = pass.layer == 1;
@@ -524,7 +580,7 @@ enum ReactiveShader {
         float cover = smoothstep(0.5f, -0.5f, s.side * mix(1.0f, scale, s.sure)) * min(1.0f, 4 * s.inside);
         if (cover > 0) light = mix(light, insides.sample(filtered, uv).rgb, cover);
         float4 filament = cores.sample(filtered, uv);
-        return light * (1 - 0.6 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
+        return light * (1 - 0.45 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
     }
     fragment float4 floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
                                       texture2d<float, access::read> current [[texture(0)]],

@@ -85,6 +85,8 @@ struct BloomUniforms {
     var glints: SIMD4<Float>
     /// The drop's wave (radius, strength), overall level, the bass's breath.
     var wave: SIMD4<Float>
+    /// The bands' colours round their loop, in OKLCH (lightness, chroma, hue in radians).
+    var loop: Palette
     /// The dive under way, then the one fading in.
     var layers: (BloomLayerUniforms, BloomLayerUniforms)
 }
@@ -212,6 +214,7 @@ struct BackgroundAnimator {
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              glints: SIMD4(rig.sparkle, 0, 0, rig.hue),
                              wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, rig.bass),
+                             loop: BloomPalette.loop(colors, neutral: configuration.neutral),
                              layers: (current, incoming ?? current))
     }
 

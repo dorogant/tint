@@ -194,7 +194,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             let softPass: MTLRenderPassDescriptor
         }
         /// Bloom's field shrinks a step, a share of its pixels, while a stretch
-        /// of the dive would cost the GPU more than about 4.5 ms a frame, and
+        /// of the dive would cost the GPU more than about 4.2 ms a frame, and
         /// grows back once it would cost well under that again.
         static let bloomShares = [1.0, 0.7, 0.5, 0.35, 0.25]
         private(set) var bloomShare = 0
@@ -250,10 +250,10 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         func recordBloomFrame(milliseconds: Double) {
             bloomCost += (milliseconds - bloomCost) * 0.15
             let shares = Self.bloomShares
-            if bloomCost > 4.5, bloomShare < shares.count - 1 {
+            if bloomCost > 4.2, bloomShare < shares.count - 1 {
                 bloomShare += 1
                 bloomCost *= shares[bloomShare] / shares[bloomShare - 1]
-            } else if bloomShare > 0, bloomCost * shares[bloomShare - 1] / shares[bloomShare] < 3.5 {
+            } else if bloomShare > 0, bloomCost * shares[bloomShare - 1] / shares[bloomShare] < 3.3 {
                 bloomShare -= 1
                 bloomCost *= shares[bloomShare] / shares[bloomShare + 1]
             }

@@ -277,6 +277,92 @@ struct BloomDestination {
     }
 }
 
+/// Bloom's bands: the cover's colours as a loop in OKLCH (lightness, chroma,
+/// hue), which the shader runs round. The colours keep their hues, but each
+/// takes a set place in lightness, so the loop runs from deep dark up to a
+/// bright accent and back, and a chroma vivid enough to read as colour,
+/// whatever the cover: the lightest of them becomes the accent, the darkest
+/// the deep. A black-and-white cover stays grey.
+enum BloomPalette {
+    /// Lightness per place round the loop, from its darkest colour.
+    static let lightness: InlineArray<5, Float> = [0.17, 0.4, 0.8, 0.58, 0.3]
+    /// The least chroma a colour is given, and how much more each gets.
+    static let minimumChroma: Float = 0.12
+    static let boost: Float = 1.5
+
+    static func loop(_ colors: [SIMD3<Float>], neutral: Bool) -> Palette {
+        var lch = InlineArray<5, SIMD3<Float>>(repeating: .zero)
+        var order = InlineArray<5, Int>(repeating: 0)
+        for i in 0..<5 {
+            lch[i] = toLCH(colors[i % colors.count])
+            order[i] = i
+        }
+        // Darkest first, by insertion: no allocations per frame.
+        for i in 1..<5 {
+            var j = i
+            while j > 0 && lch[order[j - 1]].x > lch[order[j]].x {
+                (order[j - 1], order[j]) = (order[j], order[j - 1])
+                j -= 1
+            }
+        }
+        // Place round the loop for each, from darkest to lightest: deep, the
+        // dark side's way down, the mid way up, the mid way down, the accent.
+        let places: InlineArray<5, Int> = [0, 4, 1, 3, 2]
+        let accentHue = lch[order[4]].z
+        var out = InlineArray<5, SIMD4<Float>>(repeating: .zero)
+        for rank in 0..<5 {
+            var c = lch[order[rank]]
+            // A grey has no hue of its own to keep: it takes the accent's.
+            if c.y < 0.02 { c.z = accentHue }
+            c.y = neutral ? min(c.y, 0.02) : max(minimumChroma, c.y * boost)
+            c.x = lightness[places[rank]]
+            out[places[rank]] = SIMD4(c.x, inGamut(c), c.z, 0)
+        }
+        return (out[0], out[1], out[2], out[3], out[4])
+    }
+
+    /// The most chroma up to `c`'s that sRGB can show at its lightness and hue.
+    static func inGamut(_ c: SIMD3<Float>) -> Float {
+        var low: Float = 0, high = c.y
+        if fits(SIMD3(c.x, high, c.z)) { return high }
+        for _ in 0..<12 {
+            let mid = (low + high) / 2
+            if fits(SIMD3(c.x, mid, c.z)) { low = mid } else { high = mid }
+        }
+        return low
+    }
+
+    private static func fits(_ c: SIMD3<Float>) -> Bool {
+        let rgb = linear(c)
+        return rgb.min() >= -0.001 && rgb.max() <= 1.001
+    }
+
+    /// Gamma-encoded sRGB to OKLCH (hue in radians).
+    static func toLCH(_ rgb: SIMD3<Float>) -> SIMD3<Float> {
+        func decode(_ x: Float) -> Float { x <= 0.04045 ? x / 12.92 : powf((x + 0.055) / 1.055, 2.4) }
+        let r = decode(rgb.x), g = decode(rgb.y), b = decode(rgb.z)
+        let l = cbrtf(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        let m = cbrtf(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        let s = cbrtf(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        let lab = SIMD3<Float>(0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                               1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                               0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+        return SIMD3(lab.x, (lab.y * lab.y + lab.z * lab.z).squareRoot(), atan2f(lab.z, lab.y))
+    }
+
+    /// OKLCH to linear sRGB (out of range where sRGB can't show it).
+    static func linear(_ c: SIMD3<Float>) -> SIMD3<Float> {
+        let a = c.y * cosf(c.z), b = c.y * sinf(c.z)
+        let l = c.x + 0.3963377774 * a + 0.2158037573 * b
+        let m = c.x - 0.1055613458 * a - 0.0638541728 * b
+        let s = c.x - 0.0894841775 * a - 1.2914855480 * b
+        let l3 = l * l * l, m3 = m * m * m, s3 = s * s * s
+        return SIMD3(4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3,
+                     -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3,
+                     -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3)
+    }
+}
+
 /// The plane under the screen: c = nucleus + offset + perScreenUnit·v.
 struct BloomView {
     let perScreenUnit: Complex

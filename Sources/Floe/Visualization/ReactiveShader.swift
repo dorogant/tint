@@ -507,7 +507,7 @@ enum ReactiveShader {
         // across it, so bands finer than a pixel blend into the colours they
         // average to there rather than breaking into noise.
         float density = 0.4 / (m * 0.4805 * max(px, 1e-3f));
-        float span = min(density, 1.0f);
+        float span = min(2 * density, 1.0f);
         float3 tint;
         if (span < 0.08) tint = bandColor(u.loop, bands);
         else tint = encoded(0.25 * (bandLight(u.loop, bands - 0.375 * span) + bandLight(u.loop, bands - 0.125 * span)
@@ -527,7 +527,7 @@ enum ReactiveShader {
         float tangled = 0;
         for (int dy = 0; dy < 2; dy++)
             for (int dx = 0; dx < 2; dx++) tangled += tangle(neighbours[dy][dx], neighbours[dy][dx + 1], neighbours[dy + 1][dx]);
-        tangled = smoothstep(0.15f, 0.5f, tangled / 4);
+        tangled = smoothstep(0.06f, 0.3f, tangled / 4);
         tint = mix(tint, fromOklch(u.loop[2].xyz), 0.35 * crowded * closeness * (1 - tangled));
         float3 outside = tint * (0.22 + 0.78 * closeness) * (0.85 + 0.15 * glow);
         // Relief: lit from the upper left, the slope toward the set read as a
@@ -573,13 +573,13 @@ enum ReactiveShader {
         BloomSample s = bloomRead(field, uv * size - 0.5);
         float across = s.distance * scale, width = u.view.y, footprint = width * width + 0.3;
         float core = exp(-0.5 * across * across / footprint) * width * rsqrt(footprint);
+        float4 filament = cores.sample(filtered, uv);
         float3 light = outsides.sample(filtered, uv).rgb;
         // Inside the set by as much of the pixel as the outline leaves inside;
         // where the field can't tell where between its pixels the edge runs,
         // smoothly over one of them.
         float cover = smoothstep(0.5f, -0.5f, s.side * mix(1.0f, scale, s.sure)) * min(1.0f, 4 * s.inside);
         if (cover > 0) light = mix(light, insides.sample(filtered, uv).rgb, cover);
-        float4 filament = cores.sample(filtered, uv);
         return light * (1 - 0.45 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
     }
     fragment float4 floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],

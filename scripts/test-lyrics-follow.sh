@@ -2,7 +2,7 @@
 # Synced lyrics' Follow, frame by frame: the real LyricsView in offscreen windows
 # with a synthetic clock; no login, network or visible window. LYRICS_FOLLOW_TESTING
 # compiles in transparent markers on each row and the pill. Optional argument
-# checks another LyricsView.swift; FLOE_FOLLOW_ONLY=A|B|C|D|E runs one group,
+# checks another LyricsView.swift; FLOE_FOLLOW_ONLY=A|B|C|D|E|F runs one group,
 # FLOE_FOLLOW_TRACE=1 prints every sampled frame.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

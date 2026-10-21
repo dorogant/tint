@@ -98,14 +98,18 @@ struct Sample {
         return Sample(time: time, rows: rows, pills: pills)
     }
 
-    /// Samples every few milliseconds, so every display frame is seen.
-    func record(for seconds: Double, after action: () -> Void) async -> [Sample] {
-        var samples = [sample(at: 0)]
+    /// Samples every few milliseconds, so every display frame is seen; each
+    /// of `then` runs once, the first sample after its time.
+    func record(for seconds: Double, after action: () -> Void,
+                then: [(time: Double, action: () -> Void)] = []) async -> [Sample] {
+        var samples = [sample(at: 0)], pending = then
         action()
         let start = Date()
         while Date().timeIntervalSince(start) < seconds {
             try? await Task.sleep(for: .milliseconds(3))
-            samples.append(sample(at: Date().timeIntervalSince(start)))
+            let now = Date().timeIntervalSince(start)
+            while let next = pending.first, next.time <= now { pending.removeFirst().action() }
+            samples.append(sample(at: now))
         }
         return samples
     }
@@ -157,6 +161,34 @@ struct Sample {
         center.post(name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
         await settle(0.4)
         return moved
+    }
+
+    /// A trackpad scroll begins and moves the list `points` toward its end;
+    /// it stays under way until `endScroll()`.
+    func beginScroll(by points: CGFloat) {
+        guard let scrollView, let document = scrollView.documentView else { return }
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
+        scroll(scrollView, by: points, limit: document.frame.height)
+    }
+
+    func endScroll() {
+        guard let scrollView else { return }
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
+    }
+
+    private func scroll(_ scrollView: NSScrollView, by points: CGFloat, limit height: CGFloat) {
+        let clip = scrollView.contentView
+        let y = min(max(clip.bounds.origin.y + points, 0), max(0, height - clip.bounds.height))
+        clip.scroll(to: CGPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
+        NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: scrollView)
+    }
+
+    /// Another song's synced lyrics replace these, as a track change does.
+    func replaceLyrics(_ lines: [LyricLine], track: String) {
+        player.displayTrack = PlayerModel.Track(uri: track)
+        lyrics.trackURI = track
+        lyrics.state = .loaded(.synced(lines))
     }
 
     /// Clicks where the Follow button floats, bottom centre. Were it missing,
@@ -268,6 +300,7 @@ struct Sample {
     func pinned(_ samples: [Sample], rig: Rig, scenario: String) {
         var worst: CGFloat = 0, split = 0
         let last = samples.last?.pillIDs.first ?? -1
+        onePill(samples, rig: rig, scenario: scenario)
         for sample in samples where !sample.pills.isEmpty {
             guard let pill = sample.pill else { split += 1; continue }
             worst = max(worst, abs(Self.anchor(pill) - rig.anchorY))
@@ -282,8 +315,15 @@ struct Sample {
     }
 
     /// While no line changes, the pill rides on its row on every frame.
+    /// One pill on every sampled frame: none, even for a frame, is a flash.
+    func onePill(_ samples: [Sample], rig: Rig, scenario: String) {
+        let none = samples.filter { $0.pills.isEmpty }.count, more = samples.filter { $0.pills.count > 1 }.count
+        check(none == 0 && more == 0, rig, scenario, "one pill in every frame: \(none) frames without, \(more) with more")
+    }
+
     func pillOnRow(_ samples: [Sample], line: Int, rig: Rig, scenario: String) {
         var worst: CGFloat = 0, split = 0, empty = 0, elsewhere = 0
+        onePill(samples, rig: rig, scenario: scenario)
         if trace {
             for sample in samples {
                 print(String(format: "   %.3f s  line %@  pill %@", sample.time,
@@ -337,6 +377,7 @@ struct LyricsFollowTests {
         UserDefaults.standard.setVolatileDomain(["reduceMotion": false], forName: UserDefaults.argumentDomain)
         let judge = Judge()
         for size in sizes { await motion(size: size, only: only, judge: judge) }
+        if only == nil || only == "F" { await interruptions(judge: judge) }
         if only == nil || only == "E" {
             UserDefaults.standard.setVolatileDomain(["reduceMotion": true], forName: UserDefaults.argumentDomain)
             for size in sizes { await reducedMotion(size: size, judge: judge) }
@@ -419,6 +460,78 @@ struct LyricsFollowTests {
             judge.glide(next, from: to, to: to + 1, rig: rig, scenario: scenario + " then")
             judge.landing(next, line: to + 1, rig: rig, scenario: scenario + " then", settledBy: 0.75)
             await rig.settle(0.3)
+        }
+    }
+
+    /// A glide in flight when the window is resized, the list is grabbed, or
+    /// the song changes: each ends where it should, with nothing carried over.
+    static func interruptions(judge: Judge) async {
+        let size = sizes[0]
+
+        // F. Resized mid-glide: Follow stays on and the line lands on the anchor.
+        do {
+            let rig = Rig(size: size, lines: lines, label: "\(Int(size.width))×\(Int(size.height)) resized")
+            defer { rig.close() }
+            print(rig.label)
+            rig.pause(onLine: 30)
+            await rig.settle(1.2)
+            print(" F. resize to 650×500 mid-glide")
+            let samples = await rig.record(for: 1.3, after: { rig.play(intoLine: 31) },
+                                           then: [(0.4, { rig.window.setContentSize(NSSize(width: 650, height: 500)) })])
+            rig.stop()
+            judge.landing(samples, line: 31, rig: rig, scenario: "F resize", settledBy: 0.9)
+            judge.pillOnRow(samples.filter { $0.time > 0.9 }, line: 31, rig: rig, scenario: "F resize")
+        }
+
+        // F. Grabbed mid-glide: from the moment the scroll begins, the list
+        // moves by the scroll alone, then Follow brings it back.
+        do {
+            let rig = Rig(size: size, lines: lines, label: "\(Int(size.width))×\(Int(size.height)) grabbed")
+            defer { rig.close() }
+            print(rig.label)
+            rig.pause(onLine: 30)
+            await rig.settle(1.2)
+            print(" F. scroll 10 pt mid-glide")
+            var grabbed: Sample?
+            let samples = await rig.record(for: 1.0, after: { rig.play(intoLine: 31) },
+                                           then: [(0.4, { grabbed = rig.sample(at: 0.4); rig.beginScroll(by: 10) })])
+            rig.stop()
+            if let before = grabbed?.rows[31], let after = samples.last?.rows[31] {
+                // Until the view hears of the scroll (a frame or two) the glide goes on.
+                let prior = samples.filter { $0.time > 0.33 && $0.time <= 0.4 }.compactMap { s in s.rows[31].map { (s.time, $0.minY) } }
+                let speed = zip(prior, prior.dropFirst()).map { abs($1.1 - $0.1) / max(0.001, $1.0 - $0.0) }.max() ?? 0
+                let heard = speed * 2 / 60
+                let moved = before.minY - after.minY
+                let late = samples.filter { $0.time > 0.45 }.compactMap { $0.rows[31]?.minY }
+                let drift = (late.max() ?? 0) - (late.min() ?? 0)
+                judge.check(moved >= 10 - judge.tolerance && moved <= 10 + heard + judge.tolerance && drift <= 0.5, rig, "F grab",
+                            String(format: "line 31 moves %.1f pt for a 10 pt scroll (and up to %.1f pt of glide before it's heard), then %.1f pt more",
+                                   moved, heard, drift))
+            } else {
+                judge.check(false, rig, "F grab", "line 31 not laid out around the scroll")
+            }
+            rig.endScroll()
+            await rig.settle(0.4)
+            await follow(rig, line: 31, judge: judge, scenario: "F grab")
+        }
+
+        // F. Another song mid-glide: its list opens on its own current line, one pill on it.
+        do {
+            let rig = Rig(size: size, lines: lines, label: "\(Int(size.width))×\(Int(size.height)) new song")
+            defer { rig.close() }
+            print(rig.label)
+            rig.pause(onLine: 30)
+            await rig.settle(1.2)
+            print(" F. new song mid-glide")
+            let other = (0..<40).map { LyricLine(id: $0, time: 300 + Double($0) * 7, text: words[($0 + 3) % words.count]) }
+            let samples = await rig.record(for: 1.8, after: { rig.play(intoLine: 31) }, then: [(0.4, {
+                rig.replaceLyrics(other, track: "synthetic:other")
+                rig.player.isPlaying = false
+                rig.player.seek(toMs: (other[12].time + 0.5) * 1_000)
+            })])
+            // The old list fades out as the new one comes in, gone in about 0.7 s.
+            judge.landing(samples, line: 12, rig: rig, scenario: "F new song", settledBy: 1.3)
+            judge.pillOnRow(samples.filter { $0.time > 1.3 }, line: 12, rig: rig, scenario: "F new song")
         }
     }
 

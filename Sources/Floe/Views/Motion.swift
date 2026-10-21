@@ -40,6 +40,14 @@ enum FloeMotion {
     static let exit = Animation.spring(duration: 0.22, bounce: 0)
     /// With Reduce Motion nothing moves or scales, but colour and opacity still fade.
     static let fade = Animation.easeOut(duration: 0.18)
+    /// Synced lyrics easing onto a new line: the list, its rows and the pill
+    /// all move on it, so they travel together. A curve rather than a spring,
+    /// so how far a glide in flight has come is known (`lyricGlideProgress`).
+    static let lyricGlideDuration = 0.35
+    static let lyricGlide = Animation.easeInOut(duration: lyricGlideDuration)
+    static func lyricGlideProgress(after seconds: Double) -> Double {
+        UnitCurve.easeInOut.value(at: min(max(seconds / lyricGlideDuration, 0), 1))
+    }
 
     static func hover(_ hovering: Bool) -> Animation { hovering ? hoverIn : hoverOut }
     static func press(_ pressed: Bool) -> Animation { pressed ? press : release }

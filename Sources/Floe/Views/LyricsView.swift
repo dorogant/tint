@@ -113,9 +113,8 @@ private struct SyncedLyricsView: View {
     private static let lead: TimeInterval = 0.15
     /// The current line rests a little above the middle, leaving room to read ahead.
     private static let anchor = UnitPoint(x: 0.5, y: 0.4)
-    /// The list easing a new line into place, and back to it on Follow. The
-    /// rows and the pill move on it too, so they travel with the scroll.
-    fileprivate static let glide = Animation.easeInOut(duration: 0.35)
+    /// The list easing a new line into place, and back to it on Follow.
+    fileprivate static let glide = FloeMotion.lyricGlide
     private nonisolated static let list = "lyrics"
 
     var body: some View {
@@ -169,21 +168,30 @@ private struct SyncedLyricsView: View {
             .scrollIndicators(.hidden)
             .mask(edgeFade)
             .onScrollPhaseChange { _, phase in
-                if phase == .interacting { follow = false }
+                if phase == .interacting {
+                    follow = false
+                    holdGlide()
+                }
                 layout.settled = phase == .idle
             }
             .onChange(of: follow) {
                 guard follow, let active else { return }
                 withAnimation(still ? nil : Self.glide) {
+                    jumped = 0
+                    glided = 0
                     position.scrollTo(id: active, anchor: Self.anchor)
                 }
             }
+            .onChange(of: geometry.size) { reanchor(settling: [.milliseconds(50)]) }
         }
         // Open on the current line, so a newly shown list never lands on line 0
         // and then jumps mid-transition.
         .onAppear {
             let now = player.positionMs(at: Date()) / 1000 + Self.lead
             advance(to: LRC.activeIndex(in: lines, at: now), animated: false)
+            // Again once the new song's list has blurred in: scrolled while it
+            // scales in, the line can land a few points off.
+            reanchor(settling: [.milliseconds(50), .milliseconds(600)])
         }
         .task(id: player.playbackAnchor) { await followPlayback() }
     }
@@ -229,7 +237,7 @@ private struct SyncedLyricsView: View {
         // SwiftUI's animations, so the text stepped behind the pill while
         // following. Instead the list jumps to the line, is drawn back where it
         // was, and glides there on the pill's transaction.
-        if animated, !still, follow, layout.settled, let index, let active,
+        if animated, !still, follow, layout.settled, !layout.resizing, let index, let active,
            let from = layout.rows[active], let to = layout.rows[index] {
             let distance = Self.restingPoint(of: to) - Self.restingPoint(of: from)
             // No animation, but not `disablesAnimations`: that would also finish
@@ -242,6 +250,8 @@ private struct SyncedLyricsView: View {
                 self.active = index
                 glided += distance
             }
+            // It shows on screen about two frames after this.
+            layout.glides.append((Date(timeIntervalSinceNow: 2.0 / 60), distance))
             return
         }
         var transaction = Transaction(animation: animated && !still ? Self.glide : nil)
@@ -252,15 +262,74 @@ private struct SyncedLyricsView: View {
         }
     }
 
+    /// A scroll began: what's left of the glides in flight stays where it's
+    /// drawn now, so from here the list moves by the scroll alone. Follow
+    /// eases it away.
+    private func holdGlide() {
+        let left = layout.glidesLeft(at: Date())
+        layout.glides.removeAll()
+        guard jumped != glided || left != 0 else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            jumped = left
+            glided = 0
+        }
+    }
+
+    /// The list just appeared or its viewport changed size: rows measured
+    /// before no longer add up with the ones after, so any glide ends at once
+    /// and, after each of `settling`, once the rows have been measured again,
+    /// the line comes back to the anchor. Glides wait for that.
+    private func reanchor(settling: [Duration]) {
+        layout.glides.removeAll()
+        layout.resizing = true
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            jumped = 0
+            glided = 0
+            if follow, let active { position.scrollTo(id: active, anchor: Self.anchor) }
+        }
+        layout.generation += 1
+        let generation = layout.generation
+        Task { @MainActor in
+            var waited = Duration.zero
+            for delay in settling {
+                try? await Task.sleep(for: delay - waited)
+                waited = delay
+                guard generation == layout.generation else { return }
+                withTransaction(transaction) {
+                    if follow, let active { position.scrollTo(id: active, anchor: Self.anchor) }
+                }
+                layout.resizing = false
+            }
+        }
+    }
+
     /// The point of a row that rests on the anchor.
     private static func restingPoint(of row: CGRect) -> CGFloat { row.minY + row.height * anchor.y }
 }
 
-/// Where each row sits in the list, and whether the list is still; kept out
-/// of SwiftUI's state, so measuring never redraws.
+/// Where each row sits in the list, whether the list is still, and the
+/// glides in flight; kept out of SwiftUI's state, so measuring never redraws.
 @MainActor private final class ListLayout {
     var rows: [Int: CGRect] = [:]
     var settled = true
+    /// The viewport changed size and the line hasn't been brought back yet;
+    /// `generation` tells one resize's catch-up from the next.
+    var resizing = false
+    var generation = 0
+    /// When each glide still in flight set out, and how far it goes.
+    var glides: [(start: Date, distance: CGFloat)] = []
+
+    /// How much of the glides' travel is still to come, which is how far the
+    /// list is drawn from where it scrolled to.
+    func glidesLeft(at now: Date) -> CGFloat {
+        glides.reduce(0) { left, glide in
+            left + glide.distance * (1 - FloeMotion.lyricGlideProgress(after: now.timeIntervalSince(glide.start)))
+        }
+    }
 }
 
 /// The current line sits on the frosted pill; the rest dim, shrink and soften with distance.

@@ -17,6 +17,7 @@ struct BackgroundConfiguration: Equatable {
     var vividness: Float = 1
     var beamCount = 6
     var strobe = false
+    var bloomQuality = VisualSettings.BloomQuality.high
 }
 
 typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
@@ -65,19 +66,16 @@ struct BloomLayerUniforms {
 
 /// Matches `BloomPass` in `ReactiveShader`: one dive's field pass.
 struct BloomPassUniforms {
-    /// Which of the uniforms' layers, which of `turns` sets of 8×8 blocks to work out afresh, 1 to work out all.
+    /// Which of the uniforms' layers.
     var layer: Int32
-    var phase: Int32
-    var all: Int32
-    var turns: Int32
-    /// Where screen point v was last frame: xy + zw·v (complex).
-    var history: SIMD4<Float>
+    /// How far apart the field's pixels are, in screen units.
+    var pixel: Float
 }
 
 /// Matches `BloomUniforms` in `ReactiveShader`.
 struct BloomUniforms {
     var colors: Palette
-    /// Iterations, filament width in pixels, how far the next dive has faded in, spare.
+    /// Iterations, filament width in drawable pixels, how far the next dive has faded in, spare.
     var view: SIMD4<Float>
     /// Drawable width and height, then where the dive heads, in screen units.
     var size: SIMD4<Float>
@@ -87,6 +85,8 @@ struct BloomUniforms {
     var glints: SIMD4<Float>
     /// The drop's wave (radius, strength), overall level, the bass's breath.
     var wave: SIMD4<Float>
+    /// The bands' colours round their loop, in OKLCH (lightness, chroma, hue in radians).
+    var loop: Palette
     /// The dive under way, then the one fading in.
     var layers: (BloomLayerUniforms, BloomLayerUniforms)
 }
@@ -209,11 +209,12 @@ struct BackgroundAnimator {
         let current = Self.layer(views.current, BloomRig.destinations[rig.destination])
         let incoming = rig.next.map { Self.layer(views.incoming ?? views.current, BloomRig.destinations[$0]) }
         return BloomUniforms(colors: Self.palette(colors),
-                             view: SIMD4(BloomRig.iterations, 1.15 - 0.45 * detail, rig.blend, 0),
+                             view: SIMD4(BloomRig.iterations, 1.3 - 0.5 * detail, rig.blend, 0),
                              size: SIMD4(width, height, rig.focus.x, rig.focus.y),
                              light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
                              glints: SIMD4(rig.sparkle, 0, 0, rig.hue),
                              wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, rig.bass),
+                             loop: BloomPalette.loop(colors, neutral: configuration.neutral),
                              layers: (current, incoming ?? current))
     }
 

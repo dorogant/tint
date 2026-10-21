@@ -5,22 +5,24 @@ import simd
 /// Each dive sets out from the whole set and spirals down one of its valleys,
 /// past seahorses, spirals, fans and branches that keep changing as it goes,
 /// to a small copy of the set; that copy is framed just as the whole set was,
-/// so the next dive fades in over it and sets out again. Its outline glows as
-/// thin filaments in the cover's colours on a dark ground, and light pools in
-/// the bulbs. Nothing jumps or shakes: the music sets how fast the dive goes,
-/// which way it leans and which valley the next one takes.
+/// so the next dive fades in over it and sets out again. It's coloured the
+/// classic way, muted to sit behind the text: the cover's colours run in smooth
+/// bands by how fast each point escapes, ever finer toward the set, whose
+/// outline is drawn as fine lace; the set itself is dark. Nothing jumps or
+/// shakes: the music sets how fast the dive goes, which way it leans and which
+/// valley the next one takes.
 ///
 /// | Music                              | Fractal                                                          |
 /// |------------------------------------|------------------------------------------------------------------|
 /// | Harmony (pitch class)              | which way the view leans, and the valley the next dive takes     |
 /// | Loudness                           | the dive's pace                                                  |
-/// | Bass envelope                      | a slow breath of the glow round the filaments                    |
+/// | Bass envelope                      | a slow breath of the light round the set's structure             |
 /// | Kick                               | a small push forward in the dive                                 |
-/// | Snare, hat                         | glints running along the filaments                               |
-/// | Mids envelope (vocals, leads)      | light pooling in the bulbs                                       |
-/// | Highs envelope and brightness      | finer filaments, and quicker glints                              |
+/// | Snare, hat                         | glints running along the bands                                   |
+/// | Mids envelope (vocals, leads)      | a faint light in the set's bulbs                                 |
+/// | Highs envelope and brightness      | a finer outline, and quicker glints                              |
 /// | Build, then drop                   | the dive quickens, then eases, with one wave of light from its centre |
-/// | Beat phase (a steady groove)       | a faint swell of the glow on each beat                           |
+/// | Beat phase (a steady groove)       | a faint swell of the light on each beat                          |
 ///
 /// Hits change the pace, never the brightness, so nothing flashes. In silence
 /// the dive all but stops.
@@ -50,9 +52,8 @@ struct BloomRig {
     /// How many e-folds before a dive's end the next one starts fading in.
     static let handoff = 1.2
     /// Iterations per pixel. Pixels that haven't escaped or settled onto a
-    /// cycle by then are drawn as the edge of a bulb. It never changes, so a
-    /// pixel carried over from the last frame matches one worked out afresh.
-    static let iterations: Float = 900
+    /// cycle by then are drawn as the set, as classic renderings do.
+    static let iterations: Float = 600
 
     /// The dive under way, and how far down it is (0…1).
     private(set) var destination: Int
@@ -273,6 +274,92 @@ struct BloomDestination {
         return BloomView(perScreenUnit: zoom * BloomRig.span,
                          offset: path.center - nucleus + zoom * (BloomRig.home - path.center),
                          colorScale: colorScale)
+    }
+}
+
+/// Bloom's bands: the cover's colours as a loop in OKLCH (lightness, chroma,
+/// hue), which the shader runs round. The colours keep their hues, but each
+/// takes a set place in lightness, so the loop runs from deep dark up to a
+/// bright accent and back, and a chroma vivid enough to read as colour,
+/// whatever the cover: the lightest of them becomes the accent, the darkest
+/// the deep. A black-and-white cover stays grey.
+enum BloomPalette {
+    /// Lightness per place round the loop, from its darkest colour.
+    static let lightness: InlineArray<5, Float> = [0.17, 0.4, 0.8, 0.58, 0.3]
+    /// The least chroma a colour is given, and how much more each gets.
+    static let minimumChroma: Float = 0.12
+    static let boost: Float = 1.5
+
+    static func loop(_ colors: [SIMD3<Float>], neutral: Bool) -> Palette {
+        var lch = InlineArray<5, SIMD3<Float>>(repeating: .zero)
+        var order = InlineArray<5, Int>(repeating: 0)
+        for i in 0..<5 {
+            lch[i] = toLCH(colors[i % colors.count])
+            order[i] = i
+        }
+        // Darkest first, by insertion: no allocations per frame.
+        for i in 1..<5 {
+            var j = i
+            while j > 0 && lch[order[j - 1]].x > lch[order[j]].x {
+                (order[j - 1], order[j]) = (order[j], order[j - 1])
+                j -= 1
+            }
+        }
+        // Place round the loop for each, from darkest to lightest: deep, the
+        // dark side's way down, the mid way up, the mid way down, the accent.
+        let places: InlineArray<5, Int> = [0, 4, 1, 3, 2]
+        let accentHue = lch[order[4]].z
+        var out = InlineArray<5, SIMD4<Float>>(repeating: .zero)
+        for rank in 0..<5 {
+            var c = lch[order[rank]]
+            // A grey has no hue of its own to keep: it takes the accent's.
+            if c.y < 0.02 { c.z = accentHue }
+            c.y = neutral ? min(c.y, 0.02) : max(minimumChroma, c.y * boost)
+            c.x = lightness[places[rank]]
+            out[places[rank]] = SIMD4(c.x, inGamut(c), c.z, 0)
+        }
+        return (out[0], out[1], out[2], out[3], out[4])
+    }
+
+    /// The most chroma up to `c`'s that sRGB can show at its lightness and hue.
+    static func inGamut(_ c: SIMD3<Float>) -> Float {
+        var low: Float = 0, high = c.y
+        if fits(SIMD3(c.x, high, c.z)) { return high }
+        for _ in 0..<12 {
+            let mid = (low + high) / 2
+            if fits(SIMD3(c.x, mid, c.z)) { low = mid } else { high = mid }
+        }
+        return low
+    }
+
+    private static func fits(_ c: SIMD3<Float>) -> Bool {
+        let rgb = linear(c)
+        return rgb.min() >= -0.001 && rgb.max() <= 1.001
+    }
+
+    /// Gamma-encoded sRGB to OKLCH (hue in radians).
+    static func toLCH(_ rgb: SIMD3<Float>) -> SIMD3<Float> {
+        func decode(_ x: Float) -> Float { x <= 0.04045 ? x / 12.92 : powf((x + 0.055) / 1.055, 2.4) }
+        let r = decode(rgb.x), g = decode(rgb.y), b = decode(rgb.z)
+        let l = cbrtf(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        let m = cbrtf(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        let s = cbrtf(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        let lab = SIMD3<Float>(0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                               1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                               0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+        return SIMD3(lab.x, (lab.y * lab.y + lab.z * lab.z).squareRoot(), atan2f(lab.z, lab.y))
+    }
+
+    /// OKLCH to linear sRGB (out of range where sRGB can't show it).
+    static func linear(_ c: SIMD3<Float>) -> SIMD3<Float> {
+        let a = c.y * cosf(c.z), b = c.y * sinf(c.z)
+        let l = c.x + 0.3963377774 * a + 0.2158037573 * b
+        let m = c.x - 0.1055613458 * a - 0.0638541728 * b
+        let s = c.x - 0.0894841775 * a - 1.2914855480 * b
+        let l3 = l * l * l, m3 = m * m * m, s3 = s * s * s
+        return SIMD3(4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3,
+                     -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3,
+                     -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3)
     }
 }
 

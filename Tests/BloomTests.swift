@@ -298,12 +298,20 @@ extension BackgroundTests {
         for i in stride(from: 45, to: franticFrames.count, by: 20) { franticFrames[i].layers.drop = 1 }
         let brightest = BackgroundConfiguration(kind: .bloom, colors: [RGB(r: 1, g: 0.95, b: 0.6), RGB(r: 0.9, g: 1, b: 0.9)],
                                                 reactivity: 2, speed: 2, glow: 2, punch: 2, vividness: 1.5)
+        // White lyrics over the brightest stretch of any frame: at the presets' looks, then the brightest settings.
+        var worstContrast: [Float] = [21, 21]
+        defer {
+            print(String(format: "Bloom legibility: white text over a lyrics-sized region at least %.2f:1 at the presets' looks, %.2f:1 at the brightest settings",
+                         worstContrast[0], worstContrast[1]))
+            check(worstContrast[0] >= 9.8 && worstContrast[1] >= 8.3,
+                  "white text must stay as readable over Bloom (\(worstContrast))")
+        }
         for (name, frames, configuration) in [("song, defaults", BloomSong.frames(), settings), ("frantic, brightest", franticFrames, brightest),
                                               ("frantic, defaults", franticFrames, settings)] {
             for (destination, progress) in [(0, 0.0), (3, 0.5), (1, handoffStart(1))] {
                 var animator = diving(destination, at: progress, configuration)
                 var cells: [[Float]] = Array(repeating: [], count: 17)
-                var brightestLuma: Float = 0, meanest: Float = 0
+                var brightestLuma: Float = 0, meanest: Float = 0, contrast: Float = 21
                 playBloom(&animator, frames, renderer: renderer) { _, frame, i in
                     guard i >= 15 else { return }
                     let grid = frame.relativeLuminance(columns: 4, rows: 4)
@@ -311,12 +319,14 @@ extension BackgroundTests {
                     cells[16].append(grid.reduce(0, +) / 16)
                     brightestLuma = max(brightestLuma, frame.maxLuma)
                     meanest = max(meanest, frame.meanLuma)
+                    contrast = min(contrast, whiteTextContrast(frame))
                 }
+                worstContrast[configuration == brightest ? 1 : 0] = min(worstContrast[configuration == brightest ? 1 : 0], contrast)
                 let worst = cells.map { mostFlashesPerSecond(transitions($0)) }.max()!
                 let whole = mostFlashesPerSecond(transitions(cells[16]))
                 let label = "\(name), dive \(destination) at \(String(format: "%.2f", progress))"
-                print(String(format: "Bloom %@: at most %d WCAG flashes a second over the frame, %d in any region; peak luma %.2f, mean at most %.3f",
-                             label, whole, worst, brightestLuma, meanest))
+                print(String(format: "Bloom %@: at most %d WCAG flashes a second over the frame, %d in any region; peak luma %.2f, mean at most %.3f; white text at least %.1f:1",
+                             label, whole, worst, brightestLuma, meanest, contrast))
                 check(worst <= 3 && whole == 0, "\(label): Bloom must never flash (\(whole) a second over the frame, \(worst) in a region)")
                 // As for Fluid: the presets' looks stay under 0.2, the brightest settings on a pale cover under 0.32.
                 let darkEnough: Float = configuration == brightest ? 0.32 : 0.2
@@ -324,64 +334,129 @@ extension BackgroundTests {
             }
         }
 
-        // The window-sized drawable renders like the small one.
+        // The window-sized drawable renders like the small one: at full Retina,
+        // from a field that stays within its budget.
         let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1440, height: 900), scale: 2, kind: .bloom)
-        check(size.width * size.height <= 1_320_000 && size.width < 2880, "Bloom must draw at reduced resolution (\(size))")
+        let budget = BackgroundRenderer.bloomFieldBudget(.high)
+        let field = BackgroundRenderer.bloomFieldSize(width: Int(size.width), height: Int(size.height), budget: budget)
+        check(size.width == 2880 && field.width * field.height <= budget + 2_000,
+              "Bloom must draw at full Retina from a field within budget (\(size), field \(field))")
         if let large = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) {
             let frame = large.render(c)
             check(frame.meanLuma > 0.01 && frame.maxLuma <= legibleLuma, "the window-sized Bloom must render (\(frame.meanLuma))")
         }
-        bloomCarryChecks(device: device)
+        bloomFreshChecks(device: device)
     }
 
-    /// Carrying most of the field over from frame to frame looks like working
-    /// every pixel out afresh: through the song (kicks, the build, the drop),
-    /// 8×8 blocks of the carried frames stay as bright as fresh ones, with a
-    /// fresh block in 8 each frame, or in 16 as on a costly stretch. A speck
-    /// of a bulb a pixel wide may come and go, as it does from frame to frame anyway.
-    static func bloomCarryChecks(device: MTLDevice) {
-        guard let carried = try? OffscreenRenderer(device: device, width: 960, height: 600),
-              let fresh = try? OffscreenRenderer(device: device, width: 960, height: 600) else { return }
-        var other = BackgroundAnimator()
-        other.configure(BackgroundConfiguration(kind: .fluid, colors: Covers.palette(Covers.sunset)), animated: false)
+    /// Every frame is worked out afresh, nothing carried over from the last:
+    /// through the song (kicks, the build, the drop), a renderer that has drawn
+    /// every frame before draws each one exactly as a new one does.
+    static func bloomFreshChecks(device: MTLDevice) {
+        guard let running = try? OffscreenRenderer(device: device, width: 640, height: 400),
+              let fresh = try? OffscreenRenderer(device: device, width: 640, height: 400) else { return }
         let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
-        var worstMean: Float = 0, worstRare: Float = 0
-        var pairs: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
-        for (destination, progress, turns) in [(0, 0.3, 8), (3, 0.6, 16), (1, 0.85, 8), (1, 0.85, 16)] {
-            var mean: Float = 0, rare: Float = 0
-            for _ in 0..<200 { carried.targets.recordBloomFrame(milliseconds: turns == 16 ? 100 : 0) }
-            var animator = diving(destination, at: progress, settings)
-            playBloom(&animator, BloomSong.frames(), renderer: carried) { animator, frame, i in
-                guard i % 50 == 49 else { return }
-                _ = fresh.render(other) // lets the fresh renderer's fields go
-                let truth = fresh.render(animator)
-                var blocks: [Float] = []
-                for by in 0..<(frame.height / 8) {
-                    for bx in 0..<(frame.width / 8) {
-                        var sum: Float = 0
-                        for y in (by * 8)..<(by * 8 + 8) { for x in (bx * 8)..<(bx * 8 + 8) { sum += frame.luma(x, y) - truth.luma(x, y) } }
-                        blocks.append(abs(sum) / 64)
-                    }
-                }
-                blocks.sort()
-                mean = max(mean, blocks.reduce(0, +) / Float(blocks.count))
-                rare = max(rare, blocks[blocks.count * 99 / 100])
-                if i == 249 {
-                    pairs.append((frame.crop(x: 480, y: 150, width: 480, height: 300), "dive \(destination), carried, a block in \(turns) afresh", nil))
-                    pairs.append((truth.crop(x: 480, y: 150, width: 480, height: 300), "afresh", nil))
+        var worst: Float = 0
+        var animator = diving(1, at: handoffStart(1) - 0.05, settings)
+        playBloom(&animator, BloomSong.frames(), renderer: running) { animator, frame, i in
+            guard i % 30 == 29 else { return }
+            worst = max(worst, frame.difference(from: fresh.render(animator)))
+        }
+        print(String(format: "Bloom afresh: a running renderer's frames differ from a new one's by at most %.5f", worst))
+        check(worst == 0, "every Bloom frame must be worked out afresh (\(worst))")
+        bloomStabilityChecks(device: device)
+    }
+
+    /// A dense stretch of a dive, two seconds of it, stays steady: with the
+    /// dive's own motion taken out, its frames flicker well under the same
+    /// drawn at half the size and blown up pixel by pixel, which crawls. (Against
+    /// a render of itself, so a look with more contrast isn't counted as less
+    /// steady.) And nothing in it reads as a speck: no lone pixel far darker
+    /// than all round it.
+    static func bloomStabilityChecks(device: MTLDevice) {
+        guard let renderer = try? OffscreenRenderer(device: device, width: 640, height: 400),
+              let coarse = try? OffscreenRenderer(device: device, width: 320, height: 200) else { return }
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset), speed: 2)
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.7, mid: 0.4, seconds: 2)
+        func shimmers(_ render: (BackgroundAnimator) -> RenderedFrame) -> Float {
+            var animator = diving(3, at: 0.75, settings)
+            var frames: [(LumaImage, BloomView)] = [], sum: Float = 0, count = 0
+            for frame in music {
+                animator.receive(frame)
+                animator.step(by: 1 / 60)
+                animator.step(by: 1 / 60)
+                let shown = render(animator)
+                frames.append((LumaImage(shown).blurred(2), animator.bloom.views.current))
+                if frames.count == 3 {
+                    sum += flicker(frames[0], frames[1], frames[2], screen: (640, 400))
+                    count += 1
+                    frames.removeFirst()
                 }
             }
-            print(String(format: "Bloom carried over, dive %d from %.2f, a block in %d afresh: 8×8 blocks %.4f from afresh on average, %.4f for the worst 1%%",
-                         destination, progress, turns, mean, rare))
-            // A block in 16 is carried twice as far, so it may stray twice as far.
-            worstMean = max(worstMean, mean * 8 / Float(turns))
-            worstRare = max(worstRare, rare * 8 / Float(turns))
+            return sum / Float(max(count, 1))
         }
-        if let directory = bloomOutput {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            strip(pairs, to: directory.appendingPathComponent("carried.png"), columns: 2, scale: 1)
+        let steady = shimmers { renderer.render($0) }
+        let aliased = shimmers { animator in
+            let small = coarse.render(animator)
+            var bytes = [UInt8](repeating: 0, count: 640 * 400 * 4)
+            for y in 0..<400 { for x in 0..<640 { for c in 0..<4 { bytes[(y * 640 + x) * 4 + c] = small.bytes[((y / 2) * 320 + x / 2) * 4 + c] } } }
+            return RenderedFrame(width: 640, height: 400, bytes: bytes)
         }
-        check(worstMean < 0.004 && worstRare < 0.06, "carrying Bloom's field over must look like working it out afresh (\(worstMean), worst 1% \(worstRare))")
+        // Specks, at the size of a full-screen window: the dense stretch and an outline by open space.
+        var specks = 0, dots = 0
+        if let screen = try? OffscreenRenderer(device: device, width: 2880, height: 1864) {
+            for (destination, progress) in [(3, 0.75), (0, 0.5)] {
+                var animator = diving(destination, at: progress, BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset)))
+                for frame in music { animator.advance(by: 1 / 30, frame: frame) }
+                let count = speckCount(screen.render(animator))
+                specks = max(specks, count.specks)
+                dots = max(dots, count.all)
+            }
+        }
+        print(String(format: "Bloom stability: a dense stretch shimmers %.4f a frame beyond its motion (blocky: %.4f); at most %d specks in a full-screen frame (%d lone dark pixels, in fine structure too)",
+                     steady, aliased, specks, dots))
+        check(steady < 0.75 * aliased, "Bloom must shimmer well under a blocky render of itself (\(steady), blocky \(aliased))")
+        check(specks <= 5, "Bloom must show no specks (\(specks))")
+    }
+
+    /// The contrast white text has over the brightest lyrics-sized region of
+    /// a frame (half its width, a tenth of its height), as the window shows it
+    /// under its 28% scrim: (1 + 0.05) / (background + 0.05), WCAG's ratio.
+    static func whiteTextContrast(_ frame: RenderedFrame) -> Float {
+        var worst: Float = 21
+        for row in 0..<19 {
+            for column in 0..<3 {
+                let w = frame.width / 2, h = frame.height / 10
+                let x = column * (frame.width - w) / 2, y = row * (frame.height - h) / 18
+                let region = frame.crop(x: x, y: y, width: w, height: h).relativeLuminance(columns: 1, rows: 1)[0]
+                // The scrim scales the encoded values by 0.72, about 0.486 of the light.
+                worst = min(worst, 1.05 / (0.486 * region + 0.05))
+            }
+        }
+        return worst
+    }
+
+    /// Lone dark pixels in light: each pixel darker than half the darkest of
+    /// the eight round it, where those are all clearly lit; and of them, the
+    /// ones in even light (the eight within a quarter of each other), which
+    /// read as specks, where in a weave of fine structure they're its texture.
+    static func speckCount(_ frame: RenderedFrame) -> (all: Int, specks: Int) {
+        var all = 0, specks = 0
+        for y in 1..<(frame.height - 1) {
+            for x in 1..<(frame.width - 1) {
+                var darkest: Float = 1, brightest: Float = 0
+                for dy in -1...1 {
+                    for dx in -1...1 where dx != 0 || dy != 0 {
+                        let luma = frame.luma(x + dx, y + dy)
+                        darkest = min(darkest, luma)
+                        brightest = max(brightest, luma)
+                    }
+                }
+                guard darkest > 0.08 && frame.luma(x, y) < 0.5 * darkest else { continue }
+                all += 1
+                if brightest - darkest < 0.25 * darkest { specks += 1 }
+            }
+        }
+        return (all, specks)
     }
 
     /// Where the bulbs are big: the whole set, and two dives passing large ones early on.
@@ -729,44 +804,51 @@ extension BackgroundTests {
 
     /// GPU time per Bloom frame at the sizes the app draws, at full detail,
     /// over every dive at several depths and through a handoff (two dives
-    /// drawn): first with a fresh block in 8 each frame, then as the app
-    /// draws it, a block in 16 wherever 8 would cost more than about 2 ms.
+    /// drawn), at each detail setting: first at the setting's full field, then
+    /// as the app settles, its field a step smaller wherever that costs too much.
     static func bloomPerformance(device: MTLDevice) {
-        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
         var bright = BloomSong.held(pitch: 0, tonality: 0, loudness: 0.5, seconds: 2)
         for i in bright.indices { bright[i].layers.high = 1; bright[i].layers.brightness = 1 }
-        var states: [(String, BackgroundAnimator)] = []
-        for (index, _) in BloomRig.destinations.enumerated() {
-            for progress in [0.1, 0.25, 0.5, 0.75, 1 - 0.4 / BloomRig.destinations[index].depth] {
-                var animator = diving(index, at: progress, settings)
-                for frame in bright { animator.advance(by: 1 / 30, frame: frame) }
-                states.append((String(format: "dive %d at %.2f", index, progress), animator))
-            }
-        }
         let windows: [(String, CGSize)] = [("1200x750 pt window", CGSize(width: 1200, height: 750)),
-                                           ("1440x900 pt window", CGSize(width: 1440, height: 900)),
+                                           ("1440x932 pt full screen", CGSize(width: 1440, height: 932)),
                                            ("1728x1117 pt full screen", CGSize(width: 1728, height: 1117))]
-        for (name, points) in windows {
-            let size = BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .bloom)
-            guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
-            func turns(_ count: Int) {
-                for _ in 0..<200 { renderer.targets.recordBloomFrame(milliseconds: count == 16 ? 100 : 0) }
+        for quality in VisualSettings.BloomQuality.allCases {
+            let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset), bloomQuality: quality)
+            var states: [(String, BackgroundAnimator)] = []
+            for (index, _) in BloomRig.destinations.enumerated() {
+                for progress in [0.1, 0.25, 0.5, 0.75, 1 - 0.4 / BloomRig.destinations[index].depth] {
+                    var animator = diving(index, at: progress, settings)
+                    for frame in bright { animator.advance(by: 1 / 30, frame: frame) }
+                    states.append((String(format: "dive %d at %.2f", index, progress), animator))
+                }
             }
-            var eights: [Double] = [], adapted: [(String, Double)] = []
-            for (label, animator) in states {
-                turns(8)
-                let eight = renderer.gpuMilliseconds(animator, frames: 30)
-                eights.append(eight)
-                if eight > 2.2 { turns(16) }
-                adapted.append((label, eight > 2.2 ? renderer.gpuMilliseconds(animator, frames: 30) : eight))
-            }
-            let mean = adapted.map(\.1).reduce(0, +) / Double(adapted.count)
-            let worst = adapted.max { $0.1 < $1.1 }!
-            print(String(format: "GPU per frame, %@, Bloom (%dx%d): %.2f ms on average, %.2f ms at worst (%@), %.1f%% of the GPU at 30 Hz; a block in 8 every frame: %.2f ms on average, %.2f at worst",
-                         name, Int(size.width), Int(size.height), mean, worst.1, worst.0, mean * 3,
-                         eights.reduce(0, +) / Double(eights.count), eights.max()!))
-            if name.hasPrefix("1440") {
-                print("  " + adapted.map { String(format: "%@ %.1f", $0.0, $0.1) }.joined(separator: ", "))
+            for (name, points) in windows {
+                let size = BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .bloom)
+                let field = BackgroundRenderer.bloomFieldSize(width: Int(size.width), height: Int(size.height),
+                                                              budget: BackgroundRenderer.bloomFieldBudget(quality))
+                var full: [Double] = [], settled: [(String, Double, Int)] = []
+                for (label, animator) in states {
+                    // A new renderer each time, so each state settles from the full field.
+                    guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
+                    var cost = renderer.gpuMilliseconds(animator, frames: 20)
+                    full.append(cost)
+                    for _ in 0..<6 {
+                        let share = renderer.targets.bloomShare
+                        for _ in 0..<40 { renderer.targets.recordBloomFrame(milliseconds: cost) }
+                        if renderer.targets.bloomShare == share { break }
+                        cost = renderer.gpuMilliseconds(animator, frames: 20)
+                    }
+                    settled.append((label, cost, renderer.targets.bloomShare))
+                }
+                let mean = settled.map(\.1).reduce(0, +) / Double(settled.count)
+                let worst = settled.max { $0.1 < $1.1 }!
+                let smaller = settled.filter { $0.2 > 0 }.count
+                print(String(format: "GPU per frame, %@, Bloom %@ (%dx%d from a %dx%d field): %.2f ms on average, %.2f ms at worst (%@), %.1f%% of the GPU at 30 Hz; %d of %d stretches a step smaller; at the full field always: %.2f on average, %.2f at worst",
+                             name, quality.rawValue, Int(size.width), Int(size.height), field.width, field.height, mean, worst.1, worst.0,
+                             mean * 3, smaller, settled.count, full.reduce(0, +) / Double(full.count), full.max()!))
+                if name.hasPrefix("1440") {
+                    print("  " + settled.map { String(format: "%@ %.1f%@", $0.0, $0.1, $0.2 > 0 ? " (step \($0.2))" : "") }.joined(separator: ", "))
+                }
             }
         }
     }
@@ -807,5 +889,191 @@ extension BackgroundTests {
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(destination, image, nil)
         CGImageDestinationFinalize(destination)
+    }
+}
+
+// MARK: - Bloom proof
+
+extension RenderedFrame {
+    /// A `w`×`h` window at (`x`, `y`) of this frame as a screen of `screen`
+    /// pixels shows it: Core Animation's linear filter stretches a smaller
+    /// drawable over the screen; one the screen's size is shown as it is.
+    func shown(on screen: (width: Int, height: Int), x: Int = 0, y: Int = 0, width w: Int, height h: Int) -> RenderedFrame {
+        if self.width == screen.width && self.height == screen.height { return crop(x: x, y: y, width: w, height: h) }
+        var out = [UInt8](repeating: 0, count: w * h * 4)
+        let sx = Float(self.width) / Float(screen.width), sy = Float(self.height) / Float(screen.height)
+        for row in 0..<h {
+            let fy = min(Float(self.height - 1), max(0, (Float(y + row) + 0.5) * sy - 0.5))
+            let y0 = Int(fy), y1 = min(self.height - 1, y0 + 1), ty = fy - Float(y0)
+            for column in 0..<w {
+                let fx = min(Float(self.width - 1), max(0, (Float(x + column) + 0.5) * sx - 0.5))
+                let x0 = Int(fx), x1 = min(self.width - 1, x0 + 1), tx = fx - Float(x0)
+                for c in 0..<4 {
+                    func at(_ x: Int, _ y: Int) -> Float { Float(bytes[(y * self.width + x) * 4 + c]) }
+                    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx
+                    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx
+                    out[(row * w + column) * 4 + c] = UInt8(min(255, max(0, (top + (bottom - top) * ty).rounded())))
+                }
+            }
+        }
+        return RenderedFrame(width: w, height: h, bytes: out)
+    }
+}
+
+extension BackgroundTests {
+    /// The moments the before/after proof shows, each after two seconds of
+    /// music so most of the field has been carried over, as in the app.
+    static let proofMoments: [(name: String, destination: Int, progress: Double)] = [
+        ("edge", 0, 0.5), ("dense", 3, 0.75), ("deep", 1, 0.97), ("handoff", 0, 0.94), ("seahorse", 0, 0.38), ("bright", 1, 0.91),
+    ]
+    /// Where each proof moment's 100% crop sits on the screen.
+    static let bloomProofCrops: [String: (x: Int, y: Int)] = [
+        "edge": (1250, 1080), "dense": (385, 565), "deep": (1855, 392), "handoff": (560, 390),
+    ]
+
+    /// Full-screen frames (a 1728×1117 pt window at 2×, as the screen shows
+    /// them) of `proofMoments` with 960×600 crops of them at 100%, and four
+    /// seconds of the dense one, every frame, cropped alike, under `directory`.
+    static func bloomProof(device: MTLDevice, directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let screen = (width: 3456, height: 2234)
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2, kind: .bloom)
+        guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { return }
+        print("Bloom proof: drawable \(Int(size.width))x\(Int(size.height)) shown on \(screen.width)x\(screen.height)")
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 2)
+        let crop = (width: 960, height: 600)
+        for moment in proofMoments {
+            var animator = diving(moment.destination, at: moment.progress, settings)
+            var last: RenderedFrame?
+            playBloom(&animator, music, renderer: renderer) { _, frame, _ in last = frame }
+            guard let last else { continue }
+            save(last.shown(on: screen, width: screen.width, height: screen.height).composited(),
+                 to: directory.appendingPathComponent("\(moment.name).png"))
+            if let at = bloomProofCrops[moment.name] {
+                save(last.shown(on: screen, x: at.x, y: at.y, width: crop.width, height: crop.height).composited(),
+                     to: directory.appendingPathComponent("\(moment.name)-crop.png"))
+            }
+        }
+        let sequence = directory.appendingPathComponent("dense-sequence")
+        try? FileManager.default.createDirectory(at: sequence, withIntermediateDirectories: true)
+        let at = bloomProofCrops["dense"] ?? (x: 1248, y: 817)
+        var animator = diving(3, at: 0.75, settings)
+        var previous: (luma: LumaImage, view: BloomView)?, shimmers: [Float] = []
+        playBloom(&animator, music + BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 4), renderer: renderer) { animator, frame, i in
+            guard i >= 60 else { return }
+            let shown = frame.shown(on: screen, x: at.x, y: at.y, width: crop.width, height: crop.height)
+            save(shown.composited(), to: sequence.appendingPathComponent(String(format: "frame-%03d.png", i - 60)))
+            let luma = LumaImage(shown).blurred(2), view = animator.bloom.views.current
+            if let previous {
+                shimmers.append(shimmer(previous: previous.luma, current: luma, from: previous.view, to: view, screen: screen, crop: at,
+                                        map: i == 150 ? directory.appendingPathComponent("dense-shimmer.png") : nil))
+            }
+            previous = (luma, view)
+        }
+        print(String(format: "Bloom proof: dense stretch shimmers %.5f a frame beyond its motion", shimmers.reduce(0, +) / Float(shimmers.count)))
+        bloomStabilityChecks(device: device)
+    }
+
+    /// How much a frame flickers: the frames before and after it, each moved
+    /// to where the dive's views put its points, against twice it, the mean
+    /// absolute difference in luma. Steady change, the dive's own motion and
+    /// the music's slow swells, cancels out; a pixel that flips cannot.
+    static func flicker(_ before: (LumaImage, BloomView), _ now: (LumaImage, BloomView), _ after: (LumaImage, BloomView),
+                        screen: (width: Int, height: Int)) -> Float {
+        let width = Double(screen.width), height = Double(screen.height), aspect = width / height
+        func at(_ image: (LumaImage, BloomView), _ v: Complex) -> Float? {
+            let was = (now.1.offset - image.1.offset + now.1.perScreenUnit * v) / image.1.perScreenUnit
+            return image.0.sample(Float((was.re / aspect + 1) * width / 2 - 0.5), Float((1 - was.im) * height / 2 - 0.5))
+        }
+        var sum: Float = 0, count = 0
+        for y in 8..<(now.0.height - 8) {
+            for x in 8..<(now.0.width - 8) {
+                let v = Complex((2 * (Double(x) + 0.5) / width - 1) * aspect, 1 - 2 * (Double(y) + 0.5) / height)
+                guard let a = at(before, v), let c = at(after, v) else { continue }
+                sum += abs(a + c - 2 * now.0.values[y * now.0.width + x])
+                count += 1
+            }
+        }
+        return count > 0 ? sum / Float(count) : 0
+    }
+
+    /// How much `current` changed from `previous` beyond the dive's own motion:
+    /// `previous` moved on to where the change of view from `from` to `to` puts
+    /// each of its points, then the mean absolute difference in luma. Both are
+    /// `crop`s of a screen of `screen` pixels; blurred a little first, a sharp
+    /// filament that only moved doesn't count, one that flickers does.
+    static func shimmer(previous: LumaImage, current: LumaImage, from: BloomView, to: BloomView,
+                        screen: (width: Int, height: Int), crop: (x: Int, y: Int), map: URL? = nil) -> Float {
+        let width = Double(screen.width), height = Double(screen.height), aspect = width / height
+        var sum: Float = 0, count = 0
+        var residual = [UInt8](repeating: 255, count: current.width * current.height * 4)
+        for y in stride(from: 8, to: current.height - 8, by: 1) {
+            for x in 8..<(current.width - 8) {
+                let v = Complex((2 * (Double(crop.x + x) + 0.5) / width - 1) * aspect, 1 - 2 * (Double(crop.y + y) + 0.5) / height)
+                let was = (to.offset - from.offset + to.perScreenUnit * v) / from.perScreenUnit
+                let px = (was.re / aspect + 1) * width / 2 - 0.5 - Double(crop.x), py = (1 - was.im) * height / 2 - 0.5 - Double(crop.y)
+                guard let before = previous.sample(Float(px), Float(py)) else { continue }
+                sum += abs(current.values[y * current.width + x] - before)
+                count += 1
+                let level = UInt8(min(255, abs(current.values[y * current.width + x] - before) * 2550))
+                for c in 0..<3 { residual[(y * current.width + x) * 4 + c] = level }
+            }
+        }
+        if let map { save(RenderedFrame(width: current.width, height: current.height, bytes: residual).composited(), to: map) }
+        return count > 0 ? sum / Float(count) : 0
+    }
+}
+
+/// A frame's luma as numbers, for comparing frames.
+struct LumaImage {
+    let width: Int
+    let height: Int
+    var values: [Float]
+
+    init(width: Int, height: Int, values: [Float]) {
+        self.width = width
+        self.height = height
+        self.values = values
+    }
+
+    init(_ frame: RenderedFrame) {
+        var values = [Float](repeating: 0, count: frame.width * frame.height)
+        for y in 0..<frame.height { for x in 0..<frame.width { values[y * frame.width + x] = frame.luma(x, y) } }
+        self.init(width: frame.width, height: frame.height, values: values)
+    }
+
+    /// Box-blurred `radius` pixels each way, twice over: about a Gaussian.
+    func blurred(_ radius: Int) -> LumaImage {
+        var image = self
+        for _ in 0..<2 {
+            for horizontal in [true, false] {
+                var out = image.values
+                for y in 0..<height {
+                    for x in 0..<width {
+                        var sum: Float = 0
+                        for d in -radius...radius {
+                            let sx = horizontal ? min(width - 1, max(0, x + d)) : x
+                            let sy = horizontal ? y : min(height - 1, max(0, y + d))
+                            sum += image.values[sy * width + sx]
+                        }
+                        out[y * width + x] = sum / Float(2 * radius + 1)
+                    }
+                }
+                image.values = out
+            }
+        }
+        return image
+    }
+
+    /// Between pixels' centres, bilinearly; nil off the image.
+    func sample(_ x: Float, _ y: Float) -> Float? {
+        guard x >= 0, y >= 0, x <= Float(width - 1), y <= Float(height - 1) else { return nil }
+        let x0 = min(width - 2, Int(x)), y0 = min(height - 2, Int(y))
+        let fx = x - Float(x0), fy = y - Float(y0)
+        func at(_ x: Int, _ y: Int) -> Float { values[y * width + x] }
+        let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * fx
+        let bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * fx
+        return top + (bottom - top) * fy
     }
 }

@@ -250,40 +250,37 @@ enum ReactiveShader {
     }
     """#
 
-    /// An endless dive into the Mandelbrot set, drawn by its distance estimate:
-    /// the outline glows as thin filaments with a soft halo round them, and
-    /// light pools in the bulbs, brightest at their centres. Far down,
-    /// neighbouring pixels' c differ by far less than single precision can tell
-    /// apart, so each pixel follows only its offset from one reference orbit
-    /// (the copy's nucleus, periodic, so one period is all there is of it), and
-    /// starts the reference over whenever its own orbit comes nearer 0 than the
-    /// reference's (after Zhuoran).
+    /// An endless dive into the Mandelbrot set, coloured the classic way: each
+    /// pixel outside the set takes the cover's colours by its smooth escape
+    /// count, so the bands run in unbroken gradients and crowd ever tighter
+    /// toward the set, lit by the slope the distance estimate gives them, with
+    /// the outline itself drawn as fine light filaments. The set's inside is
+    /// dark. Far down, neighbouring pixels' c differ by far less than single
+    /// precision can tell apart, so each pixel follows only its offset from one
+    /// reference orbit (the copy's nucleus, periodic, so one period is all there
+    /// is of it), and starts the reference over whenever its own orbit comes
+    /// nearer 0 than the reference's (after Zhuoran).
     ///
-    /// Iterating is costly and the dive slow, so each dive keeps a field of what
-    /// it found per pixel (distance to the set, escape count) from frame to
-    /// frame: each frame works out one block of pixels in 8 (or 16) afresh, in
-    /// turn, and carries the rest over by the dive's own scale and turn between
-    /// the two. A quarter-size pass tells how crowded the filaments are, and the
-    /// light is made from the field and that every frame.
+    /// Every pixel is worked out afresh every frame, nothing carried over, into
+    /// a field at about a pixel per point (or fewer on a big screen): distance
+    /// to the set, escape count, which way the set lies. The colour is made
+    /// from it at the screen's own resolution; each field pixel knows where the
+    /// outline nearest it runs, so the filaments and the set's edge are drawn
+    /// as sharp as the screen can show them.
     private static let bloom = #"""
-    // view: iterations, filament width (px), how far the next dive has faded in, spare.
-    // size: width, height, where the dive heads (screen units: y runs −1…1, x the same times the aspect ratio).
-    // light: glow, heart (mids), glint (hats, snares), beat. glints: where along the filaments they sit, spares, palette walk.
-    // wave: drop ring radius, strength, level, bass.
+    // view: iterations, filament width (screen pixels), how far the next dive has faded in, spare.
+    // size: drawable width, height, where the dive heads (screen units: y runs −1…1, x the same times the aspect ratio).
+    // light: glow, heart (mids), glint (hats, snares), beat. glints: where along the bands they sit, spares, palette walk.
+    // wave: drop ring radius, strength, level, bass. loop: the bands' colours in OKLCH (lightness, chroma, hue in radians).
     // Per dive. view: the pixel's offset from the reference's c is b + a·v at screen point v: a, then b.
     // counts: the reference's period, what brings escape counts to the whole set's, spares.
     // bulbs: the reference's c, and 1 over the scale its copy of the set is drawn at (complex). orbit: one period from 0.
     struct BloomLayer { float4 view; float4 counts; float4 bulbs; float2 orbit[64]; };
     struct BloomUniforms {
-        float4 colors[5]; float4 view; float4 size; float4 light; float4 glints; float4 wave; BloomLayer layers[2];
+        float4 colors[5]; float4 view; float4 size; float4 light; float4 glints; float4 wave; float4 loop[5]; BloomLayer layers[2];
     };
-    // The field pass for one dive: which layer, which of `turns` sets of blocks is
-    // worked out afresh (all of them when `all`), and where screen point v was
-    // last frame: history.xy + history.zw·v (complex).
-    struct BloomPass { int layer; int phase; int all; int turns; float4 history; };
-    /// Each 4×4 group of blocks in the order they're worked out, so the blocks
-    /// done together are spread out.
-    constant int blockOrder[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+    // The field pass for one dive: which of the uniforms' layers, and how far apart its pixels are in screen units.
+    struct BloomPass { int layer; float pixel; };
     static float2 complexMultiply(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
     /// The palette as a loop, eased from colour to colour.
     static float3 paletteLoop(constant float4 *colors, float t) {
@@ -299,194 +296,303 @@ enum ReactiveShader {
         float3 c = paletteLoop(colors, t);
         return c / max(max(c.r, max(c.g, c.b)), 0.08f);
     }
+    /// OKLCH (hue in radians) to linear sRGB, clipped to what it can show.
+    static float3 linearFromOklch(float3 c) {
+        float a = c.y * cos(c.z), b = c.y * sin(c.z);
+        float l = c.x + 0.3963377774 * a + 0.2158037573 * b;
+        float m = c.x - 0.1055613458 * a - 0.0638541728 * b;
+        float s = c.x - 0.0894841775 * a - 1.2914855480 * b;
+        l = l * l * l; m = m * m * m; s = s * s * s;
+        return saturate(float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                               -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                               -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s));
+    }
+    /// Linear sRGB gamma-encoded, as the drawable takes it.
+    static float3 encoded(float3 linear) {
+        return select(1.055 * pow(linear, 1 / 2.4) - 0.055, 12.92 * linear, linear <= 0.0031308);
+    }
+    static float3 fromOklch(float3 c) { return encoded(linearFromOklch(c)); }
+    /// The bands' colour `t` turns round their loop, eased from colour to
+    /// colour in OKLCH the short way round the hue circle, so neighbours blend
+    /// through their own hues, never through grey or brown.
+    static float3 bandLight(constant float4 *loop, float t) {
+        t = fract(t) * 5;
+        int i = int(t);
+        float f = t - float(i);
+        f = f * f * (3 - 2 * f);
+        float3 a = loop[i % 5].xyz, b = loop[(i + 1) % 5].xyz;
+        float turn = b.z - a.z;
+        turn -= 6.2831853 * round(turn / 6.2831853);
+        return linearFromOklch(float3(mix(a.xy, b.xy, f), a.z + turn * f));
+    }
+    static float3 bandColor(constant float4 *loop, float t) { return encoded(bandLight(loop, t)); }
     static float2 complexSqrt(float2 w) {
         float r = length(w);
         float2 root = float2(sqrt(max(0.0f, 0.5f * (r + w.x))), sqrt(max(0.0f, 0.5f * (r - w.x))));
         return float2(root.x, w.y < 0 ? -root.y : root.y);
     }
-    /// How long an orbit from c takes to settle (as `bloomPoint` counts it),
-    /// if c is in the set's main cardioid or its period-2 bulb, where the
-    /// cycle's multiplier λ is known outright; else −1. `firm` is how far below
-    /// 1 |λ| must be to count. The biggest bulbs are where orbits take longest
-    /// to settle, so this spares most of their iterating.
-    static float knownBulb(float2 c, float steps, float firm) {
-        float cardioid = length(float2(1, 0) - complexSqrt(float2(1, 0) - 4 * c));
-        float bulb = 4 * length(c + float2(1, 0));
-        if (cardioid < firm) return 11.513f * steps / -log(max(cardioid, 1e-6f));
-        if (bulb < firm) return 11.513f * 2 * steps / -log(max(bulb, 1e-6f));
-        return -1;
+    /// Whether c lies in the set's main cardioid or its period-2 bulb, where
+    /// the cycle's multiplier is known outright, at least `firm` below 1. The
+    /// biggest bulbs are where orbits take longest to settle, so this spares
+    /// most of their iterating.
+    static bool knownBulb(float2 c, float firm) {
+        return length(float2(1, 0) - complexSqrt(float2(1, 0) - 4 * c)) < firm || 4 * length(c + float2(1, 0)) < firm;
     }
-    /// What one dive finds at screen point `v`: outside the set, the distance
-    /// to it in pixels and the smooth escape count; inside, −1 less how long its
-    /// orbit takes to settle onto its cycle, in the whole set's steps. Then 0, 1.
-    static float4 bloomPoint(constant BloomUniforms& u, constant BloomLayer& l, float2 v) {
+    /// What one dive finds at screen point `v`, `pixel` screen units apart:
+    /// outside the set, the distance to it in pixels, the smooth escape count
+    /// (in the whole set's steps) and which way the set lies (a unit step in
+    /// pixels, y down; 0 where that's unknown); inside, −1 and 0s.
+    static float4 bloomPoint(constant BloomUniforms& u, constant BloomLayer& l, float2 v, float pixel) {
         float2 a = l.view.xy, dc = l.view.zw + complexMultiply(a, v);
         int period = int(l.counts.x), n = 0;
-        float pixel = 2 / max(u.size.y, 1.0f), scale = l.counts.y;
         // In the whole set's big bulbs, or its copy's (seen through the map
         // that takes the set to the copy, close enough well inside them).
-        float known = knownBulb(l.bulbs.xy + dc, 1, 1);
-        if (known < 0) known = knownBulb(complexMultiply(dc, l.bulbs.zw), float(period), 0.9);
-        if (known >= 0) return float4(-1 - min(known, 1e4f) * scale, 0, 0, 1);
-        // z is the orbit, d its offset from the reference; dz its derivative
-        // across the screen, dZ across the orbit's own start, which shrinks
-        // only for an orbit settling onto a bulb's cycle.
-        float2 d = 0, z = 0, dz = 0, dZ = float2(1, 0);
-        // Brent's check for a cycle: the orbit at the last checkpoint, kept as
-        // its offset and where the reference was, so the two compare exactly
-        // however deep the dive. Back within a hundredth of a pixel's worth,
-        // it has settled; how fast dZ shrank since says how firmly.
-        float2 saved = 0;
-        int savedN = -1, savedI = 0, checkpoint = 4;
-        float savedM = 1, near = 1e-4 * pixel * pixel;
-        // 0: still going (on the set's edge), 1: escaped, 2: settled in a bulb.
-        int state = 0, i = 0, limit = int(u.view.x);
-        float r2 = 0, settled = 0;
+        if (knownBulb(l.bulbs.xy + dc, 1) || knownBulb(complexMultiply(dc, l.bulbs.zw), 0.9)) return float4(-1, 0, 0, 0);
+        // z is the orbit, d its offset from the reference orbit, whose step it's
+        // at is Z; dz the orbit's derivative across the screen.
+        float2 d = 0, z = 0, dz = 0, Z = l.orbit[0];
+        // Brent's check for a cycle: the orbit and its derivative at the last
+        // checkpoint, kept as the offset and where the reference was, so the
+        // two compare exactly however deep the dive. Back within 1e-5 with its
+        // derivative no longer growing, it has settled in a bulb; an orbit on
+        // its way out keeps stretching, so never counts. Every eighth step is
+        // enough to catch it, at an eighth of the cost.
+        float2 saved = 0, savedDz = 0;
+        int savedN = -1, checkpoint = 8;
+        int i = 0, limit = int(u.view.x);
+        float r2 = 0;
+        bool settled = false;
         for (; i < limit; i++) {
             dz = 2 * complexMultiply(z, dz) + a;
-            if (i > 0) dZ = 2 * complexMultiply(z, dZ);
-            d = complexMultiply(2 * l.orbit[n] + d, d) + dc;
+            d = complexMultiply(2 * Z + d, d) + dc;
             n = n + 1 == period ? 0 : n + 1;
-            z = l.orbit[n] + d;
+            Z = l.orbit[n];
+            z = Z + d;
             r2 = dot(z, z);
-            if (r2 > 1024) { state = 1; break; }
-            if (r2 < dot(d, d)) { d = z; n = 0; }
-            float m = dot(dZ, dZ);
-            if (m < 1e-30) { state = 2; break; } // a bulb's very centre
-            if (n == savedN && distance_squared(d, saved) < near * dot(dz, dz)) {
-                // Steps for dZ to shrink by 10⁵ at the rate it has: 0 at a bulb's
-                // centre, rising smoothly without bound toward its rim.
-                float rate = log(m / savedM) / float(i - savedI);
-                if (rate < -1e-4) { settled = min(-23.03f / rate, 1e4f); state = 2; break; }
+            if (r2 < dot(d, d)) { d = z; n = 0; Z = 0; }
+            if (r2 > 1e4) break;
+            if ((i & 7) == 0) {
+                settled = n == savedN && distance_squared(d, saved) < 1e-10 && distance_squared(dz, savedDz) < 1e-4 * dot(dz, dz);
+                if (settled) break;
+                if (i >= checkpoint) { saved = d; savedDz = dz; savedN = n; checkpoint *= 2; }
             }
-            if (i == checkpoint) { saved = d; savedN = n; savedI = i; savedM = m; checkpoint *= 2; }
         }
-        // An orbit still going that has stopped stretching is at a bulb's rim, settling slowly.
-        if (state == 0 && dot(dz, dz) < 1e6) { state = 2; settled = 1e4; }
-        if (state == 2) return float4(-1 - settled * scale, 0, 0, 1);
-        // Distance to the set in pixels (dz is per screen unit). An orbit still
-        // going hasn't escaped to measure from; how hard it is still stretching
-        // stands in, and it only glows faintly, as if a little way off the edge:
-        // deep down whole stretches never escape in time, and they mustn't blaze.
-        float lr = 0.5 * log(max(r2, 1.0001f));
+        if (settled) return float4(-1, 0, 0, 0);
+        // Neither out nor settled by the last step. An orbit that has stopped
+        // stretching is near a bulb's rim, settling too slowly to tell: the
+        // set. One still stretching is in a small copy's slow halo, outside
+        // it: drawn with the set's edge, but in a colour of its own.
+        if (i == limit) return float4(dot(dz, dz) * pixel * pixel < 100 ? -1 : -2, 0, 0, 0);
+        // Distance to the set in pixels (dz is per screen unit), from the potential and its slope.
+        float lr = 0.5 * log(r2);
         float stretch = rsqrt(max(dot(dz, dz), 1e-30f));
-        float px = state == 1 ? sqrt(r2) * lr * stretch / pixel : max(stretch / pixel, 3.0f);
-        // The smooth escape time, brought to the whole set's so the colours run
+        float px = sqrt(r2) * lr * stretch / pixel;
+        // The smooth escape count, brought to the whole set's so the colours run
         // on unbroken as the dive deepens and one dive hands to the next.
-        float mu = (float(i + 1) - log2(max(lr, 1e-4f))) * scale;
-        return float4(min(px, 1e4f), mu, 0, 1);
+        float mu = (float(i + 1) - log2(max(lr, 1e-4f))) * l.counts.y;
+        // Which way the set lies: down the potential's slope, whose gradient is
+        // conj(dz/z) in screen units (y up).
+        float2 g = complexMultiply(z, float2(dz.x, -dz.y) * stretch);
+        float slope = length(g);
+        float2 toward = slope > 0 && isfinite(slope) ? float2(-g.x, g.y) / slope : float2(0);
+        return float4(min(px, 1e4f), mu, toward);
     }
     fragment float4 floeBloomField(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
-                                   constant BloomPass& pass [[buffer(1)]], texture2d<float, access::read> last [[texture(0)]]) {
-        uint2 pixel = uint2(in.position.xy);
+                                   constant BloomPass& pass [[buffer(1)]]) {
         float aspect = u.size.x / max(u.size.y, 1.0f);
         float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
-        // Whole 8×8 blocks at a time, so pixels shaded together either all iterate or all carry over.
-        uint2 block = pixel / 8;
-        bool afresh = pass.all != 0 || blockOrder[(block.x & 3) + 4 * (block.y & 3)] * pass.turns / 16 == pass.phase;
-        // Last frame's field where this point was, between its four nearest
-        // pixels; across the set's edge, the nearest alone.
-        if (!afresh) {
-            float2 was = pass.history.xy + complexMultiply(pass.history.zw, v);
-            float2 at = float2((was.x / aspect + 1) * 0.5 * u.size.x, (1 - was.y) * 0.5 * u.size.y) - 0.5;
-            float2 size = float2(last.get_width(), last.get_height());
-            if (all(at >= 0) && all(at <= size - 1)) {
-                uint2 corner = uint2(min(floor(at), size - 2));
-                float2 f = at - float2(corner);
-                float4 a = last.read(corner), b = last.read(corner + uint2(1, 0));
-                float4 c = last.read(corner + uint2(0, 1)), d = last.read(corner + uint2(1, 1));
-                bool inside = a.x < 0;
-                if (inside == (b.x < 0) && inside == (c.x < 0) && inside == (d.x < 0))
-                    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-                return f.y < 0.5 ? (f.x < 0.5 ? a : b) : (f.x < 0.5 ? c : d);
-            }
-        }
-        return bloomPoint(u, u.layers[pass.layer], v);
+        return bloomPoint(u, u.layers[pass.layer], v, pass.pixel);
     }
-    /// How crowded each dive's filaments are round every 4×4 pixels (the share
-    /// of them on a filament's core), and the colour coordinate there (the mean
-    /// escape count outside the set). It's drawn at a quarter of the resolution
-    /// and filtered up, so both stay smooth where filaments are finer than a
-    /// pixel and their escape counts jump from one pixel to the next.
-    fragment float4 floeBloomCrowd(Vertex in [[stage_in]], texture2d<float, access::read> current [[texture(0)]],
-                                   texture2d<float, access::read> incoming [[texture(1)]]) {
-        uint2 corner = uint2(in.position.xy) * 4;
-        uint2 limit = uint2(current.get_width(), current.get_height()) - 1;
-        float2 lit = 0, counts = 0, outside = 0;
-        for (uint y = 0; y < 4; y++) {
-            for (uint x = 0; x < 4; x++) {
-                uint2 at = min(corner + uint2(x, y), limit);
-                float2 a = current.read(at).xy, b = incoming.read(at).xy;
-                float2 px = float2(a.x, b.x);
-                bool2 out = px >= 0;
-                lit += select(float2(0), exp(-0.5 * px * px / 2.25), out);
-                counts += select(float2(0), float2(a.y, b.y), out);
-                outside += select(float2(0), float2(1), out);
-            }
-        }
-        return float4(lit / 16, counts / max(outside, 1.0f));
+    /// A dive's field read between its pixels' centres, at `q` (in its pixels),
+    /// from the four round it. Each outside pixel knows how far off the
+    /// outline nearest it runs and which way, so it tells how far that outline
+    /// runs from q as well, as if straight across: a filament between pixels
+    /// stays as sharp as it is wherever it falls. `side` is below 0 inside the
+    /// set, `inside` is the inside pixels' share of q, and `sure` how well the
+    /// outside ones know where the set's edge runs.
+    struct BloomSample { float distance; float side; float inside; float sure; };
+    static BloomSample bloomRead(texture2d<float, access::read> field, float2 q) {
+        float2 size = float2(field.get_width(), field.get_height());
+        q = clamp(q, float2(0), size - 1);
+        float2 corner = min(floor(q), max(size - 2, float2(0)));
+        float2 f = q - corner;
+        uint2 c = uint2(corner);
+        float4 t0 = field.read(c), t1 = field.read(c + uint2(1, 0)), t2 = field.read(c + uint2(0, 1)), t3 = field.read(c + uint2(1, 1));
+        float4 x = float4(t0.x, t1.x, t2.x, t3.x);
+        float4 nx = float4(t0.z, t1.z, t2.z, t3.z), ny = float4(t0.w, t1.w, t2.w, t3.w);
+        // Each pixel's offset to q, its share of q, and how far it says its outline runs from q.
+        float4 ox = float4(f.x, f.x - 1, f.x, f.x - 1), oy = float4(f.y, f.y, f.y - 1, f.y - 1);
+        float4 w = float4(1 - f.x, f.x, 1 - f.x, f.x) * float4(1 - f.y, 1 - f.y, f.y, f.y);
+        float4 e = x - (nx * ox + ny * oy);
+        bool4 out = x >= 0;
+        float4 shares = select(float4(0), w, out);
+        float outside = shares.x + shares.y + shares.z + shares.w;
+        BloomSample s;
+        // Where the pixels agree on one outline (or know none) this is plain
+        // interpolation; across a filament it keeps its sharp crease. A few
+        // pixels off, the estimate is smooth but no exact distance: there plain
+        // interpolation, which leaves no trace of the pixels.
+        float plain = dot(shares, x) / max(outside, 1e-6f), far = smoothstep(2.0f, 4.0f, plain);
+        s.distance = outside > 0 ? mix(dot(shares, abs(e)) / outside, plain, far) : 1e4;
+        s.inside = 1 - outside;
+        s.sure = 0;
+        s.side = 0;
+        if (s.inside <= 0) return s;
+        // Inside the set or not: each pixel votes half a pixel's worth for its
+        // own side, so the edge falls halfway between, unless outside pixels
+        // near it know where their outline runs; then it falls there, between
+        // pixels, the inside ones agreeing.
+        float4 sure = select(float4(0), saturate(nx * nx + ny * ny) * saturate(2 - x), out);
+        float4 votes = mix(float4(0.5), clamp(e, -0.5f, 0.5f), sure);
+        float known = dot(shares, sure);
+        float line = known > 0 ? clamp(dot(shares * sure, e) / known, -0.5f, -0.02f) : -0.5f;
+        s.sure = known / max(outside, 1e-6f);
+        s.side = dot(shares, votes) + s.inside * mix(-0.5f, line, s.sure);
+        return s;
     }
-    /// One dive's light at `pixel` (screen point `v`), from its field and how
-    /// crowded its filaments are there. Where they crowd closer than a pixel
-    /// can follow, they're drawn as the even glow they average to, and dimmer,
-    /// so a dense stretch is neither a wall of light nor a shimmer of specks.
-    static float3 bloomLight(constant BloomUniforms& u, texture2d<float, access::read> fields, uint2 pixel, float2 v,
-                             float crowd, float count) {
-        float4 field = fields.read(pixel);
-        float even = 0.6 * smoothstep(0.25, 0.75, crowd);
-        float spread = 1 / (1 + 6 * crowd * crowd * crowd * crowd);
-        // The cover's colours lie round the dive's centre, so each side of it takes its own.
-        float2 from = v - u.size.zw;
-        float around = atan2(from.y, from.x) * 0.15915494;
+    /// How much a field pixel and the ones right of and below it disagree on
+    /// where their outlines run, near the set (in pixels, up to 1): nothing
+    /// where they see one smooth outline or filament, much where filaments run
+    /// closer together than the pixels can tell apart.
+    static float tangle(float4 p, float4 r, float4 d) {
+        float sum = 0;
+        if (p.x >= 0 && p.x < 3) {
+            if (r.x >= 0 && r.x < 3) sum += abs(abs(r.x + r.z) - p.x) + abs(abs(p.x - p.z) - r.x);
+            if (d.x >= 0 && d.x < 3) sum += abs(abs(d.x + d.w) - p.x) + abs(abs(p.x - p.w) - d.x);
+        }
+        return min(sum, 4.0f) * 0.25;
+    }
+    /// One dive's colour, worked out once per field pixel since all of it is
+    /// smooth: outside the set (and, in alpha, how strongly the bands glint
+    /// there), inside it, and the colour of the outline's filaments, each
+    /// already lit for the frame and weighted by the dive's share of it, so
+    /// the two dives of a handoff just add up. The screen-sized pass draws the
+    /// filaments and the set's edge sharp between them.
+    struct BloomSoft { float4 outside [[color(0)]]; float4 inside [[color(1)]]; float4 core [[color(2)]]; };
+    fragment BloomSoft floeBloomSoft(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
+                                     constant BloomPass& pass [[buffer(1)]], texture2d<float, access::read> field [[texture(0)]]) {
+        int2 at = int2(in.position.xy), last = int2(field.get_width(), field.get_height()) - 1;
+        float4 neighbours[3][3];
+        float within = 0;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                neighbours[dy + 1][dx + 1] = field.read(uint2(clamp(at + int2(dx, dy), int2(0), last)));
+                within += neighbours[dy + 1][dx + 1].x < 0 ? 1 : 0;
+            }
+        float4 t = neighbours[1][1];
+        float aspect = u.size.x / max(u.size.y, 1.0f);
+        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
+        float scale = u.size.y / float(field.get_height());
         float glow = u.light.x * (0.8 + 0.4 * u.wave.w), heart = u.light.y, hue = u.glints.w;
-        bool inside = field.x < 0;
-        float px = max(field.x, 0.0f);
-        float3 tint = lightTint(u.colors, hue + around + 0.01 * count);
-        float width = u.view.y;
-        // Halos overlap where filaments crowd, so there each is fainter.
-        float halo = (exp(-px / (4 + 6 * glow)) * 0.45 + 0.04 / (1 + 0.025 * px)) * sqrt(glow) / (1 + 2 * crowd * glow);
-        float3 light;
-        if (!inside) {
-            float core = exp(-0.5 * px * px / (width * width));
-            light = ((tint * 1.2 + 0.45 * spread) * core + tint * halo) * spread;
-            // Hats and snares: short glints on the filaments, in bands of the
-            // escape count that move on with each one, so they run along the outline.
-            if (u.light.z > 0.01) {
-                float bands = smoothstep(0.75, 1.0, sin(count * 0.35 - u.glints.x * 6.2831853));
-                float on = mix(exp(-0.5 * px * px / 4), crowd, even);
-                light += mix(paletteLoop(u.colors, hue + 0.25), float3(1), 0.5) * bands * on * u.light.z * 0.5 * spread;
-            }
-        } else {
-            // Quick to settle at a bulb's centre, slower toward its rim: the
-            // light falls off with that alone.
-            float pool = exp(-0.035 * (-1 - field.x));
-            light = lightTint(u.colors, hue + 0.45 + around) * (0.006 + 0.01 * heart + pool * (0.03 + 0.3 * heart));
+        // The cover's colours lie round the dive's centre, a little differently on each side.
+        float2 from = v - u.size.zw;
+        float around = from.y * rsqrt(max(dot(from, from), 1e-6f)); // the sine of its angle, so no seam where the angle wraps
+        float px = max(t.x, 0.0f);
+        // How far off the set is round this pixel, over its eight neighbours
+        // too: what's lit by closeness to the set follows that, smoothly, not
+        // each pixel's own glimpse of filaments finer than it.
+        float around9 = 0;
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 3; dx++) around9 += max(neighbours[dy][dx].x, 0.0f);
+        around9 /= 9;
+        // The bands: the loop of the cover's colours by the escape count's
+        // logarithm, a turn every few doublings, so they run in slow gradients
+        // far from the set and on through the colours across its structure,
+        // ever finer toward the outline.
+        float m = max(t.y, 1.0f);
+        float bands = hue + log2(m) * 0.4 + 0.04 * around;
+        // How many turns of the loop the bands go through within this pixel:
+        // the escape count's slope is 1 over ln 2 times the distance to the
+        // set. Over that stretch the colours are averaged, a few samples
+        // across it, so bands finer than a pixel blend into the colours they
+        // average to there rather than breaking into noise.
+        float density = 0.4 / (m * 0.4805 * max(px, 1e-3f));
+        float span = min(2 * density, 1.0f);
+        float3 tint;
+        if (span < 0.08) tint = bandColor(u.loop, bands);
+        else tint = encoded(0.25 * (bandLight(u.loop, bands - 0.375 * span) + bandLight(u.loop, bands - 0.125 * span)
+                                    + bandLight(u.loop, bands + 0.125 * span) + bandLight(u.loop, bands + 0.375 * span)));
+        // Light where the detail is: the bands are brightest close to the
+        // set's outline and fall away into a dark ground in open space, where
+        // the text sits. The glow breathes it.
+        float closeness = exp(-around9 * scale / (0.013 * u.size.y)); // within about 1% of the screen
+        // Right by the outline, where the bands crowd finer than a pixel, the
+        // structure is lit toward the loop's bright accent, as filaments of
+        // light, so the detail is where the light is.
+        float crowded = 1 - smoothstep(0.5f, 2.5f, around9);
+        // Where filaments run finer than the field can tell apart, over a few
+        // pixels round this one, the structure is a weave too fine to show:
+        // that keeps the darker colour it averages to, and the light goes to
+        // the edges the field can draw.
+        float tangled = 0;
+        for (int dy = 0; dy < 2; dy++)
+            for (int dx = 0; dx < 2; dx++) tangled += tangle(neighbours[dy][dx], neighbours[dy][dx + 1], neighbours[dy + 1][dx]);
+        tangled = smoothstep(0.06f, 0.3f, tangled / 4);
+        tint = mix(tint, fromOklch(u.loop[2].xyz), 0.35 * crowded * closeness * (1 - tangled));
+        float3 outside = tint * (0.22 + 0.78 * closeness) * (0.85 + 0.15 * glow);
+        // Relief: lit from the upper left, the slope toward the set read as a
+        // surface (the potential's own normal), where the field can tell it.
+        float3 normal = normalize(float3(-t.zw, 1.2));
+        float lit = saturate(dot(normal, normalize(float3(-1, -1, 1.4))));
+        outside *= mix(1.0f, 0.35 + 0.95 * lit, 1 - smoothstep(0.3f, 1.0f, density));
+        // Hats and snares: glints in bands of the escape count that move on with each one.
+        if (u.light.z > 0.01) outside += tint * smoothstep(0.75, 1.0, sin(m * 0.35 - u.glints.x * 6.2831853)) * u.light.z * 0.25 * closeness;
+        // The outline's light rim; where filaments run finer than the field can
+        // tell apart, the darker even weave they'd average to, and no sharp line.
+        float3 filament = mix(tint, float3(1), 0.4) * 0.6 * sqrt(glow);
+        outside *= 1 - 0.45 * closeness * tangled;
+        // Inside, all but black, with a faint light that the mids bring up.
+        // Only a piece of the set a few pixels across shows as dark; specks and
+        // scattered clusters of it take the light round them, and their
+        // outline draws them instead.
+        if (t.x < 0) {
+            for (int dy = -2; dy <= 2; dy++)
+                for (int dx = -2; dx <= 2; dx++)
+                    if (abs(dx) == 2 || abs(dy) == 2) within += field.read(uint2(clamp(at + int2(dx, dy), int2(0), last))).x < 0 ? 1 : 0;
         }
-        // Where filaments crowd, every pixel, in a speck of a bulb or between
-        // filaments, takes the even glow they average to.
-        if (even > 0) light = mix(light, ((tint * 1.2 + 0.45 * spread) * crowd + tint * 0.4 * sqrt(glow) / (1 + 2 * crowd * glow)) * spread, even);
-        return light;
+        // A small copy's slow halo, where orbits neither escaped nor settled in
+        // time, takes the loop's deepest colour, so the copy itself, black,
+        // shows at its true size within it.
+        float3 deep = t.x < -1.5 ? fromOklch(u.loop[0].xyz) * 0.6 : bandColor(u.loop, hue + 0.4 + 0.1 * around) * (0.01 + 0.05 * heart);
+        float3 inside = mix(outside, deep, smoothstep(14.0, 22.0, within));
+        // The drop's single wave runs out from the dive's centre, lighting what it passes.
+        float wave = exp(-pow((length(from) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
+        bool next = pass.layer == 1;
+        float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 3 * wave) * (next ? u.view.z : 1 - u.view.z);
+        float3 ground = next ? float3(0) : float3(0.008, 0.009, 0.013);
+        return { float4(outside * level + ground, 0), float4(inside * level + ground, 0), float4(filament * level, 1 - tangled) };
+    }
+    /// One dive's light at screen pixel `uv`, from its field read there
+    /// (`scale` screen pixels to a field pixel) and its smooth colours: the
+    /// outline's filaments at the screen's own pixels, pre-filtered so one
+    /// thinner than a pixel dims rather than breaking up, and the set's edge as sharp.
+    static float3 bloomDetail(constant BloomUniforms& u, texture2d<float, access::read> field, texture2d<float> outsides,
+                              texture2d<float> insides, texture2d<float> cores, float2 uv, float scale) {
+        constexpr sampler filtered(filter::linear, address::clamp_to_edge);
+        float2 size = float2(field.get_width(), field.get_height());
+        BloomSample s = bloomRead(field, uv * size - 0.5);
+        float across = s.distance * scale, width = u.view.y, footprint = width * width + 0.3;
+        float core = exp(-0.5 * across * across / footprint) * width * rsqrt(footprint);
+        float4 filament = cores.sample(filtered, uv);
+        float3 light = outsides.sample(filtered, uv).rgb;
+        // Inside the set by as much of the pixel as the outline leaves inside;
+        // where the field can't tell where between its pixels the edge runs,
+        // smoothly over one of them.
+        float cover = smoothstep(0.5f, -0.5f, s.side * mix(1.0f, scale, s.sure)) * min(1.0f, 4 * s.inside);
+        if (cover > 0) light = mix(light, insides.sample(filtered, uv).rgb, cover);
+        return light * (1 - 0.45 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
     }
     fragment float4 floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
                                       texture2d<float, access::read> current [[texture(0)]],
                                       texture2d<float, access::read> incoming [[texture(1)]],
-                                      texture2d<float> crowds [[texture(2)]]) {
-        uint2 pixel = uint2(in.position.xy);
-        float aspect = u.size.x / max(u.size.y, 1.0f);
-        float2 v = float2((in.uv.x * 2 - 1) * aspect, in.uv.y * 2 - 1);
-        float4 crowd = smoothSample(crowds, float2(in.uv.x, 1 - in.uv.y)); // textures run top-down
-        float3 light = bloomLight(u, current, pixel, v, crowd.x, crowd.z);
+                                      texture2d<float> outsides [[texture(2)]], texture2d<float> insides [[texture(3)]],
+                                      texture2d<float> cores [[texture(4)]], texture2d<float> nextOutsides [[texture(5)]],
+                                      texture2d<float> nextInsides [[texture(6)]], texture2d<float> nextCores [[texture(7)]]) {
+        float2 uv = float2(in.uv.x, 1 - in.uv.y); // textures run top-down
+        float3 light = bloomDetail(u, current, outsides, insides, cores, uv, u.size.y / float(current.get_height()));
         // The next dive fades in over this one's last stretch: both dive on together meanwhile.
-        if (u.view.z > 0) light = mix(light, bloomLight(u, incoming, pixel, v, crowd.y, crowd.w), u.view.z);
-        // The drop's single wave runs out from the dive's centre, lighting the filaments it passes.
-        float wave = exp(-pow((length(v - u.size.zw) - u.wave.x) / 0.25, 2.0f)) * u.wave.y;
-        float level = u.wave.z * (1 + 0.15 * u.light.w) * (1 + 3 * wave);
-        light *= level;
-        light += lightTint(u.colors, u.glints.w + atan2(v.y - u.size.w, v.x - u.size.z) * 0.15915494) * wave * 0.05;
-
-        float3 average = (u.colors[0].rgb + u.colors[1].rgb + u.colors[2].rgb + u.colors[3].rgb + u.colors[4].rgb) * 0.2;
-        float3 color = float3(0.008, 0.009, 0.013) + average * 0.02 + light;
-        color = 1 - exp(-color * 1.2); // highlights roll off instead of clipping
+        if (u.view.z > 0) light += bloomDetail(u, incoming, nextOutsides, nextInsides, nextCores, uv, u.size.y / float(incoming.get_height()));
+        float3 color = 1 - exp(-light * 1.2); // highlights roll off instead of clipping
         color = limitLuma(color, 0.38, 0.6);
         float alpha = 0.92;
         return float4(color * alpha + dither(in.position.xy), alpha); // premultiplied, over the cover backdrop

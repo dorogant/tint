@@ -219,6 +219,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         private let smoke = MTLRenderPassDescriptor()
         /// Each dive's, this frame: two, so the next dive has its own while it fades in.
         private var fields: [BloomField?] = [nil, nil]
+        /// What each dive found per pixel last frame, for tests to read back.
+        var fieldTextures: [MTLTexture?] { fields.map { $0?.texture } }
 
         init(device: MTLDevice) {
             self.device = device

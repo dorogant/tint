@@ -342,6 +342,7 @@ extension BackgroundTests {
         }
         bloomFreshChecks(device: device)
         bloomPaletteFadeChecks(renderer: renderer)
+        bloomOracleChecks(device: device)
     }
 
     /// A new cover's colours fade in over the old ones' without a flash, even
@@ -1155,5 +1156,100 @@ extension LumaImage {
         let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * fx
         let bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * fx
         return top + (bottom - top) * fy
+    }
+}
+
+extension BackgroundTests {
+    /// The GPU's field against the same points iterated in double precision
+    /// on the CPU, plainly (no reference orbit), at the deepest any dive goes
+    /// and partway down: in or out of the set, and the escape count. Single
+    /// precision only follows each pixel's offset from the reference orbit,
+    /// whose steps are each rounded to float; were that enough to throw
+    /// orbits off, whole regions would disagree here.
+    static func bloomOracleChecks(device: MTLDevice) {
+        let (width, height) = (320, 200)
+        guard let renderer = try? OffscreenRenderer(device: device, width: width, height: height),
+              let queue = device.makeCommandQueue() else { return }
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let iterations = Int(BloomRig.iterations)
+        var worstShare = 0.0, worstCount = 0.0, report: [String] = []
+        for (index, destination) in BloomRig.destinations.enumerated() {
+            for progress in [0.5, 0.99] {
+                let animator = diving(index, at: progress, settings)
+                _ = renderer.render(animator)
+                guard let texture = renderer.targets.fieldTextures[0] ?? nil, texture.width == width,
+                      let field = readHalfFloats(texture, device: device, queue: queue) else { continue }
+                let view = animator.bloom.views.current
+                let aspect = Double(width) / Double(height), pixel = 2 / Double(height)
+                // Per pixel: CPU escaped, CPU escape count, CPU distance to the set in pixels.
+                var cpu = [(out: Bool, mu: Double, distance: Double)](repeating: (false, 0, 0), count: width * height)
+                cpu.withUnsafeMutableBufferPointer { buffer in
+                    nonisolated(unsafe) let out = buffer
+                    DispatchQueue.concurrentPerform(iterations: height) { y in
+                        for x in 0..<width {
+                            let v = Complex((2 * (Double(x) + 0.5) / Double(width) - 1) * aspect, 1 - 2 * (Double(y) + 0.5) / Double(height))
+                            let c = destination.nucleus + view.offset + view.perScreenUnit * v
+                            var z = Complex(0, 0), dz = Complex(0, 0)
+                            var result: (Bool, Double, Double) = (false, 0, 0)
+                            for i in 0..<iterations {
+                                dz = 2 * z * dz + view.perScreenUnit
+                                z = z * z + c
+                                let r2 = z.re * z.re + z.im * z.im
+                                if r2 > 1e4 {
+                                    let lr = 0.5 * log(r2)
+                                    let mu = (Double(i + 1) - log2(max(lr, 1e-4))) * view.colorScale
+                                    result = (true, mu, r2.squareRoot() * lr / dz.magnitude / pixel)
+                                    break
+                                }
+                            }
+                            out[y * width + x] = result
+                        }
+                    }
+                }
+                // Clear of the edge (two pixels out, or two deep inside), a pixel's side is certain.
+                var compared = 0, disagree = 0, countErrors: [Double] = []
+                // By the edge, where a point's side turns on less than a pixel, as a share of the frame.
+                let edge = Double(cpu.indices.filter { (field[$0 * 4] >= 0) != cpu[$0].out }.count) / Double(cpu.count)
+                // Inside: two pixels deep in the set, so on either side of its edge both agree.
+                func deepInside(_ i: Int) -> Bool {
+                    let x = i % width, y = i / width
+                    for dy in -2...2 { for dx in -2...2 {
+                        let nx = min(max(x + dx, 0), width - 1), ny = min(max(y + dy, 0), height - 1)
+                        if cpu[ny * width + nx].out { return false }
+                    } }
+                    return true
+                }
+                for i in cpu.indices where cpu[i].out ? cpu[i].distance > 2 : deepInside(i) {
+                    let gpuOut = field[i * 4] >= 0
+                    compared += 1
+                    if gpuOut != cpu[i].out { disagree += 1; continue }
+                    if gpuOut { countErrors.append(abs(Double(field[i * 4 + 1]) - cpu[i].mu) / max(cpu[i].mu, 1)) }
+                }
+                countErrors.sort()
+                let share = Double(disagree) / Double(max(compared, 1))
+                let p99 = countErrors.isEmpty ? 0 : countErrors[countErrors.count * 99 / 100]
+                worstShare = max(worstShare, share)
+                worstCount = max(worstCount, p99)
+                report.append(String(format: "%d@%.2f %.3f%%/%.4f (%.2f%% by the edge)", index, progress, share * 100, p99, edge * 100))
+            }
+        }
+        print("Bloom against double precision (dive@depth: pixels clear of the edge on the wrong side of the set, 99th-percentile escape count error; and all pixels that differ, by the edge): "
+              + report.joined(separator: ", "))
+        check(worstShare == 0 && worstCount < 0.005, "Bloom's single-precision dives must agree with double precision (\(worstShare) on the wrong side, \(worstCount) count error)")
+    }
+
+    /// A half-float texture's values, read back through a shared buffer.
+    static func readHalfFloats(_ texture: MTLTexture, device: MTLDevice, queue: MTLCommandQueue) -> [Float]? {
+        let bytesPerRow = texture.width * 8
+        guard let buffer = device.makeBuffer(length: bytesPerRow * texture.height, options: .storageModeShared),
+              let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder() else { return nil }
+        blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
+                  to: buffer, destinationOffset: 0, destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: bytesPerRow * texture.height)
+        blit.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
+        let halves = buffer.contents().bindMemory(to: Float16.self, capacity: texture.width * texture.height * 4)
+        return (0..<(texture.width * texture.height * 4)).map { Float(halves[$0]) }
     }
 }

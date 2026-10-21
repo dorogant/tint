@@ -298,12 +298,20 @@ extension BackgroundTests {
         for i in stride(from: 45, to: franticFrames.count, by: 20) { franticFrames[i].layers.drop = 1 }
         let brightest = BackgroundConfiguration(kind: .bloom, colors: [RGB(r: 1, g: 0.95, b: 0.6), RGB(r: 0.9, g: 1, b: 0.9)],
                                                 reactivity: 2, speed: 2, glow: 2, punch: 2, vividness: 1.5)
+        // White lyrics over the brightest stretch of any frame: at the presets' looks, then the brightest settings.
+        var worstContrast: [Float] = [21, 21]
+        defer {
+            print(String(format: "Bloom legibility: white text over a lyrics-sized region at least %.2f:1 at the presets' looks, %.2f:1 at the brightest settings",
+                         worstContrast[0], worstContrast[1]))
+            check(worstContrast[0] >= 9.8 && worstContrast[1] >= 8.3,
+                  "white text must stay as readable over Bloom (\(worstContrast))")
+        }
         for (name, frames, configuration) in [("song, defaults", BloomSong.frames(), settings), ("frantic, brightest", franticFrames, brightest),
                                               ("frantic, defaults", franticFrames, settings)] {
             for (destination, progress) in [(0, 0.0), (3, 0.5), (1, handoffStart(1))] {
                 var animator = diving(destination, at: progress, configuration)
                 var cells: [[Float]] = Array(repeating: [], count: 17)
-                var brightestLuma: Float = 0, meanest: Float = 0
+                var brightestLuma: Float = 0, meanest: Float = 0, contrast: Float = 21
                 playBloom(&animator, frames, renderer: renderer) { _, frame, i in
                     guard i >= 15 else { return }
                     let grid = frame.relativeLuminance(columns: 4, rows: 4)
@@ -311,12 +319,14 @@ extension BackgroundTests {
                     cells[16].append(grid.reduce(0, +) / 16)
                     brightestLuma = max(brightestLuma, frame.maxLuma)
                     meanest = max(meanest, frame.meanLuma)
+                    contrast = min(contrast, whiteTextContrast(frame))
                 }
+                worstContrast[configuration == brightest ? 1 : 0] = min(worstContrast[configuration == brightest ? 1 : 0], contrast)
                 let worst = cells.map { mostFlashesPerSecond(transitions($0)) }.max()!
                 let whole = mostFlashesPerSecond(transitions(cells[16]))
                 let label = "\(name), dive \(destination) at \(String(format: "%.2f", progress))"
-                print(String(format: "Bloom %@: at most %d WCAG flashes a second over the frame, %d in any region; peak luma %.2f, mean at most %.3f",
-                             label, whole, worst, brightestLuma, meanest))
+                print(String(format: "Bloom %@: at most %d WCAG flashes a second over the frame, %d in any region; peak luma %.2f, mean at most %.3f; white text at least %.1f:1",
+                             label, whole, worst, brightestLuma, meanest, contrast))
                 check(worst <= 3 && whole == 0, "\(label): Bloom must never flash (\(whole) a second over the frame, \(worst) in a region)")
                 // As for Fluid: the presets' looks stay under 0.2, the brightest settings on a pale cover under 0.32.
                 let darkEnough: Float = configuration == brightest ? 0.32 : 0.2
@@ -403,6 +413,23 @@ extension BackgroundTests {
                      steady, aliased, specks))
         check(steady < 0.0025 && aliased > 0.0025, "Bloom must not shimmer (\(steady), blocky \(aliased))")
         check(specks <= 5, "Bloom must show no specks (\(specks))")
+    }
+
+    /// The contrast white text has over the brightest lyrics-sized region of
+    /// a frame (half its width, a tenth of its height), as the window shows it
+    /// under its 28% scrim: (1 + 0.05) / (background + 0.05), WCAG's ratio.
+    static func whiteTextContrast(_ frame: RenderedFrame) -> Float {
+        var worst: Float = 21
+        for row in 0..<19 {
+            for column in 0..<3 {
+                let w = frame.width / 2, h = frame.height / 10
+                let x = column * (frame.width - w) / 2, y = row * (frame.height - h) / 18
+                let region = frame.crop(x: x, y: y, width: w, height: h).relativeLuminance(columns: 1, rows: 1)[0]
+                // The scrim scales the encoded values by 0.72, about 0.486 of the light.
+                worst = min(worst, 1.05 / (0.486 * region + 0.05))
+            }
+        }
+        return worst
     }
 
     /// Lone dark pixels in light: each pixel darker than half the darkest of

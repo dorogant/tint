@@ -37,6 +37,13 @@ struct BackgroundTests {
             bloomSupersampleProof(device: device, directory: URL(fileURLWithPath: proof))
             return
         }
+        // FLOE_BLOOM_LOOK=<dir> FLOE_BLOOM_LOOK_NAME=dim|vivid: whole windows of Bloom at
+        // 16 samples a pixel with lyrics over it, and the text's contrast.
+        if let proof = ProcessInfo.processInfo.environment["FLOE_BLOOM_LOOK"] {
+            bloomLookProof(device: device, directory: URL(fileURLWithPath: proof),
+                           look: ProcessInfo.processInfo.environment["FLOE_BLOOM_LOOK_NAME"] ?? "dim")
+            return
+        }
         // FLOE_BLOOM_COST=1: just Bloom's cost, and its dives sheet if FLOE_BLOOM_RENDERS is set.
         if ProcessInfo.processInfo.environment["FLOE_BLOOM_COST"] != nil {
             bloomDiveRenders(device: device)

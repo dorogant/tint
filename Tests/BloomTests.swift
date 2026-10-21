@@ -1075,28 +1075,13 @@ extension BackgroundTests {
             ("1 per pixel, 4 nudged", width * height, grid(2)),
             ("1 per pixel, 16 nudged", width * height, grid(4)),
         ]
-        func toLinear(_ v: UInt8) -> Float { let c = Float(v) / 255; return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
-        func toEncoded(_ c: Float) -> UInt8 {
-            let v = c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1 / 2.4) - 0.055
-            return UInt8(max(0, min(255, (v * 255).rounded())))
-        }
-        let table = (0..<256).map { toLinear(UInt8($0)) }
         var cells: [SheetCell] = []
         for moment in proofMoments {
             var animator = diving(moment.destination, at: moment.progress, settings)
             playBloom(&animator, music, renderer: renderer) { _, _, _ in }
             let at = bloomProofCrops[moment.name] ?? (x: (width - crop.width) / 2, y: (height - crop.height) / 2)
             for (v, variant) in variants.enumerated() {
-                renderer.targets.fieldBudget = variant.budget
-                var sum = [Float](repeating: 0, count: width * height * 4)
-                for offset in variant.offsets {
-                    renderer.targets.jitter = offset
-                    let frame = renderer.render(animator)
-                    for i in 0..<sum.count { sum[i] += i % 4 == 3 ? Float(frame.bytes[i]) / 255 : table[Int(frame.bytes[i])] }
-                }
-                let n = Float(variant.offsets.count)
-                let bytes = (0..<sum.count).map { i in i % 4 == 3 ? UInt8((sum[i] / n * 255).rounded()) : toEncoded(sum[i] / n) }
-                let frame = RenderedFrame(width: width, height: height, bytes: bytes)
+                let frame = supersampled(animator, renderer: renderer, budget: variant.budget, offsets: variant.offsets)
                 let shown = frame.shown(on: screen, x: at.x, y: at.y, width: crop.width, height: crop.height)
                 save(shown.composited(), to: directory.appendingPathComponent("\(moment.name)-\(v).png"))
                 if v == variants.count - 1 { save(frame.composited(), to: directory.appendingPathComponent("\(moment.name)-full-16.png")) }
@@ -1107,6 +1092,126 @@ extension BackgroundTests {
         renderer.targets.jitter = .zero
         strip(cells, to: directory.appendingPathComponent("supersample.png"), columns: variants.count, scale: 0.5)
         print("Bloom supersample proof: \(directory.path)/supersample.png and <moment>-<variant>.png at 100%")
+    }
+
+    /// `animator`'s frame from a field of `budget` pixels, averaged in linear
+    /// light over views nudged by `offsets` pixels.
+    static func supersampled(_ animator: BackgroundAnimator, renderer: OffscreenRenderer, budget: Int,
+                             offsets: [SIMD2<Float>]) -> RenderedFrame {
+        func toLinear(_ v: Int) -> Float { let c = Float(v) / 255; return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        func toEncoded(_ c: Float) -> UInt8 {
+            let v = c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1 / 2.4) - 0.055
+            return UInt8(max(0, min(255, (v * 255).rounded())))
+        }
+        let table = (0..<256).map(toLinear)
+        let count = renderer.width * renderer.height * 4
+        renderer.targets.fieldBudget = budget
+        defer { renderer.targets.fieldBudget = nil; renderer.targets.jitter = .zero }
+        var sum = [Float](repeating: 0, count: count)
+        for offset in offsets {
+            renderer.targets.jitter = offset
+            let frame = renderer.render(animator)
+            for i in 0..<count { sum[i] += i % 4 == 3 ? Float(frame.bytes[i]) / 255 : table[Int(frame.bytes[i])] }
+        }
+        let n = Float(offsets.count)
+        let bytes = (0..<count).map { i in i % 4 == 3 ? UInt8((sum[i] / n * 255).rounded()) : toEncoded(sum[i] / n) }
+        return RenderedFrame(width: renderer.width, height: renderer.height, bytes: bytes)
+    }
+
+    /// Bloom as a full window would show it, at 16 samples a pixel, with lyric
+    /// lines in the lyrics column: `look` "dim" as the window composites it
+    /// today (under the 28% scrim), "vivid" under a light scrim with a dark band
+    /// behind the lyrics. Writes look-<moment>.png and a crop of the lyrics, and
+    /// prints white text's contrast over the column.
+    static func bloomLookProof(device: MTLDevice, directory: URL, look: String) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let size = BackgroundRenderer.drawableSize(points: CGSize(width: 1728, height: 1117), scale: 2, kind: .bloom)
+        let (width, height) = (Int(size.width), Int(size.height))
+        guard let renderer = try? OffscreenRenderer(device: device, width: width, height: height) else { return }
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let music = BloomSong.held(pitch: 7, tonality: 1, loudness: 0.5, mid: 0.4, seconds: 2)
+        let grid: [SIMD2<Float>] = (0..<16).map { (n: Int) -> SIMD2<Float> in
+            SIMD2<Float>((Float(n % 4) + 0.5) / 4 - 0.5, (Float(n / 4) + 0.5) / 4 - 0.5)
+        }
+        // The lyrics column: 42% of the window (726 pt of 1728), inside a 12 pt margin.
+        let column = (x: (1728 - 12 - 726) * 2, width: 726 * 2)
+        let vivid = look == "vivid"
+        let scrim: Float = vivid ? 0.1 : 0.28
+        let band: Float = vivid ? 0.62 : 0, feather: Float = 260
+        let lines = ["Somewhere the river bends", "and the lights come up slow", "I was counting the windows",
+                     "on the way back home", "every one of them burning", "every one of them gold",
+                     "and the night isn't over", "it's only the start of the road"]
+        let current = 3
+        for moment in proofMoments where ["seahorse", "edge", "dense", "deep"].contains(moment.name) {
+            var animator = diving(moment.destination, at: moment.progress, settings)
+            playBloom(&animator, music, renderer: renderer) { _, _, _ in }
+            let frame = supersampled(animator, renderer: renderer, budget: width * height, offsets: grid)
+            var out = [UInt8](repeating: 255, count: width * height * 4)
+            let base: [Float] = [0.06, 0.05, 0.045]
+            var lumas: [Float] = []
+            for y in 0..<height {
+                for x in 0..<width {
+                    let i = (y * width + x) * 4
+                    let alpha = Float(frame.bytes[i + 3]) / 255
+                    // The band darkens the column, eased in over `feather` pixels left of it.
+                    let into = min(1, max(0, (Float(x - column.x) + feather) / feather))
+                    let dim = (1 - scrim) * (1 - band * into * into * (3 - 2 * into))
+                    var rgb: [Float] = [0, 0, 0]
+                    for c in 0..<3 {
+                        let value = (Float(frame.bytes[i + c]) / 255 + base[c] * (1 - alpha)) * dim
+                        // The lyrics panel: black at 8% over the column.
+                        rgb[c] = x >= column.x ? value * 0.92 : value
+                        out[i + c] = UInt8(min(255, max(0, rgb[c] * 255)))
+                    }
+                    if x >= column.x + 36, x < column.x + column.width - 36, y % 2 == 0, x % 2 == 0 {
+                        func linear(_ v: Float) -> Float { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+                        lumas.append(0.0722 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.2126 * linear(rgb[2]))
+                    }
+                }
+            }
+            lumas.sort()
+            let p95 = lumas[Int(Float(lumas.count) * 0.95)], worst = lumas.last ?? 0
+            print(String(format: "Bloom look %@, %@: white text over the lyrics column %.1f:1 at the 95th percentile of brightness, %.1f:1 at the brightest",
+                         look, moment.name, 1.05 / (p95 + 0.05), 1.05 / (worst + 0.05)))
+            let provider = CGDataProvider(data: Data(out) as CFData)!
+            let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+                                provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            // Lyric rows as LyricsView draws them at this width: 34 pt bold rounded, 18 pt in, 11 pt above and below.
+            let descriptor = NSFont.systemFont(ofSize: 68, weight: .bold).fontDescriptor.withDesign(.rounded)!
+            let font = NSFont(descriptor: descriptor, size: 68)!
+            let row: CGFloat = 68 * 1.2 + 44 + 8
+            let top = CGFloat(height) * 0.62
+            for (n, text) in lines.enumerated() {
+                let distance = n - current
+                let opacity: CGFloat = distance == 0 ? 1 : (distance < 0 ? 0.3 : max(0.32, 0.58 - CGFloat(distance - 1) * 0.06))
+                let y = top - CGFloat(distance) * row
+                if distance == 0 {
+                    let pill = CGRect(x: CGFloat(column.x), y: y - 22, width: CGFloat(column.width) - 24, height: row - 8)
+                    context.addPath(CGPath(roundedRect: pill, cornerWidth: 36, cornerHeight: 36, transform: nil))
+                    context.setFillColor(CGColor(gray: 1, alpha: 0.1))
+                    context.fillPath()
+                }
+                let string = NSAttributedString(string: text, attributes: [
+                    .font: font, .foregroundColor: NSColor(white: 1, alpha: opacity),
+                ])
+                context.saveGState()
+                if distance == 0 { context.setShadow(offset: .zero, blur: 24, color: CGColor(red: 1, green: 0.8, blue: 0.75, alpha: 0.6)) }
+                context.textPosition = CGPoint(x: CGFloat(column.x + 36), y: y)
+                CTLineDraw(CTLineCreateWithAttributedString(string), context)
+                context.restoreGState()
+            }
+            guard let composed = context.makeImage() else { continue }
+            save(composed, to: directory.appendingPathComponent("\(look)-\(moment.name).png"))
+            if let crop = composed.cropping(to: CGRect(x: column.x - 300, y: Int(CGFloat(height) - top) - 500, width: 1500, height: 900)) {
+                save(crop, to: directory.appendingPathComponent("\(look)-\(moment.name)-lyrics.png"))
+            }
+        }
     }
 
     /// How much a frame flickers: the frames before and after it, each moved

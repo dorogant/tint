@@ -378,6 +378,7 @@ struct LyricsFollowTests {
         let judge = Judge()
         for size in sizes { await motion(size: size, only: only, judge: judge) }
         if only == nil || only == "F" { await interruptions(judge: judge) }
+        if only == nil || only == "G" { coldLayout(judge: judge) }
         if only == nil || only == "E" {
             UserDefaults.standard.setVolatileDomain(["reduceMotion": true], forName: UserDefaults.argumentDomain)
             for size in sizes { await reducedMotion(size: size, judge: judge) }
@@ -532,6 +533,37 @@ struct LyricsFollowTests {
             // The old list fades out as the new one comes in, gone in about 0.7 s.
             judge.landing(samples, line: 12, rig: rig, scenario: "F new song", settledBy: 1.3)
             judge.pillOnRow(samples.filter { $0.time > 1.3 }, line: 12, rig: rig, scenario: "F new song")
+        }
+    }
+
+    /// Every synced line of a song is laid out at once, so Follow knows where
+    /// far lines are: a long song's list must still open quickly, in the side
+    /// panel and in a window, with lines that wrap two and three times, and a
+    /// list longer than any song is laid out lazily.
+    static func coldLayout(judge: Judge) {
+        print("G. opening a long song")
+        for size in [CGSize(width: 430, height: 760), sizes[0]] {
+            for count in [80, 300, 1000] {
+                let long = (0..<count).map { index in
+                    let text = index % 9 == 4 ? "" : words[index % words.count] + " " + words[(index * 5 + 1) % words.count]
+                    return LyricLine(id: index, time: 5 + Double(index) * 4, text: text)
+                }
+                var rig: Rig?
+                let start = Date()
+                let allocations = AllocationCounter.allocations {
+                    rig = Rig(size: size, lines: long, label: "\(Int(size.width))×\(Int(size.height)), \(count) lines")
+                    rig?.host.layoutSubtreeIfNeeded()
+                    rig?.host.displayIfNeeded()
+                }
+                let milliseconds = Date().timeIntervalSince(start) * 1_000
+                if let rig {
+                    print(String(format: "  %@: first layout and draw in %.0f ms, %d allocations", rig.label, milliseconds, allocations))
+                    if count >= 300 {
+                        judge.check(milliseconds < 250, rig, "G", String(format: "a %d-line song opens in %.0f ms", count, milliseconds))
+                    }
+                    rig.close()
+                }
+            }
         }
     }
 

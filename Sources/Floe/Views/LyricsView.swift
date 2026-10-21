@@ -116,14 +116,14 @@ private struct SyncedLyricsView: View {
     /// The list easing a new line into place, and back to it on Follow.
     fileprivate static let glide = FloeMotion.lyricGlide
     private nonisolated static let list = "lyrics"
+    /// Most songs have under 100 lines; 300 open in about 150 ms.
+    private static let eagerLines = 300
 
     var body: some View {
         GeometryReader { geometry in
             let fontSize = min(scale.text(34), max(scale.text(22), geometry.size.width * scale.factor / 18))
             ScrollView {
-                // Eager: synced lyrics rarely pass 150 lines, and a lazy stack's
-                // estimated heights made Follow stop short of a far line, then jump.
-                VStack(alignment: .leading, spacing: scale(2)) {
+                stack {
                     ForEach(lines) { line in
                         // Decoder rounding can report a position just before the tag when paused.
                         // Only a gap's "…" cares whether music plays. Equatable rows
@@ -139,7 +139,6 @@ private struct SyncedLyricsView: View {
                         }
                     }
                 }
-                .scrollTargetLayout()
                 .coordinateSpace(.named(Self.list))
                 // Drawn in the list, not matched across rows in the window, so
                 // the pill scrolls with the rows on every frame.
@@ -194,6 +193,17 @@ private struct SyncedLyricsView: View {
             reanchor(settling: [.milliseconds(50), .milliseconds(600)])
         }
         .task(id: player.playbackAnchor) { await followPlayback() }
+    }
+
+    /// Eager up to `eagerLines`: a lazy stack's estimated heights made Follow
+    /// stop short of a far line, then jump. Each line costs about half a
+    /// millisecond to open, so a longer list (a mix, a broken file) is lazy.
+    @ViewBuilder private func stack(@ViewBuilder rows: () -> some View) -> some View {
+        if lines.count <= Self.eagerLines {
+            VStack(alignment: .leading, spacing: scale(2), content: rows).scrollTargetLayout()
+        } else {
+            LazyVStack(alignment: .leading, spacing: scale(2), content: rows).scrollTargetLayout()
+        }
     }
 
     private var edgeFade: some View {

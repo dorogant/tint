@@ -194,6 +194,17 @@ struct Sample {
         max(abs(a.minY - b.minY), abs(a.maxY - b.maxY))
     }
 
+    /// The largest move of `line` between two sampled frames, scaled to a
+    /// 120 Hz frame: a list moving in steps leaves the pill between rows.
+    static func step(_ samples: [Sample], line: Int) -> CGFloat {
+        var largest: CGFloat = 0
+        for (a, b) in zip(samples, samples.dropFirst()) {
+            guard let from = a.rows[line], let to = b.rows[line] else { continue }
+            largest = max(largest, abs(to.minY - from.minY) / max(1, CGFloat((b.time - a.time) * 120)))
+        }
+        return largest
+    }
+
     /// Where the line rests once the motion is over, and that it stays there:
     /// at the anchor, under the pill, with no second jump.
     func landing(_ samples: [Sample], line: Int, rig: Rig, scenario: String, settledBy: Double) {
@@ -241,8 +252,10 @@ struct Sample {
             }
             worstPin = max(worstPin, abs(Self.anchor(pill) - rig.anchorY))
         }
+        let step = Self.step(samples, line: new)
         print("  glide \(old)→\(new): \(frames) frames in flight, list travels \(Self.fmt(travel)) pt, "
-              + "pill's 40% point within \(Self.fmt(worstPin)) pt of the anchor")
+              + "pill's 40% point within \(Self.fmt(worstPin)) pt of the anchor, list steps up to \(Self.fmt(step)) pt")
+        check(step <= 12, rig, scenario, "list moves at most \(Self.fmt(step)) pt between frames")
         check(frames >= 5, rig, scenario, "glide animates over \(frames) sampled frames")
         check(worstPin <= tolerance, rig, scenario, "pill's 40% point within \(Self.fmt(worstPin)) pt of the anchor")
         check(split == 0, rig, scenario, "\(split) frames with the pill in two places")
@@ -255,14 +268,18 @@ struct Sample {
     /// on the anchor on every frame, however the glides overlap.
     func pinned(_ samples: [Sample], rig: Rig, scenario: String) {
         var worst: CGFloat = 0, split = 0
+        let last = samples.last?.pillIDs.first ?? -1
         for sample in samples where !sample.pills.isEmpty {
             guard let pill = sample.pill else { split += 1; continue }
             worst = max(worst, abs(Self.anchor(pill) - rig.anchorY))
-            if trace { print(String(format: "   %.3f s  pill %@  %.1f pt", sample.time, "\(sample.pillIDs.sorted())",
-                                    Self.anchor(pill) - rig.anchorY)) }
+            if trace { print(String(format: "   %.3f s  pill %@  %.1f pt, line %d at %.1f", sample.time,
+                                    "\(sample.pillIDs.sorted())", Self.anchor(pill) - rig.anchorY, last,
+                                    sample.rows[last]?.minY ?? -1)) }
         }
         check(split == 0 && worst <= tolerance, rig, scenario,
               "pill's 40% point within \(Self.fmt(worst)) pt of the anchor; \(split) frames split")
+        let step = Self.step(samples, line: last)
+        check(step <= 12, rig, scenario, "line \(last) moves at most \(Self.fmt(step)) pt between frames")
     }
 
     /// While no line changes, the pill rides on its row on every frame.
@@ -423,7 +440,8 @@ struct LyricsFollowTests {
                 print(String(format: "  at %.1f s: %.1f pt from the anchor", time, Judge.anchor(row) - rig.anchorY))
             }
         }
-        judge.landing(samples, line: line, rig: rig, scenario: scenario, settledBy: 0.45)
+        // The glide is 0.35 s from the frame after the click.
+        judge.landing(samples, line: line, rig: rig, scenario: scenario, settledBy: 0.4)
         judge.pillOnRow(samples, line: line, rig: rig, scenario: scenario)
     }
 

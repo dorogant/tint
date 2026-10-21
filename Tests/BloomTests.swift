@@ -343,6 +343,7 @@ extension BackgroundTests {
         bloomFreshChecks(device: device)
         bloomPaletteFadeChecks(renderer: renderer)
         bloomOracleChecks(device: device)
+        bloomResolutionChecks(device: device)
     }
 
     /// A new cover's colours fade in over the old ones' without a flash, even
@@ -901,7 +902,8 @@ extension BackgroundTests {
                     full.append(cost)
                     for _ in 0..<6 {
                         let share = renderer.targets.bloomShare
-                        for _ in 0..<40 { renderer.targets.recordBloomFrame(milliseconds: cost) }
+                        // Three seconds of frames at this cost, as the app would see them.
+                        for _ in 0..<90 { renderer.targets.recordBloomFrame(milliseconds: cost) }
                         if renderer.targets.bloomShare == share { break }
                         cost = renderer.gpuMilliseconds(animator, frames: 20)
                     }
@@ -1251,5 +1253,37 @@ extension BackgroundTests {
         command.waitUntilCompleted()
         let halves = buffer.contents().bindMemory(to: Float16.self, capacity: texture.width * texture.height * 4)
         return (0..<(texture.width * texture.height * 4)).map { Float(halves[$0]) }
+    }
+}
+
+extension BackgroundTests {
+    /// When the field steps to a smaller size, the light doesn't sharpen or
+    /// soften from one frame to the next: the step crossfades over a third of
+    /// a second, the same moment drawn throughout, and only once the cost has
+    /// stayed over its ceiling. A brief spike steps nothing.
+    static func bloomResolutionChecks(device: MTLDevice) {
+        let settings = BackgroundConfiguration(kind: .bloom, colors: Covers.palette(Covers.sunset))
+        let animator = diving(3, at: 0.75, settings)
+        func renderer() -> OffscreenRenderer? { try? OffscreenRenderer(device: device, width: 1600, height: 1000) }
+        guard let stepping = renderer(), let spiked = renderer() else { return }
+
+        for _ in 0..<5 { spiked.targets.recordBloomFrame(milliseconds: 12) } // a sixth of a second
+        for _ in 0..<60 { spiked.targets.recordBloomFrame(milliseconds: 2) }
+        check(spiked.targets.bloomShare == 0, "a brief spike in Bloom's cost must not shrink its field")
+
+        let before = stepping.render(animator)
+        var recorded = 0
+        while stepping.targets.bloomShare == 0 && recorded < 100 {
+            stepping.targets.recordBloomFrame(milliseconds: 12)
+            recorded += 1
+        }
+        var frames = [before]
+        for _ in 0...BackgroundRenderer.Targets.fadeFrames + 1 { frames.append(stepping.render(animator)) }
+        let jump = frames.last!.difference(from: before)
+        let steps = zip(frames.dropFirst(), frames).map { $0.difference(from: $1) }
+        print(String(format: "Bloom field step: after %d overloaded frames, %.4f between the two sizes, at most %.4f a frame over the %d-frame crossfade",
+                     recorded, jump, steps.max()!, BackgroundRenderer.Targets.fadeFrames))
+        check(recorded >= 15 && stepping.targets.bloomShare == 1, "Bloom's field must step only after sustained overload (\(recorded) frames)")
+        check(steps.max()! <= 0.2 * jump + 0.0002, "a step in Bloom's field must crossfade (\(steps.max()!) a frame of \(jump))")
     }
 }

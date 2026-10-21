@@ -268,7 +268,8 @@ enum ReactiveShader {
     /// outline nearest it runs, so the filaments and the set's edge are drawn
     /// as sharp as the screen can show them.
     private static let bloom = #"""
-    // view: iterations, filament width (screen pixels), how far the next dive has faded in, spare.
+    // view: iterations, filament width (screen pixels), how far the next dive has faded in, how much
+    // the field's old size still shows while a step in it crossfades.
     // size: drawable width, height, where the dive heads (screen units: y runs −1…1, x the same times the aspect ratio).
     // light: glow, heart (mids), glint (hats, snares), beat. glints: where along the bands they sit, spares, palette walk.
     // wave: drop ring radius, strength, level, bass. loop: the bands' colours in OKLCH (lightness, chroma, hue in radians).
@@ -630,16 +631,38 @@ enum ReactiveShader {
         if (cover > 0) light = mix(light, insides.sample(filtered, uv).rgb, cover);
         return light * (1 - 0.45 * core * filament.a) + filament.rgb * core * filament.a * 0.15;
     }
+    /// Whether this pipeline draws a step in the field's size crossfading:
+    /// a pipeline of its own, so frames without one pay nothing for it.
+    constant bool sizeFading [[function_constant(0)]];
+    /// Each dive's field and its smooth colours: outside the set, inside it, the filaments'.
+    struct BloomDive {
+        texture2d<float, access::read> field; texture2d<float> outsides; texture2d<float> insides; texture2d<float> cores;
+    };
+    static float3 bloomDetail(constant BloomUniforms& u, BloomDive d, float2 uv) {
+        return bloomDetail(u, d.field, d.outsides, d.insides, d.cores, uv);
+    }
     fragment float4 floeBloomFragment(Vertex in [[stage_in]], constant BloomUniforms& u [[buffer(0)]],
-                                      texture2d<float, access::read> current [[texture(0)]],
-                                      texture2d<float, access::read> incoming [[texture(1)]],
-                                      texture2d<float> outsides [[texture(2)]], texture2d<float> insides [[texture(3)]],
-                                      texture2d<float> cores [[texture(4)]], texture2d<float> nextOutsides [[texture(5)]],
-                                      texture2d<float> nextInsides [[texture(6)]], texture2d<float> nextCores [[texture(7)]]) {
+                                      texture2d<float, access::read> field0 [[texture(0)]], texture2d<float> outsides0 [[texture(1)]],
+                                      texture2d<float> insides0 [[texture(2)]], texture2d<float> cores0 [[texture(3)]],
+                                      texture2d<float, access::read> field1 [[texture(4)]], texture2d<float> outsides1 [[texture(5)]],
+                                      texture2d<float> insides1 [[texture(6)]], texture2d<float> cores1 [[texture(7)]],
+                                      texture2d<float, access::read> field2 [[texture(8)]], texture2d<float> outsides2 [[texture(9)]],
+                                      texture2d<float> insides2 [[texture(10)]], texture2d<float> cores2 [[texture(11)]],
+                                      texture2d<float, access::read> field3 [[texture(12)]], texture2d<float> outsides3 [[texture(13)]],
+                                      texture2d<float> insides3 [[texture(14)]], texture2d<float> cores3 [[texture(15)]]) {
         float2 uv = float2(in.uv.x, 1 - in.uv.y); // textures run top-down
-        float3 light = bloomDetail(u, current, outsides, insides, cores, uv);
+        // The dive under way and the one fading in, then both at the size a step is fading from.
+        BloomDive current = { field0, outsides0, insides0, cores0 }, incoming = { field1, outsides1, insides1, cores1 };
+        BloomDive fadingCurrent = { field2, outsides2, insides2, cores2 }, fadingIncoming = { field3, outsides3, insides3, cores3 };
+        float fading = sizeFading ? u.view.w : 0;
+        float3 light = bloomDetail(u, current, uv);
+        if (fading > 0) light = mix(light, bloomDetail(u, fadingCurrent, uv), fading);
         // The next dive fades in over this one's last stretch: both dive on together meanwhile.
-        if (u.view.z > 0) light += bloomDetail(u, incoming, nextOutsides, nextInsides, nextCores, uv);
+        if (u.view.z > 0) {
+            float3 next = bloomDetail(u, incoming, uv);
+            if (fading > 0) next = mix(next, bloomDetail(u, fadingIncoming, uv), fading);
+            light += next;
+        }
         float3 color = 1 - exp(-light * 1.2); // highlights roll off instead of clipping
         color = limitLuma(color, 0.38, 0.6);
         float alpha = 0.92;

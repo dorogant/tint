@@ -74,7 +74,8 @@ struct BloomPassUniforms {
 
 /// Matches `BloomUniforms` in `ReactiveShader`.
 struct BloomUniforms {
-    /// Iterations, filament width in drawable pixels, how far the next dive has faded in, spare.
+    /// Iterations, filament width in drawable pixels, how far the next dive has faded in, and (set by
+    /// the renderer) how much the field's old size still shows while a step in it crossfades.
     var view: SIMD4<Float>
     /// Drawable width and height, then where the dive heads, in screen units.
     var size: SIMD4<Float>

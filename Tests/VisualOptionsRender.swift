@@ -26,10 +26,7 @@ struct VisualOptionsRender {
             ("uk", "settings-auto-sound", { auto($0, .acoustic, .sound(.acoustic)) }),
         ]
         for (language, name, setUp) in scenarios {
-            let suite = "tint-visual-options-\(UUID().uuidString)"
-            let defaults = UserDefaults(suiteName: suite)!
-            defer { defaults.removePersistentDomain(forName: suite) }
-            let settings = VisualSettings(defaults: defaults)
+            let settings = VisualSettings(defaults: TestDefaults.make())
             settings.liveBackground = true
             setUp(settings)
             // "settings-…" scenarios draw the rows as Settings ▸ Background's grouped form does.

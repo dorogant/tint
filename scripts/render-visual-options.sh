@@ -16,7 +16,7 @@ while IFS= read -r file; do SOURCES+=("$file"); done < <(
 swiftc -swift-version 6 -O -module-name Floe -parse-as-library \
     -I "$ROOT/Sources/CFloeCore" -L "$ROOT/core/target/release" \
     -framework Security -framework SystemConfiguration -framework CoreFoundation -framework IOKit \
-    "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" "$ROOT/Tests/VisualOptionsRender.swift" \
+    "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" "$ROOT/Tests/VisualOptionsRender.swift" "$ROOT/Tests/TestDefaults.swift" \
     -o "$TEMP/visual-options"
 # Localizations come from the app bundle at runtime; point the harness at the sources.
 mkdir -p "$TEMP/home"

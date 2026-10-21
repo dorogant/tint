@@ -16,8 +16,10 @@ while IFS= read -r file; do SOURCES+=("$file"); done < <(
 swiftc -swift-version 6 -O -module-name Floe -parse-as-library \
     -I "$ROOT/Sources/CFloeCore" -L "$ROOT/core/target/release" \
     -framework Security -framework SystemConfiguration -framework CoreFoundation -framework IOKit \
-    "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" \
+    "${SOURCES[@]}" "$ROOT/Tests/LayoutRenderSupport.swift" "$ROOT/Tests/TestDefaults.swift" \
     "$ROOT/Tests/AutoPresetSongs.swift" "$ROOT/Tests/AutoPresetTests.swift" \
     -o "$TEMP/autopreset-tests"
+# A private home keeps the harness's caches away from Tint's; its settings
+# live in temporary plists (Tests/TestDefaults.swift).
 mkdir -p "$TEMP/home"
 CFFIXED_USER_HOME="$TEMP/home" "$TEMP/autopreset-tests"

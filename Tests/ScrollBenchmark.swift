@@ -31,8 +31,8 @@ struct ScrollBenchmark {
         let library = LibraryModel(api: api)
         let navigator = Navigator()
         let appearance = CoverAppearance()
-        let visuals = VisualSettings()
-        let settings = AppSettings()
+        let visuals = VisualSettings(defaults: TestDefaults.make())
+        let settings = AppSettings(defaults: TestDefaults.make())
         await library.refresh()
         let nowPlaying = TrackInfo(Track(id: "np", uri: "spotify:track:np", name: "New Person, Same Old Mistakes",
                                          durationMs: 363_000, explicit: false,

@@ -102,6 +102,7 @@ struct ScrollBenchmark {
             print(result.line(name))
             if let redraws = result.redraws { print(redraws) }
             if environment["FLOE_SCROLL_VIEWS"] == "1" { print("  " + viewCensus(window)) }
+            if environment["FLOE_SCROLL_BACKING"] == "1" { print("  " + backingCensus(window)) }
             if hover && result.hoverChanges == 0 {
                 print("  ✗ \(name): the simulated pointer never reached a row")
                 failures += 1
@@ -234,6 +235,38 @@ struct ScrollBenchmark {
         let top = views.sorted { $0.value > $1.value }.prefix(6).map { "\($0.value) \($0.key)" }
         return "views \(views.values.reduce(0, +)) (\(top.joined(separator: ", "))), layers \(layers), "
             + "\(shadows) shadows and \(invisibleShadows) invisible ones without a path"
+    }
+
+    /// The layers holding pixels of their own, largest first: SwiftUI draws
+    /// gradient-filled shapes, text and masks into bitmaps the size of their
+    /// bounds, and one panel-sized one costs more than every cover on screen.
+    /// A cover shown by several layers counts once per layer. SwiftUI's proxy
+    /// images stand for an image whose pixels they hide (the backdrop's is a
+    /// 96 px cover stretched over the window), so they're listed at no cost.
+    static func backingCensus(_ window: NSWindow) -> String {
+        var stores: [String: (count: Int, bytes: Double)] = [:], total = 0.0
+        func visit(_ layer: CALayer) {
+            if let contents = layer.contents {
+                var pixels = layer.bounds.width * layer.bounds.height * layer.contentsScale * layer.contentsScale
+                var kind = "drawn"
+                if CFGetTypeID(contents as CFTypeRef) == CGImage.typeID {
+                    let image = contents as! CGImage
+                    (pixels, kind) = (Double(image.width * image.height), "image")
+                } else if "\(type(of: contents))".contains("ProxyImage") {
+                    (pixels, kind) = (0, "proxy image")
+                }
+                total += pixels * 4
+                let name = "\(Int(layer.bounds.width))x\(Int(layer.bounds.height)) \(kind)"
+                let entry = stores[name] ?? (0, 0)
+                stores[name] = (entry.count + 1, entry.bytes + pixels * 4)
+            }
+            layer.sublayers?.forEach(visit)
+            if let mask = layer.mask { visit(mask) }
+        }
+        if let root = window.contentView?.superview?.layer { visit(root) }
+        let top = stores.sorted { $0.value.bytes > $1.value.bytes }.prefix(10)
+            .map { String(format: "%@ ×%d %.1f MB", $0.key, $0.value.count, $0.value.bytes / 1_048_576) }
+        return String(format: "backing stores %.1f MB: ", total / 1_048_576) + top.joined(separator: ", ")
     }
 
     /// The library page's scroll view: the tallest document in the window.

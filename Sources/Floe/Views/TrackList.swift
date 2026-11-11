@@ -51,7 +51,9 @@ struct TrackListView: View {
     var body: some View {
         LazyVStack(spacing: 0) {
             header
-            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+            // Not copied into an array: with 5,000 liked songs that was a megabyte
+            // of rows (and their reference counts) on every redraw of the list.
+            ForEach(entries.enumerated(), id: \.element.id) { index, entry in
                 TrackRow(
                     entry: entry,
                     number: numbering == .trackNumber ? (entry.track.trackNumber ?? index + 1) : index + 1,

@@ -4,8 +4,11 @@ import Foundation
 // Decoding is lenient: Spotify returns `null` entries in some lists, local files
 // without IDs, and (since 2026) `items`/`item` where older responses said `tracks`/`track`.
 
+/// The address stays text until a cover is asked for: a parsed `URL` is a heap
+/// object with its own copy of the string, and every track carries three of
+/// them (about 1 KB a track, 5 MB for a library of 5,000 liked songs).
 struct SpotifyImage: Codable, Hashable, Sendable {
-    let url: URL
+    let url: String
     let width: Int?
     let height: Int?
 }
@@ -191,8 +194,15 @@ struct Lossy<T: Decodable>: Decodable {
 
 extension Array where Element == SpotifyImage {
     /// The smallest image at least `pixels` wide, else the largest available.
+    /// One pass and no copy: every row and card asks each time it's drawn.
     func best(forPixels pixels: CGFloat) -> URL? {
-        let sorted = self.sorted { ($0.width ?? 0) < ($1.width ?? 0) }
-        return (sorted.first { CGFloat($0.width ?? 0) >= pixels } ?? sorted.last)?.url
+        var fits: (url: String, width: Int)?, largest: (url: String, width: Int)?
+        for image in self {
+            let width = image.width ?? 0
+            if CGFloat(width) >= pixels, width < fits?.width ?? .max { fits = (image.url, width) }
+            // The last of equals, as the stable sort this replaced chose.
+            if width >= largest?.width ?? 0 { largest = (image.url, width) }
+        }
+        return (fits ?? largest).flatMap { URL(string: $0.url) }
     }
 }

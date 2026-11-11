@@ -376,7 +376,11 @@ private struct LyricRow: View, Equatable {
         Button(action: seek) {
             label
                 .font(.system(size: fontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(opacity))
+                // Dimmed by opacity over white text, not by a translucent colour:
+                // a colour that animates draws the line's text again on every
+                // frame of each line change, an opacity only fades its layer.
+                .foregroundStyle(.white)
+                .opacity(opacity)
                 .shadow(color: .white.opacity(current ? 0.35 : 0), radius: current ? 2 : 0)
                 .shadow(color: glow.opacity(current ? 0.6 : 0), radius: current ? 12 : 0)
                 .multilineTextAlignment(.leading)
@@ -432,10 +436,9 @@ private struct LyricRow: View, Equatable {
         if line.text.isEmpty {
             // AppKit runs the breathing, so a gap doesn't re-lay out the window every
             // frame. The still SwiftUI symbol only sizes the row, exactly as before;
-            // the row's dimming reaches AppKit through `opacity`, not the foreground style.
+            // the row's dimming reaches AppKit through the label's opacity.
             Image(systemName: "ellipsis").hidden().overlay {
                 LoopingSymbol.instrumental(pointSize: fontSize, running: distance == 0 && playing && !still)
-                    .opacity(opacity)
             }
         } else {
             Text(line.text)

@@ -172,21 +172,33 @@ final class LibraryModel {
         for uri in uris { setLiked(uri, true) }
     }
 
+    /// Rows still waiting for an answer beyond this many were flung past long
+    /// ago; they ask again if they come back.
+    private static let likedBacklog = 120
+
     /// Batches visible rows into `contains` calls (≤40 URIs each).
     func requestLikedState(_ uri: String) {
         guard uri.hasPrefix("spotify:track:"), liked[uri]?.value == nil, connection == .connected,
               likedAsked.insert(uri).inserted else { return }
         likedQueue.append(uri)
         guard likedFlush == nil else { return }
+        // One call at a time until the queue is empty, the rows that appeared
+        // last first: those are the ones on screen. The task stays the only one
+        // while it runs, so a long scroll can't start a new batch every 250 ms
+        // beside it and run into Spotify's rate limit.
         likedFlush = Task {
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            let batch = likedQueue
-            likedQueue = []
-            likedFlush = nil
-            // One call at a time, each answer shown as it comes: the first rows
-            // don't wait for the rest of a fast scroll's batch.
-            for chunk in batch.chunked(into: 40) { await checkLiked(chunk) }
+            while !Task.isCancelled, !likedQueue.isEmpty {
+                if likedQueue.count > Self.likedBacklog {
+                    let stale = likedQueue.prefix(likedQueue.count - Self.likedBacklog)
+                    likedAsked.subtract(stale)
+                    likedQueue.removeFirst(stale.count)
+                }
+                let chunk = Array(likedQueue.suffix(40))
+                likedQueue.removeLast(chunk.count)
+                await checkLiked(chunk)
+            }
+            if !Task.isCancelled { likedFlush = nil }
         }
     }
 

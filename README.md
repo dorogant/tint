@@ -469,6 +469,17 @@ song, Previous restarts at zero and preserves play/pause. If history is temporar
 unknown and the engine stops at that boundary, Tint reloads the same song once;
 an intervening Connect takeover cancels that recovery.
 
+The audio engine runs only while there is something to play: it stops 2 s after
+playback does, and a Play or a load that the engine never answers (no session, or
+nothing to take over) gives it back after 10 s or 30 s instead of leaving it
+rendering silence, which also kept the Mac from idle sleep. Play without a session
+does nothing.
+
+Liking or unliking a song while Liked Songs is open updates the list where it
+stands (the row leaves, new songs join at the top) instead of loading it again from
+the first page. Liked-state checks for rows run one request at a time, newest rows
+first, and drop rows flung past long ago.
+
 ```sh
 scripts/test-transport.sh
 build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES -FloeSelfTestTransport YES

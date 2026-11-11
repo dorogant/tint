@@ -371,6 +371,9 @@ struct SongsView: View {
     @ViewState private var error: String?
     @ViewState private var filter = ""
     @ViewState private var sort = TrackSort.custom
+    /// Rows take their place in the list as their identity; songs added at the
+    /// top later count down from here instead.
+    @ViewState private var addedID = 0
     @Environment(\.interfaceScale) private var scale
 
     private var contextURI: String? {
@@ -400,7 +403,9 @@ struct SongsView: View {
             if loadingPage { LoadingView() }
         }
         .revealScope()
-        .task(id: library.likedRevision) { await reload() }
+        .task(id: library.likedRevision) {
+            if entries.isEmpty { await reload() } else { await reconcile() }
+        }
         .task(id: "\(sort.rawValue):\(filter)") { await loadAll() }
     }
 
@@ -410,6 +415,28 @@ struct SongsView: View {
         nextOffset = 0
         error = nil
         await loadNextPage()
+    }
+
+    /// A song was liked or unliked while the list is up. Loading it all again
+    /// emptied the page and threw the scroll back to the top, so the list is
+    /// brought in line where it stands: unliked songs leave, and songs the
+    /// newest page has that the list doesn't are added at the top.
+    private func reconcile() async {
+        guard let page = try? await library.api.savedTracks(offset: 0), !Task.isCancelled else { return }
+        total = page.total
+        let kept = entries.filter { library.isLiked($0.track.uri) != false }
+        let known = Set(kept.map(\.track.uri))
+        // Spotify's list can trail an unlike by a moment; don't bring that song back.
+        let fresh = page.items.filter { !known.contains($0.track.uri) && library.isLiked($0.track.uri) != false }
+        guard kept.count != entries.count || !fresh.isEmpty else { return }
+        // Later pages moved by as many places as the list grew or shrank.
+        if let offset = nextOffset { nextOffset = max(0, offset + fresh.count - (entries.count - kept.count)) }
+        entries = fresh.map { saved in
+            addedID -= 1
+            return TrackEntry(id: addedID, track: saved.track, addedAt: saved.addedAt)
+        } + kept
+        revision += 1
+        library.markLiked(fresh.map(\.track.uri))
     }
 
     private func loadNextPage() async {

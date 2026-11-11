@@ -5,27 +5,49 @@ struct RootView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(\.interfaceScale) private var scale
+    @ReducedMotion private var still
+    /// Set once the sign-in card has shown: from then on it stays up, looking
+    /// busy, instead of giving way to a spinner between its two steps.
+    @ViewState private var signingIn = false
+
+    private enum Phase: Equatable { case blank, waiting, onboarding, main }
+
+    private var phase: Phase {
+        if !player.hasConnected {
+            if signingIn { return .onboarding }
+            if player.session == .connecting { return .waiting }
+            // Until the saved login has been read nobody knows whether this is a first run.
+            return player.hasCheckedStoredSession ? .onboarding : .blank
+        }
+        if library.connection != .connected {
+            if signingIn { return .onboarding }
+            return library.connection == .checking ? .waiting : .onboarding
+        }
+        return .main
+    }
 
     var body: some View {
         ZStack {
             Backdrop()
-            if !player.hasConnected {
-                if player.session == .connecting {
-                    ProgressView("Connecting to Spotify…").controlSize(.small)
-                } else if player.hasCheckedStoredSession {
-                    OnboardingView(step: .playback)
-                }
-                // Else the saved login is still being read: only the backdrop for that moment.
-            } else if library.connection != .connected {
-                if library.connection == .checking {
-                    ProgressView().controlSize(.small)
-                } else {
-                    OnboardingView(step: .library)
-                }
-            } else {
+            switch phase {
+            case .blank:
+                EmptyView()
+            case .waiting:
+                ProgressView("Connecting to Spotify…").controlSize(.small)
+                    .transition(.opacity)
+            case .onboarding:
+                // One view for both steps, so step 1's tick and step 2's button can animate.
+                OnboardingView(step: player.hasConnected ? .library : .playback)
+                    .onAppear { signingIn = true }
+                    .transition(still ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
+            case .main:
+                // Only a fade: the pages make their own entrance.
                 MainView()
+                    .transition(.opacity)
             }
         }
+        // The app arriving, on the spring the surfaces move on.
+        .animation(still ? FloeMotion.fade : FloeMotion.surface, value: phase)
         .preferredColorScheme(.dark)
         .frame(minWidth: scale(940), minHeight: scale(600))
     }

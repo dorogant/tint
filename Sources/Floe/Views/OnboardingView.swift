@@ -10,6 +10,7 @@ struct OnboardingView: View {
     let step: Step
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @ReducedMotion private var still
     /// The pasted Client ID; saved when Connect is pressed.
     @ViewState private var clientID = SpotifyClientID.custom ?? ""
     /// A build with its own client ID keeps the how-to folded away.
@@ -33,7 +34,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 14) {
                 stepRow(number: 2, title: "Library",
                         detail: "Lets Tint read your playlists, saved music and history through your developer app.",
-                        done: false, busy: library.connection == .connecting,
+                        done: false, busy: library.connection == .connecting || library.connection == .checking,
                         error: libraryError, enabled: step == .library, actionEnabled: canConnectLibrary,
                         cancel: { connecting?.cancel() }, action: connectLibrary)
                 if step == .library { developerApp }
@@ -43,6 +44,8 @@ struct OnboardingView: View {
         .frame(width: 520)
         .glassPanel(cornerRadius: 24)
         .floeAnimation(value: showsDeveloperApp)
+        // Step 2's instructions open the card rather than replacing it.
+        .floeAnimation(value: step)
     }
 
     private var playbackError: String? {
@@ -130,10 +133,14 @@ struct OnboardingView: View {
                 Circle().fill(done ? palette.accent : .white.opacity(0.1)).frame(width: 28, height: 28)
                 if done {
                     Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.black)
+                        .transition(still ? .opacity : .opacity.combined(with: .scale(scale: 0.5)))
                 } else {
                     Text("\(number)").font(.system(size: 13, weight: .bold))
+                        .transition(.opacity)
                 }
             }
+            // Seen once, on first run: the tick may arrive with a little bounce.
+            .animation(still ? FloeMotion.fade : .spring(duration: 0.4, bounce: 0.3), value: done)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 15, weight: .semibold))
                 Text(detail).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
@@ -157,6 +164,8 @@ struct OnboardingView: View {
             }
         }
         .opacity(enabled || done ? 1 : 0.5)
+        .animation(FloeMotion.fade, value: busy)
+        .animation(FloeMotion.fade, value: enabled)
     }
 }
 

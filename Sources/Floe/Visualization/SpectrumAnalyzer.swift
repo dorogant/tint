@@ -21,7 +21,6 @@ struct SpectrumFrame: Equatable, Sendable {
         frame.layers.kick = max(layers.kick, earlier.layers.kick)
         frame.layers.snare = max(layers.snare, earlier.layers.snare)
         frame.layers.hat = max(layers.hat, earlier.layers.hat)
-        frame.layers.drop = max(layers.drop, earlier.layers.drop)
         return frame
     }
 }
@@ -49,21 +48,6 @@ struct MusicLayers: Equatable, Sendable {
     var tempo: Float = 0
     /// How regular the hits are, 0 (no pulse) to 1 (a steady four-on-the-floor).
     var confidence: Float = 0
-    /// The strongest pitch class in the harmony, 0..<12 with C at 0, smoothed
-    /// around the circle so it glides between neighbouring notes. A chord reads
-    /// as its root (C major as C, not its louder fifth); it holds while nothing
-    /// is tonal, and stays 0 until the first harmony.
-    var pitchClass: Float = 0
-    /// How clearly that pitch class stands out from the other eleven, 0…1:
-    /// noise and drums near 0, a sustained chord or sung note 0.6–1.
-    var tonality: Float = 0
-    /// Where the spectrum's weight sits, 0 (dark, bass-heavy) to 1 (bright, airy).
-    var brightness: Float = 0
-    /// Rising tension: a riser, a snare roll or a filter opening, 0…1. Climbs
-    /// over seconds while the kick sits out, falls back on a drop or as it fades.
-    var build: Float = 0
-    /// How hard the energy came back after a build on this frame, otherwise 0.
-    var drop: Float = 0
 
     static let bassBands = 0..<11
     static let lowMidBands = 11..<20
@@ -133,7 +117,7 @@ final class SpectrumAnalyzer {
             level *= 0.78
             adapt()
             for i in raw.indices { raw[i] *= 0.78 }
-            return SpectrumFrame(bands: smoothed, levels: levels, rms: level, layers: layerAnalyzer.update(raw, rms: 0, spectrum: []))
+            return SpectrumFrame(bands: smoothed, levels: levels, rms: level, layers: layerAnalyzer.update(raw, rms: 0))
         }
         append(inputLeft, count: count, to: &left)
         append(inputRight, count: count, to: &right)
@@ -156,10 +140,7 @@ final class SpectrumAnalyzer {
             smoothed[i] += (target - smoothed[i]) * (target > smoothed[i] ? 0.82 : 0.18)
         }
         adapt()
-        // The power spectrum is passed by reference, not copied: the layer
-        // analyzer only reads it, before the next frame overwrites it.
-        return SpectrumFrame(bands: smoothed, levels: levels, rms: level,
-                             layers: layerAnalyzer.update(raw, rms: rms, spectrum: stereoPower))
+        return SpectrumFrame(bands: smoothed, levels: levels, rms: level, layers: layerAnalyzer.update(raw, rms: rms))
     }
 
     /// Shows each band against its own last couple of seconds: hits stand out
@@ -234,13 +215,9 @@ struct LayerAnalyzer {
     private var snare = OnsetFollower(refractory: 3)
     private var hat = OnsetFollower(refractory: 2)
     private var tempo = TempoTracker()
-    private var harmony = HarmonyFollower()
-    private var brightness = BrightnessFollower()
-    private var tension = TensionFollower()
 
-    /// `raw` is each band's unsmoothed level, 0…1 across 65 dB; `rms` the window's;
-    /// `spectrum` the window's power spectrum (empty when there's no new audio).
-    mutating func update(_ raw: [Float], rms: Float, spectrum: [Float]) -> MusicLayers {
+    /// `raw` is each band's unsmoothed level, 0…1 across 65 dB; `rms` the window's.
+    mutating func update(_ raw: [Float], rms: Float) -> MusicLayers {
         frames += 1
         // A kick is the loudest thing in most mixes, so a jump in overall
         // loudness confirms one even over a bassline that's already loud.
@@ -295,328 +272,9 @@ struct LayerAnalyzer {
         let h = hat.update(flux: flux[3], present: loudest[3] > max(0.1, top - 0.5))
         // Kicks carry the pulse; snares and hats sharpen it.
         tempo.update(k.novelty + 0.5 * s.novelty + 0.25 * h.novelty)
-        harmony.update(spectrum)
-        let centroid = brightness.update(spectrum)
-        let drop = tension.update(high: value[3], centroid: centroid, snare: s.onset > 0, kick: k.onset > 0,
-                                  bass: value[0], level: level)
         return MusicLayers(bass: envelope[0], lowMid: envelope[1], mid: envelope[2], high: envelope[3],
                            kick: k.onset, snare: s.onset, hat: h.onset,
-                           beats: tempo.beats, tempo: tempo.tempo, confidence: tempo.confidence,
-                           pitchClass: harmony.pitchClass, tonality: harmony.tonality,
-                           brightness: brightness.value, build: tension.build, drop: drop)
-    }
-}
-
-/// Hears the harmony: a 12-class chroma from the spectrum's tonal peaks,
-/// smoothed over about a third of a second so it follows chord changes rather
-/// than every note, and the root that chroma implies.
-struct HarmonyFollower {
-    private static let binHertz = SpectrumAnalyzer.sampleRate / Float(SpectrumAnalyzer.size)
-    /// 220 Hz–2.5 kHz: below it two bins span more than a semitone; above it
-    /// the overtones of every note blur into each other.
-    private static let bins = Int(220 / binHertz)...Int(2500 / binHertz)
-    /// Per frame: about a 0.33 s time constant at 30 Hz.
-    private static let smoothing: Float = 0.1
-    private var chroma = [Float](repeating: 0, count: 12)
-    /// Smoothed power in the tonal peaks, and in the whole range.
-    private var tonal: Float = 0
-    private var total: Float = 0
-    /// The pitch class `pitchClass` glides toward, -1 until the first harmony.
-    private var root = -1
-    private(set) var pitchClass: Float = 0
-    private(set) var tonality: Float = 0
-
-    mutating func update(_ power: [Float]) {
-        let rate = Self.smoothing
-        for c in 0..<12 { chroma[c] -= chroma[c] * rate }
-        tonal -= tonal * rate
-        total -= total * rate
-        if power.count > Self.bins.upperBound + 2 {
-            var frameTotal: Float = 0, frameTonal: Float = 0
-            for k in Self.bins {
-                let p = power[k]
-                frameTotal += p
-                guard p > power[k - 1], p >= power[k + 1], p > 1e-10 else { continue }
-                // How far the peak stands above the bins two either side: a sine's
-                // Hann main lobe ends there, while noise rarely clears 6 dB.
-                let prominence = 10 * log10f(p / (0.5 * (power[k - 2] + power[k + 2]) + 1e-20))
-                let weight = min(1, max(0, (prominence - 6) / 9))
-                guard weight > 0 else { continue }
-                // The true frequency between bins, from a parabola through the log powers.
-                let a = logf(max(power[k - 1], 1e-20)), b = logf(p), c = logf(max(power[k + 1], 1e-20))
-                let curve = a - 2 * b + c
-                let offset = curve < 0 ? min(0.5, max(-0.5, 0.5 * (a - c) / curve)) : 0
-                let pitch = 12 * log2f((Float(k) + offset) * Self.binHertz / 440) + 9 // C = 0, A4 = 440 Hz
-                let nearest = pitch.rounded()
-                // Full weight on an equal-tempered pitch, none a quarter-tone off.
-                let tuning = cosf(.pi * (pitch - nearest))
-                let peak = power[k - 1] + p + power[k + 1]
-                frameTonal += weight * peak
-                let pitchClass = (Int(nearest) % 12 + 12) % 12
-                chroma[pitchClass] += rate * weight * tuning * tuning * sqrtf(peak)
-            }
-            total += rate * frameTotal
-            tonal += rate * frameTonal
-        }
-        var strongest: Float = 0, sum: Float = 0
-        for c in 0..<12 {
-            strongest = max(strongest, chroma[c])
-            sum += chroma[c]
-        }
-        // One class standing out of a chroma that's mostly tonal peaks: a
-        // sustained note or chord. Noise and drums spread over every class.
-        let contrast = strongest > 0 ? 1 - sum / 12 / strongest : 0
-        let share = total > 1e-12 ? tonal / total : 0
-        let target = min(1, max(0, (contrast - 0.35) / 0.45)) * min(1, share / 0.4)
-        // Rises over a few frames, so the first frames of a noise (a handful of
-        // chance peaks) don't read as a chord.
-        tonality += (target - tonality) * (target > tonality ? 0.15 : 0.3)
-        if tonality > 0.3 {
-            var best = 0, bestScore: Float = 0
-            for c in 0..<12 where score(c) > bestScore {
-                best = c
-                bestScore = score(c)
-            }
-            if root < 0 {
-                root = best
-                pitchClass = Float(best)
-            } else if bestScore > 1.15 * score(root) {
-                // Only a clearly stronger root takes over, so the colour doesn't
-                // flicker between two notes of the same chord.
-                root = best
-            }
-        }
-        guard root >= 0 else { return }
-        // Glide the short way round the circle, so B to C steps rather than spins.
-        var step = Float(root) - pitchClass
-        step -= 12 * (step / 12).rounded()
-        pitchClass = abs(step) < 0.01 ? Float(root) : (pitchClass + step * 0.3 + 12).truncatingRemainder(dividingBy: 12)
-    }
-
-    /// How strongly the chroma implies `c` as a root: the class itself, its
-    /// fifth and either third. A triad's fifth often has the most energy (every
-    /// note's third harmonic is its fifth), and this still names the root.
-    private func score(_ c: Int) -> Float {
-        chroma[c] + 0.5 * chroma[(c + 7) % 12] + 0.25 * (chroma[(c + 3) % 12] + chroma[(c + 4) % 12])
-    }
-}
-
-/// Where the spectrum's weight sits as the ear hears it: the centroid of its
-/// third-octave bands, each weighted by how near (in dB) it comes to the
-/// loudest, smoothed over about 0.25 s. Weighting by power instead would let a
-/// kick 20 dB up drown out everything above it and read every dance mix as dark.
-struct BrightnessFollower {
-    private static let binHertz = SpectrumAnalyzer.sampleRate / Float(SpectrumAnalyzer.size)
-    /// Third octaves from 40 Hz to 16 kHz, each at least one bin wide.
-    private static let bands: [ClosedRange<Int>] = (0..<26).map { j in
-        let low = Int((40 * powf(2, Float(j) / 3) / binHertz).rounded())
-        let high = Int((40 * powf(2, Float(j + 1) / 3) / binHertz).rounded()) - 1
-        return low...max(low, high)
-    }
-    /// Bands more than this many dB below the loudest don't count.
-    private static let window: Float = 40
-    /// The band centroids that read as 0 and 1: about 100 Hz (a kick and a
-    /// bassline alone) and 6 kHz (hats and air).
-    private static let darkest: Float = 4
-    private static let brightest: Float = 22
-    private var decibels = [Float](repeating: 0, count: bands.count)
-    private(set) var value: Float = 0
-
-    /// Returns this frame's unsmoothed brightness, 0 in silence.
-    mutating func update(_ power: [Float]) -> Float {
-        var target: Float = 0
-        if power.count > Self.bands.last!.upperBound {
-            var loudest = -Float.infinity
-            for (j, band) in Self.bands.enumerated() {
-                var sum: Float = 0
-                for k in band { sum += power[k] }
-                decibels[j] = 10 * log10f(sum + 1e-12)
-                loudest = max(loudest, decibels[j])
-            }
-            // Quieter than the bands' floor (−65 dB) is silence.
-            if loudest > -65 {
-                var sum: Float = 0, weighted: Float = 0
-                for j in decibels.indices {
-                    let weight = max(0, decibels[j] - max(loudest - Self.window, -75))
-                    sum += weight
-                    weighted += weight * Float(j)
-                }
-                target = min(1, max(0, (weighted / sum - Self.darkest) / (Self.brightest - Self.darkest)))
-            }
-        }
-        value += (target - value) * 0.125
-        return target
-    }
-}
-
-/// Hears a build and its drop. A build is tension rising over seconds: the
-/// highs climbing over the rest of the mix and the spectrum's centre rising
-/// (a riser, a filter opening), the snares speeding up (a roll), or, well into
-/// a song, the whole mix swelling (a pre-chorus). A kick that sits out or thins
-/// adds to it, but many builds keep theirs. `DropFollower` hears the drop.
-struct TensionFollower {
-    /// Three one-second segments: a rise has to show across all three, so a
-    /// sudden change (a song starting, a new section) isn't a build.
-    private static let segment = 30
-    private static let length = 3 * segment
-    /// Frames of music before a swell in loudness counts: a fade-in swells too.
-    private static let settling = 300
-    private var tilts = [Float](repeating: 0, count: length)
-    private var centroids = [Float](repeating: 0, count: length)
-    private var levels = [Float](repeating: 0, count: length)
-    private var snares = [Float](repeating: 0, count: length)
-    private var kicks = [Float](repeating: 0, count: length)
-    private var write = 0
-    private var filled = 0
-    /// Frames the music has been sounding, and the silent ones since it last did.
-    private var sounding = 0
-    private var silent = 0
-    private var kickHeld = false
-    /// Frames the evidence has held without a break, frames since it last
-    /// counted, and whether the build is holding at its peak.
-    private var rising = 0
-    private var sinceRise = 999
-    private var plateau = false
-    private var drops = DropFollower()
-    /// Frames a drop can still land after the build was last above 0.4.
-    private var armed = 0
-    /// Frames left of the fast fall after a drop.
-    private var falling = 0
-    private(set) var build: Float = 0
-
-    /// Feeds one frame; returns the drop's strength on the frame it lands, otherwise 0.
-    mutating func update(high: Float, centroid: Float, snare: Bool, kick: Bool, bass: Float, level: Float) -> Float {
-        record(high: high, centroid: centroid, snare: snare, kick: kick, level: level)
-        let push = evidence()
-        let drop = drops.update(bass: bass, level: level, kick: kick, armed: armed > 0, kickHeld: kickHeld)
-        if drop > 0 {
-            // The build's history is spent: the next one starts from scratch.
-            filled = 0
-            rising = 0
-            sinceRise = 999
-            plateau = false
-            armed = 0
-            falling = 30
-        }
-        if falling > 0 {
-            // Disarmed until the next build: one build, one drop.
-            falling -= 1
-            build *= 0.85
-        } else {
-            // Climbs over about three seconds of steady evidence; fades over about three without.
-            build += 0.03 * push * (1 - build) - 0.011 * (1 - push) * build
-            if build > 0.4 { armed = 45 } else if armed > 0 { armed -= 1 }
-        }
-        return drop
-    }
-
-    private mutating func record(high: Float, centroid: Float, snare: Bool, kick: Bool, level: Float) {
-        // Highs against the whole mix, so a fade-in, where everything rises together, isn't a riser.
-        tilts[write] = high - level
-        centroids[write] = centroid
-        levels[write] = level
-        snares[write] = snare ? 1 : 0
-        kicks[write] = kick ? 1 : 0
-        write = (write + 1) % Self.length
-        filled = min(Self.length, filled + 1)
-        if level > 0.15 {
-            sounding += 1
-            silent = 0
-        } else {
-            silent += 1
-            // A second of silence: a new song, or a long pause, starts over.
-            if silent > 30 { sounding = 0 }
-        }
-    }
-
-    /// How hard the last three seconds push the build up, 0…1.
-    private mutating func evidence() -> Float {
-        var push: Float = 0
-        if filled == Self.length {
-            let h = sums(tilts), c = sums(centroids), l = sums(levels), s = sums(snares), k = sums(kicks)
-            // The smaller of the two steps between the segments, a second's mean
-            // each: positive only when both rise.
-            func rise(_ x: SIMD3<Float>) -> Float { min(x[1] - x[0], x[2] - x[1]) / Float(Self.segment) }
-            let highRise = min(1, max(0, rise(h) / 0.02))
-            let centreRise = min(1, max(0, rise(c) / 0.03))
-            let swell = sounding > Self.settling ? min(1, max(0, rise(l) / 0.012)) : 0
-            // Rolls speed up in steps, a bar or two apart: more snares in the
-            // last second than two before, and at least three a second.
-            let roll = s[2] >= 3 ? min(1, max(0, s[2] - s[0] - 1) / 3) : 0
-            let evidence = min(1, 0.6 * (highRise + centreRise + roll) + 0.5 * swell)
-            // A steady four-on-the-floor alone isn't a build, so a kick holding
-            // weakens the evidence; one sitting out or thinning strengthens it.
-            kickHeld = k[1] + k[2] > 1
-            let kickGate: Float = !kickHeld ? 1 : (k[2] < k[0] ? 0.9 : 0.7)
-            push = min(1, max(0, (evidence - 0.15) / 0.85)) * kickGate
-            // A build peaks and holds before its drop: once under way, it holds
-            // for up to four seconds while nothing falls back.
-            plateau = build > 0.3 && sinceRise < 120 && rise(h) > -0.005 && rise(c) > -0.005 && s[2] >= s[0] - 1
-        }
-        // A rise has to hold for over a second: a sudden change can look like
-        // one while it passes through the middle segment, for at most a second.
-        rising = push > 0.05 ? rising + 1 : 0
-        if rising <= 36 { push = 0 }
-        sinceRise = push > 0 ? 0 : sinceRise + 1
-        return plateau ? max(push, 0.5) : push
-    }
-
-    /// Each segment's sum, oldest first.
-    private func sums(_ ring: [Float]) -> SIMD3<Float> {
-        var result = SIMD3<Float>.zero
-        for i in 0..<Self.length { result[i / Self.segment] += ring[(write + i) % Self.length] }
-        return result
-    }
-}
-
-/// Hears the drop that ends a build: the frame the bass and the loudness slam
-/// back. Over a build that kept its kick every kick slams like that, so there a
-/// drop is only sure once its bass, or a chorus's loudness, stays up between
-/// the kicks, where a kick's tail dies away.
-struct DropFollower {
-    /// A possible drop over a held kick, waiting to be confirmed or not.
-    private struct Candidate {
-        var since = 0
-        /// The lowest bass and loudness over its last four frames.
-        var low = SIMD2<Float>(1, 1)
-        /// The bass and the loudness floors before it.
-        let floor: SIMD2<Float>
-        let strength: Float
-    }
-    /// Frames from a candidate until it's confirmed or not.
-    private static let confirming = 7
-    private var bassAverage: Float = 0
-    private var levelAverage: Float = 0
-    /// The bass and the loudness between hits: follow them down at once and up slowly.
-    private var floor = SIMD2<Float>.zero
-    private var candidate: Candidate?
-
-    /// Feeds one frame; returns the drop's strength on the frame it's sure, otherwise 0.
-    /// `armed` is whether a build has just been heard, `kickHeld` whether it kept its kick.
-    mutating func update(bass: Float, level: Float, kick: Bool, armed: Bool, kickHeld: Bool) -> Float {
-        var drop: Float = 0
-        let now = SIMD2(bass, level)
-        if var waiting = candidate {
-            waiting.since += 1
-            if waiting.since > Self.confirming - 4 { waiting.low = simd_min(waiting.low, now) }
-            candidate = waiting
-            if waiting.since == Self.confirming {
-                candidate = nil
-                let held = waiting.low - waiting.floor
-                if held.x > 0.2 || held.y > 0.05 { drop = waiting.strength }
-            }
-        } else if armed, kickHeld, bass > floor.x + 0.25 || level > floor.y + 0.06 {
-            let strength = min(1, 0.5 + max(0, bass - floor.x - 0.25) + 2 * max(0, level - floor.y - 0.06))
-            candidate = Candidate(floor: floor, strength: strength)
-        } else if armed {
-            let bassJump = bass - bassAverage, loudJump = level - levelAverage
-            if bassJump > 0.2, loudJump > 0.04, kick || bassJump > 0.35 { drop = min(1, 0.5 + bassJump + loudJump) }
-        }
-        bassAverage += (bass - bassAverage) * 0.1
-        levelAverage += (level - levelAverage) * 0.1
-        floor.replace(with: floor + (now - floor) * 0.3, where: now .< floor)
-        floor.replace(with: floor + (now - floor) * 0.01, where: now .>= floor)
-        return drop
+                           beats: tempo.beats, tempo: tempo.tempo, confidence: tempo.confidence)
     }
 }
 

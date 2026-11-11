@@ -20,79 +20,20 @@ struct BackgroundTests {
         guard let device = MTLCreateSystemDefaultDevice() else {
             fail("Metal device is required for the background regression check")
         }
-        // FLOE_BUILD_ONLY=1: just the build and drop checks, for tuning them.
-        if ProcessInfo.processInfo.environment["FLOE_BUILD_ONLY"] != nil {
-            buildChecks()
-            print("PASS: \(checks) build checks")
-            return
-        }
-        // FLOE_BLOOM_PROOF=<dir>: full-screen frames and 100% crops of Bloom, for comparing builds.
-        if let proof = ProcessInfo.processInfo.environment["FLOE_BLOOM_PROOF"] {
-            bloomProof(device: device, directory: URL(fileURLWithPath: proof))
-            return
-        }
-        // FLOE_BLOOM_SUPERSAMPLE=<dir>: 100% crops of Bloom at its field today, at a
-        // sample a pixel, and at 4 and 16 a pixel, for what supersampling would show.
-        if let proof = ProcessInfo.processInfo.environment["FLOE_BLOOM_SUPERSAMPLE"] {
-            bloomSupersampleProof(device: device, directory: URL(fileURLWithPath: proof))
-            return
-        }
-        // FLOE_BLOOM_LOOK=<dir> FLOE_BLOOM_LOOK_NAME=dim|vivid: whole windows of Bloom at
-        // 16 samples a pixel with lyrics over it, and the text's contrast.
-        if let proof = ProcessInfo.processInfo.environment["FLOE_BLOOM_LOOK"] {
-            bloomLookProof(device: device, directory: URL(fileURLWithPath: proof),
-                           look: ProcessInfo.processInfo.environment["FLOE_BLOOM_LOOK_NAME"] ?? "dim")
-            return
-        }
-        // FLOE_BLOOM_COST=1: just Bloom's cost, and its dives sheet if FLOE_BLOOM_RENDERS is set.
-        if ProcessInfo.processInfo.environment["FLOE_BLOOM_COST"] != nil {
-            bloomDiveRenders(device: device)
-            bloomPerformance(device: device)
-            return
-        }
-        // FLOE_BLOOM_CHECK=fade,stability,oracle,resolution: just those of Bloom's checks, for tuning them.
-        if let names = ProcessInfo.processInfo.environment["FLOE_BLOOM_CHECK"]?.split(separator: ",") {
-            guard let renderer = try? OffscreenRenderer(device: device, width: 480, height: 300) else { fail("no offscreen renderer") }
-            for name in names {
-                switch name {
-                case "fade": bloomPaletteFadeChecks(renderer: renderer)
-                case "stability": bloomStabilityChecks(device: device)
-                case "oracle": bloomOracleChecks(device: device)
-                case "resolution": bloomResolutionChecks(device: device)
-                default: fail("no Bloom check named \(name)")
-                }
-            }
-            print("PASS: \(checks) Bloom checks")
-            return
-        }
-        // FLOE_BLOOM_ONLY=1: just Bloom's checks, renders and cost, for tuning it.
-        if ProcessInfo.processInfo.environment["FLOE_BLOOM_ONLY"] != nil {
-            bloomRenders(device: device)
-            bloomPerformance(device: device)
-            bloomMappingChecks()
-            bloomChecks(device: device)
-            print("PASS: \(checks) Bloom checks")
-            return
-        }
         rendererChecks(device: device)
         pausedSwiftUIResize()
         paletteChecks()
         settingsChecks()
         layerChecks()
         detectorChecks()
-        musicFeatureChecks()
         fluidChecks(device: device)
         beamChecks(device: device)
         mappingChecks(device: device)
         crispnessChecks(device: device)
         smokeChecks(device: device)
         presetPreviews(device: device)
-        bloomMappingChecks()
-        bloomChecks(device: device)
-        bloomRenders(device: device)
         performanceReport(device: device)
-        bloomPerformance(device: device)
-        print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, Bloom, mapping, flash rate, crispness)")
+        print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
     }
 
@@ -149,23 +90,6 @@ struct BackgroundTests {
         waitUntil("a paused kind change must draw with the other pipeline") {
             fixture.status.backgroundFramesDrawn == beforeKind + 1
         }
-
-        // Bloom works its fields out afresh every frame, so a still frame keeps
-        // none once it's on screen, and a paused one gives them back.
-        let beforeBloom = fixture.status.backgroundFramesDrawn
-        fixture.renderer.update(running: false, configuration: configuration(blue, reactivity: 1.7, kind: .bloom))
-        waitUntil("a paused Bloom frame must draw") { fixture.status.backgroundFramesDrawn == beforeBloom + 1 }
-        settle()
-        check(fixture.renderer.bloomFieldCount == 0, "a still Bloom frame must let its fields go once it's drawn")
-        fixture.renderer.update(running: true, configuration: configuration(blue, reactivity: 1.7, kind: .bloom))
-        waitUntil("a running Bloom must submit repeated frames") { fixture.status.backgroundFramesDrawn >= beforeBloom + 5 }
-        check(fixture.renderer.bloomFieldCount == 1, "a running Bloom between handovers must hold one field (\(fixture.renderer.bloomFieldCount))")
-        fixture.renderer.update(running: false, configuration: configuration(blue, reactivity: 1.7, kind: .bloom))
-        settle()
-        check(fixture.renderer.bloomFieldCount == 0, "pausing Bloom must let its fields go")
-        let stillFrames = fixture.status.backgroundFramesDrawn
-        settle()
-        check(fixture.status.backgroundFramesDrawn == stillFrames, "letting the fields go must not draw again")
 
         let beforeMotion = fixture.status.backgroundFramesDrawn
         fixture.status.frame = SpectrumFrame(bands: [Float](repeating: 0.5, count: 48),
@@ -1095,7 +1019,6 @@ struct BackgroundTests {
                         switch kind {
                         case .beams: sink += animator.beamUniforms(width: 1600, height: 1000).heads.0.x
                         case .fluid: sink += animator.fluidUniforms(width: 1600, height: 1000).motion.x
-                        case .bloom: sink += animator.bloomUniforms(width: 1600, height: 1000).layers.0.view.x
                         }
                     }
                 }

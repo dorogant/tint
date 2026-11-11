@@ -57,7 +57,7 @@ Sources/Floe/
   Library/               LibraryModel (playlists, pins, liked state), Navigator (routes + surface), SearchModel, ArtistGenres
   Images/                ArtworkCache + ArtworkView, CoverAppearance (cover, backdrop, palette per song), CoverPalette
   Lyrics/                LyricsService (LRCLIB, rate limits, cache), LyricsModel, LRC parser
-  Visualization/         analyzer, visualizer model, live backgrounds (Fluid, Beams, Bloom), presets
+  Visualization/         analyzer, visualizer model, live backgrounds (Fluid, Beams), presets
   Settings/              AppSettings, the Settings window
   Support/               InterfaceScale, ViewState, ListMotion, Localization, MemoryFootprint
   Views/                 every view

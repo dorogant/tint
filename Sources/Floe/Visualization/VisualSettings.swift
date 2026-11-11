@@ -6,10 +6,7 @@ import Observation
 final class VisualSettings {
     enum Style: String, CaseIterable, Identifiable { case normal, circular; var id: Self { self } }
     enum Shape: String, CaseIterable, Identifiable { case bars, wave; var id: Self { self } }
-    enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams, bloom; var id: Self { self } }
-    /// How finely Bloom works out its fractal: High at about a pixel per
-    /// point, Lighter at a bit over half a pixel per point, for a smaller GPU.
-    enum BloomQuality: String, CaseIterable, Identifiable { case high, lighter; var id: Self { self } }
+    enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams; var id: Self { self } }
     nonisolated static let speedRange = 0.25...2.0
     nonisolated static let glowRange = 0.0...2.0
     nonisolated static let punchRange = 0.0...2.0
@@ -33,7 +30,6 @@ final class VisualSettings {
     var strobe: Bool { didSet { defaults.set(strobe, forKey: "backgroundStrobe") } }
     var backgroundBlur: Double { didSet { defaults.set(backgroundBlur, forKey: "backgroundBlur") } }
     /// Not part of any preset: it's about the Mac, not the look.
-    var bloomQuality: BloomQuality { didSet { defaults.set(bloomQuality.rawValue, forKey: "bloomQuality") } }
     /// The live background's preset; touching any knob it sets makes it `.custom`.
     private(set) var backgroundPreset: BackgroundPreset {
         didSet { defaults.set(backgroundPreset.rawValue, forKey: "backgroundPreset") }
@@ -80,7 +76,8 @@ final class VisualSettings {
         vividness = clamped("backgroundVividness", Self.vividnessRange, fallback.vividness)
         beamCount = clamped("backgroundBeamCount", Self.beamCountRange, fallback.beamCount)
         strobe = defaults.bool(forKey: "backgroundStrobe")
-        bloomQuality = BloomQuality(rawValue: defaults.string(forKey: "bloomQuality") ?? "") ?? .high
+        // Bloom, a third kind, was removed; its detail setting goes with it.
+        defaults.removeObject(forKey: "bloomQuality")
         autoPreset = defaults.bool(forKey: "backgroundAutoPreset")
         backgroundPreset = preset
     }

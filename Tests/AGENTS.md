@@ -19,7 +19,7 @@ You touched | Run | Time
 `Views/CrawlingCover.swift`, `ProgressTrack.swift`, `VisualizerView.swift` | `scripts/test-layers.sh` | seconds
 auto preset, genres, `SoundClassifier` | `scripts/test-autopreset.sh` | seconds
 `Views/LyricsView.swift` | `scripts/test-lyrics-follow.sh`, `scripts/benchmark-lyrics.sh` | a few minutes
-`Views/ReactiveBackground.swift`, `Visualization/Background*`, `BeamRig`, `BloomRig`, `ReactiveShader` | `scripts/test-background.sh` (`FLOE_BLOOM_ONLY=1` for Bloom alone) | minutes
+`Views/ReactiveBackground.swift`, `Visualization/Background*`, `BeamRig`, `ReactiveShader` | `scripts/test-background.sh` | a minute or two
 page layout, guides, sidebar, toolbar | `scripts/test-layout.sh` (PNGs in /tmp/tint-layout) | a minute
 track rows, covers in lists, `LibraryModel` liked state | `scripts/benchmark-scroll.sh` | ~3 minutes
 `core/src/*.rs` | `cd core && cargo test --release` | seconds once built

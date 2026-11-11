@@ -17,7 +17,6 @@ struct BackgroundConfiguration: Equatable {
     var vividness: Float = 1
     var beamCount = 6
     var strobe = false
-    var bloomQuality = VisualSettings.BloomQuality.high
 }
 
 typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
@@ -52,45 +51,6 @@ struct BeamUniforms {
     var tints: Heads
 }
 
-/// Matches `BloomLayer` in `ReactiveShader`: one dive as the shader draws it.
-struct BloomLayerUniforms {
-    /// The pixel's offset from the reference's c at screen point v is b + a·v: a, then b.
-    var view: SIMD4<Float>
-    /// The reference orbit's period, what brings escape counts to the whole set's, two spares.
-    var counts: SIMD4<Float>
-    /// The reference's c, and 1 over the scale its copy of the set is drawn at (complex).
-    var bulbs: SIMD4<Float>
-    /// The reference orbit, one period from 0.
-    var orbit: InlineArray<64, SIMD2<Float>>
-}
-
-/// Matches `BloomPass` in `ReactiveShader`: one dive's field pass.
-struct BloomPassUniforms {
-    /// Which of the uniforms' layers.
-    var layer: Int32
-    /// How far apart the field's pixels are, in screen units.
-    var pixel: Float
-}
-
-/// Matches `BloomUniforms` in `ReactiveShader`.
-struct BloomUniforms {
-    /// Iterations, filament width in drawable pixels, how far the next dive has faded in, and (set by
-    /// the renderer) how much the field's old size still shows while a step in it crossfades.
-    var view: SIMD4<Float>
-    /// Drawable width and height, then where the dive heads, in screen units.
-    var size: SIMD4<Float>
-    /// Glow, the heart's light (the mids), glints (hats and snares), the beat's swell.
-    var light: SIMD4<Float>
-    /// Where along the filaments the glints sit, two spares, the palette's walk.
-    var glints: SIMD4<Float>
-    /// The drop's wave (radius, strength), overall level, the bass's breath.
-    var wave: SIMD4<Float>
-    /// The bands' colours round their loop, in OKLCH (lightness, chroma, hue in radians).
-    var loop: Palette
-    /// The dive under way, then the one fading in.
-    var layers: (BloomLayerUniforms, BloomLayerUniforms)
-}
-
 /// The live background's state between frames, apart from Metal so tests can
 /// step it frame by frame: the beat detector, the palette crossfade and each
 /// kind's motion. Analysis frames arrive at 30 Hz through `receive`; `step`
@@ -106,14 +66,8 @@ struct BackgroundAnimator {
     /// The palette as drawn now, eased between the old cover's colours and the new.
     /// Kept up to date as the crossfade moves, so drawing a frame allocates nothing.
     private(set) var colors = [SIMD3<Float>](repeating: .zero, count: CoverColorExtractor.paletteSize)
-    /// Bloom's bands as drawn now, eased between the old cover's loop and the new.
-    private(set) var bloomLoop = BloomPalette.Loop(repeating: .zero)
-    private var loopFrom = BloomPalette.Loop(repeating: .zero)
-    private var loopTo = BloomPalette.Loop(repeating: .zero)
     private(set) var fluid = FluidMotion()
     private(set) var beams = BeamRig()
-    /// Settable so a test can start Bloom partway down a dive.
-    var bloom = BloomRig()
     static let crossfade: Float = 1.6
     /// The analysis rate, which is the detector's time step whatever the display does.
     static let analysisInterval: Float = 1 / 30
@@ -122,12 +76,9 @@ struct BackgroundAnimator {
     mutating func configure(_ configuration: BackgroundConfiguration, animated: Bool) {
         self.configuration = configuration
         let target = Self.prepare(configuration.colors, vividness: configuration.vividness)
-        let loop = BloomPalette.loop(target, neutral: configuration.neutral)
-        guard target != to || !BloomPalette.same(loop, loopTo) else { return }
+        guard target != to else { return }
         from = animated ? colors : target
         to = target
-        loopFrom = animated ? bloomLoop : loop
-        loopTo = loop
         fade = animated ? 0 : 1
         blend()
     }
@@ -146,7 +97,6 @@ struct BackgroundAnimator {
         switch configuration.kind {
         case .fluid: fluid.receive(pulse, configuration: configuration)
         case .beams: beams.receive(pulse, configuration: configuration)
-        case .bloom: bloom.receive(pulse, layers: frame.layers, configuration: configuration)
         }
     }
 
@@ -160,7 +110,6 @@ struct BackgroundAnimator {
         switch configuration.kind {
         case .fluid: fluid.step(by: dt, pulse: pulse, configuration: configuration)
         case .beams: beams.step(by: dt, configuration: configuration)
-        case .bloom: bloom.step(by: dt, configuration: configuration)
         }
     }
 
@@ -180,7 +129,6 @@ struct BackgroundAnimator {
             return x * x * (3 - 2 * x)
         }
         for i in colors.indices { colors[i] = from[i] + (to[i] - from[i]) * share(i) }
-        bloomLoop = BloomPalette.mix(loopFrom, loopTo, share: share)
     }
 
     func fluidUniforms(width: Float, height: Float) -> FluidUniforms {
@@ -208,32 +156,6 @@ struct BackgroundAnimator {
                             haze: SIMD4(haze, configuration.neutral ? 1 : 0),
                             floorColors: (SIMD4(palette[pair.bass], 0), SIMD4(palette[pair.treble], 0)),
                             heads: rig.heads, tints: rig.tints)
-    }
-
-    func bloomUniforms(width: Float, height: Float) -> BloomUniforms {
-        let rig = bloom
-        let wave = rig.wave.strength * expf(-rig.wave.age / 0.6)
-        let views = rig.views
-        let current = Self.layer(views.current, BloomRig.destinations[rig.destination])
-        let incoming = rig.next.map { Self.layer(views.incoming ?? views.current, BloomRig.destinations[$0]) }
-        return BloomUniforms(view: SIMD4(BloomRig.iterations, 1.3 - 0.5 * rig.detail, rig.blend, 0),
-                             size: SIMD4(width, height, rig.focus.x, rig.focus.y),
-                             light: SIMD4(configuration.glow, rig.heart, rig.glint, rig.beat),
-                             glints: SIMD4(rig.sparkle, 0, 0, rig.hue),
-                             wave: SIMD4(rig.wave.age * 1.5, wave, rig.level, rig.bass),
-                             loop: BloomPalette.uniforms(bloomLoop),
-                             layers: (current, incoming ?? current))
-    }
-
-    /// A dive as the shader draws it: each pixel follows its tiny offset from
-    /// the destination's reference orbit, so single precision holds all the way down.
-    private static func layer(_ view: BloomView, _ destination: BloomDestination) -> BloomLayerUniforms {
-        BloomLayerUniforms(view: SIMD4(Float(view.perScreenUnit.re), Float(view.perScreenUnit.im),
-                                       Float(view.offset.re), Float(view.offset.im)),
-                           counts: SIMD4(Float(destination.period), Float(view.colorScale), 0, 0),
-                           bulbs: SIMD4(Float(destination.nucleus.re), Float(destination.nucleus.im),
-                                        Float(destination.inverseScale.re), Float(destination.inverseScale.im)),
-                           orbit: destination.orbit)
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

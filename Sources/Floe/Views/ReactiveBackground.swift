@@ -49,7 +49,7 @@ struct ReactiveBackground: NSViewRepresentable {
                                 reactivity: Float(settings.reactivity), speed: Float(settings.motionSpeed),
                                 glow: Float(settings.glow), punch: Float(settings.punch),
                                 vividness: Float(settings.vividness), beamCount: settings.beamCount,
-                                strobe: settings.strobe, bloomQuality: settings.bloomQuality)
+                                strobe: settings.strobe)
     }
 
     static func dismantleNSView(_ view: BackgroundMetalView, coordinator: Coordinator) {
@@ -86,51 +86,21 @@ final class BackgroundMetalView: MTKView {
 @MainActor
 final class BackgroundRenderer: NSObject, MTKViewDelegate {
     enum Failure: Error { case unavailable }
-    /// One pipeline per kind (and Beams' haze and Bloom's fields), all compiled once when the view is made.
+    /// One pipeline per kind (and Beams' haze), all compiled once when the view is made.
     struct Pipelines {
         let fluid: MTLRenderPipelineState
         let beams: MTLRenderPipelineState
         let haze: MTLRenderPipelineState
-        let bloom: MTLRenderPipelineState
-        /// Bloom's light while a step in its field's size crossfades.
-        let bloomFading: MTLRenderPipelineState
-        let bloomField: MTLRenderPipelineState
-        let bloomStats: MTLRenderPipelineState
-        let bloomSmooth: MTLRenderPipelineState
-        let bloomSoft: MTLRenderPipelineState
     }
     /// Pixels per frame at most: a large window draws Beams at about one pixel
     /// per point, a small one at full Retina. The shaders pre-filter every line
     /// for the pixel size they get, so Core Animation's upscale stays smooth.
     /// Fluid has no hard edges anywhere, so it gets by with far fewer.
-    /// Bloom's colour is cheap per pixel and its filaments are finer than any
-    /// pre-filter could keep sharp through an upscale, so it draws at full
-    /// Retina even full screen; only its fractal field stops at `bloomFieldBudget`.
     static func pixelBudget(_ kind: VisualSettings.BackgroundKind) -> CGFloat {
         switch kind {
         case .beams: 1_600_000
         case .fluid: 600_000
-        case .bloom: 8_000_000
         }
-    }
-    /// Bloom iterates the fractal afresh for every pixel of its field every
-    /// frame, so that stops at about a pixel per point of a full-screen window
-    /// at High detail, and at a bit over half a pixel per point at Lighter;
-    /// the colour is drawn from it at the drawable's full resolution.
-    static func bloomFieldBudget(_ quality: VisualSettings.BloomQuality) -> Int {
-        switch quality {
-        case .high: 1_300_000
-        case .lighter: 500_000
-        }
-    }
-
-    /// The size of Bloom's field for a drawable of `width`×`height`: the same
-    /// when it fits `budget`, else scaled down evenly to fit.
-    static func bloomFieldSize(width: Int, height: Int, budget: Int) -> (width: Int, height: Int) {
-        let area = width * height
-        guard area > budget else { return (width, height) }
-        let s = (Double(budget) / Double(area)).squareRoot()
-        return (max(1, Int((Double(width) * s).rounded())), max(1, Int((Double(height) * s).rounded())))
     }
     /// Frames allowed on the GPU at once while running; paused draws wait for none.
     private static let maximumInFlight = 2
@@ -161,96 +131,24 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
 
     static func makePipelines(device: MTLDevice, pixelFormat: MTLPixelFormat) throws -> Pipelines {
         let library = try device.makeLibrary(source: ReactiveShader.source, options: nil)
-        func pipeline(_ fragment: String, _ format: MTLPixelFormat, sizeFading: Bool = false) throws -> MTLRenderPipelineState {
+        func pipeline(_ fragment: String, _ format: MTLPixelFormat) throws -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
-            var fading = sizeFading
-            let constants = MTLFunctionConstantValues()
-            constants.setConstantValue(&fading, type: .bool, index: 0)
-            descriptor.fragmentFunction = try library.makeFunction(name: fragment, constantValues: constants)
+            descriptor.fragmentFunction = library.makeFunction(name: fragment)
             descriptor.colorAttachments[0].pixelFormat = format
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
-        func soft() throws -> MTLRenderPipelineState {
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = library.makeFunction(name: "floeBackgroundVertex")
-            descriptor.fragmentFunction = library.makeFunction(name: "floeBloomSoft")
-            for (index, format) in Targets.softFormats.enumerated() { descriptor.colorAttachments[index].pixelFormat = format }
-            return try device.makeRenderPipelineState(descriptor: descriptor)
-        }
         return Pipelines(fluid: try pipeline("floeFluidFragment", pixelFormat), beams: try pipeline("floeBeamsFragment", pixelFormat),
-                         haze: try pipeline("floeHazeFragment", Targets.hazeFormat),
-                         bloom: try pipeline("floeBloomFragment", pixelFormat),
-                         bloomFading: try pipeline("floeBloomFragment", pixelFormat, sizeFading: true),
-                         bloomField: try pipeline("floeBloomField", Targets.fieldFormat),
-                         bloomStats: try pipeline("floeBloomStats", Targets.statsFormat),
-                         bloomSmooth: try pipeline("floeBloomSmooth", Targets.statsFormat),
-                         bloomSoft: try soft())
+                         haze: try pipeline("floeHazeFragment", Targets.hazeFormat))
     }
 
     /// Beams' smoke at a quarter of the drawable's resolution, with the pass
-    /// that draws it, and Bloom's fields, each made again only when its size
-    /// changes.
+    /// that draws it, made again only when its size changes.
     final class Targets {
         static let hazeFormat = MTLPixelFormat.rg16Float
-        static let fieldFormat = MTLPixelFormat.rgba16Float
-        /// What the bands' light follows round each field pixel, before and after smoothing.
-        static let statsFormat = MTLPixelFormat.rg16Float
-        /// Bloom's smooth colour per dive: outside the set, inside it, the filaments'.
-        static let softFormats: [MTLPixelFormat] = [.rg11b10Float, .rg11b10Float, .rgba16Float]
-        /// What a dive found per pixel, what its light follows round them (at
-        /// half the size, then smoothed), its smooth colour, and the passes
-        /// that draw them.
-        struct BloomField {
-            let texture: MTLTexture
-            let pass: MTLRenderPassDescriptor
-            let stats: MTLTexture
-            let statsPass: MTLRenderPassDescriptor
-            let smooth: MTLTexture
-            let smoothPass: MTLRenderPassDescriptor
-            let soft: [MTLTexture]
-            let softPass: MTLRenderPassDescriptor
-        }
-        /// Bloom's field shrinks a step, a share of its pixels, once a stretch
-        /// of the dive has cost the GPU more than `costCeiling` a frame for
-        /// `overloadFrames` frames running, and grows back once the bigger
-        /// field would have cost under `costFloor` for `underloadFrames`. Each
-        /// step crossfades from the old size over `fadeFrames` frames, so the
-        /// light's sharpness never changes from one frame to the next.
-        static let bloomShares = [1.0, 0.7, 0.5, 0.35, 0.25]
-        /// Milliseconds of GPU time per Bloom frame.
-        private static let costCeiling = 4.2, costFloor = 3.3
-        /// Half a second, two seconds, and 0.37 s of frames at Bloom's 30 Hz.
-        private static let overloadFrames = 15, underloadFrames = 60
-        static let fadeFrames = 11
-        private(set) var bloomShare = 0
-        /// For proofs: a field budget of their own in place of the setting's,
-        /// and how far to nudge Bloom's view, in pixels, to sample between them.
-        var fieldBudget: Int?
-        var jitter = SIMD2<Float>.zero
-        /// The share a step left, while its crossfade runs.
-        private(set) var fadingShare: Int?
-        private var fadeDrawn = 0
-        private var overloaded = 0, underloaded = 0
-        /// Bloom's GPU time per frame, smoothed, in milliseconds.
-        private var bloomCost = 0.0
         private let device: MTLDevice
         private var haze: MTLTexture?
         private let smoke = MTLRenderPassDescriptor()
-        /// Bloom's fields by size: the full one, and the half-size one the
-        /// fainter dive of a handover gets; then both again at the size a step
-        /// is fading from. Kept by size, not by dive: the two dives swap sizes
-        /// halfway through a handover, and each is worked out afresh every
-        /// frame, so they simply swap textures (keyed by dive, both sets were
-        /// made again at the swap, and the dive that took over left a full-size
-        /// set, 34 MB at High detail, behind until the next handover).
-        private var fields: [BloomField?] = [nil, nil, nil, nil]
-        /// The field each dive drew into last frame (the current dive, the
-        /// next, and both at a fading size), for tests to read back.
-        private var drawn: [MTLTexture?] = [nil, nil, nil, nil]
-        var fieldTextures: [MTLTexture?] { drawn }
-        /// How many fields are held now.
-        var fieldCount: Int { fields.count { $0 != nil } }
 
         init(device: MTLDevice) {
             self.device = device
@@ -267,30 +165,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             return haze.map { ($0, smoke) }
         }
 
-        /// The field of `width`×`height` kept in `slot`: 0 for the full size
-        /// and 1 for half of it, plus 2 at the size a step is fading from.
-        /// `dive` is the uniforms' layer drawn into it this frame.
-        func bloomField(slot: Int, dive: Int, width: Int, height: Int) -> BloomField? {
-            defer { drawn[slot - slot % 2 + dive] = fields[slot]?.texture }
-            if let field = fields[slot], field.texture.width == width, field.texture.height == height { return field }
-            let made = ([Self.fieldFormat] + Self.softFormats).compactMap { texture($0, width: width, height: height) }
-            let half = [Self.statsFormat, Self.statsFormat].compactMap { texture($0, width: (width + 1) / 2, height: (height + 1) / 2) }
-            guard made.count == 1 + Self.softFormats.count, half.count == 2 else { return nil }
-            func pass(_ textures: ArraySlice<MTLTexture>) -> MTLRenderPassDescriptor {
-                let pass = MTLRenderPassDescriptor()
-                for (index, texture) in textures.enumerated() {
-                    pass.colorAttachments[index].texture = texture
-                    pass.colorAttachments[index].loadAction = .dontCare
-                    pass.colorAttachments[index].storeAction = .store
-                }
-                return pass
-            }
-            fields[slot] = BloomField(texture: made[0], pass: pass(made[0...0]), stats: half[0], statsPass: pass(half[0...0]),
-                                      smooth: half[1], smoothPass: pass(half[1...1]),
-                                      soft: Array(made.dropFirst()), softPass: pass(made.dropFirst()))
-            return fields[slot]
-        }
-
         private func texture(_ format: MTLPixelFormat, width: Int, height: Int) -> MTLTexture? {
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
             descriptor.usage = [.renderTarget, .shaderRead]
@@ -298,51 +172,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             return device.makeTexture(descriptor: descriptor)
         }
 
-        /// How long the GPU took over a Bloom frame. A crossfade's frames draw
-        /// both sizes, so they don't count.
-        func recordBloomFrame(milliseconds: Double) {
-            guard fadingShare == nil else { return }
-            bloomCost += (milliseconds - bloomCost) * 0.15
-            let shares = Self.bloomShares
-            overloaded = bloomCost > Self.costCeiling && bloomShare < shares.count - 1 ? overloaded + 1 : 0
-            underloaded = bloomShare > 0 && bloomCost * shares[bloomShare - 1] / shares[bloomShare] < Self.costFloor ? underloaded + 1 : 0
-            if overloaded >= Self.overloadFrames { step(to: bloomShare + 1) }
-            else if underloaded >= Self.underloadFrames { step(to: bloomShare - 1) }
-        }
-
-        private func step(to share: Int) {
-            bloomCost *= Self.bloomShares[share] / Self.bloomShares[bloomShare]
-            (fadingShare, bloomShare, fadeDrawn, overloaded, underloaded) = (bloomShare, share, 0, 0, 0)
-            // The size being left fades out of the textures it already has.
-            (fields[2], fields[3], fields[0], fields[1]) = (fields[0], fields[1], nil, nil)
-        }
-
-        /// For the frame being drawn: how much of it the old size still draws
-        /// while a step crossfades (eased from 1 to 0), else nil.
-        func nextFade() -> Float? {
-            guard fadingShare != nil else { return nil }
-            fadeDrawn += 1
-            guard fadeDrawn <= Self.fadeFrames else {
-                fadingShare = nil
-                release(slot: 2)
-                release(slot: 3)
-                return nil
-            }
-            let x = Float(fadeDrawn) / Float(Self.fadeFrames + 1)
-            return 1 - x * x * (3 - 2 * x)
-        }
-
-        /// Lets a field go that this frame didn't draw.
-        func release(slot: Int) {
-            if fields[slot] != nil { fields[slot] = nil }
-            if drawn[slot] != nil { drawn[slot] = nil }
-        }
-
-        /// Lets Bloom's fields go: while another kind draws, and once a still
-        /// frame is on screen (every frame works them out afresh).
-        func releaseFields() {
-            for slot in fields.indices { release(slot: slot) }
-        }
     }
 
     /// The pixels to draw for a view of `points` on a display of `scale`.
@@ -356,7 +185,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     @discardableResult
     static func encode(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
                        animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
-        if animator.configuration.kind != .bloom { targets.releaseFields() }
         switch animator.configuration.kind {
         case .fluid:
             var uniforms = animator.fluidUniforms(width: width, height: height)
@@ -368,8 +196,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             return true
         case .beams:
             return encodeBeams(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator, width: width, height: height)
-        case .bloom:
-            return encodeBloom(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator, width: width, height: height)
         }
     }
 
@@ -392,95 +218,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         return true
     }
 
-    /// Each dive's field and smooth colour, then the light from them at the
-    /// drawable's size. While one dive hands over to the next, the fainter of
-    /// the two is worked out at half the resolution; while the field's size
-    /// steps, both dives are worked out at the old size too, fading out.
-    private static func encodeBloom(_ command: MTLCommandBuffer, pass: MTLRenderPassDescriptor, pipelines: Pipelines, targets: Targets,
-                                    animator: BackgroundAnimator, width: Float, height: Float) -> Bool {
-        var uniforms = animator.bloomUniforms(width: width, height: height)
-        let fade = targets.nextFade()
-        uniforms.view.w = fade ?? 0
-        if targets.jitter != .zero {
-            func nudge(_ view: inout SIMD4<Float>) {
-                let by = targets.jitter * 2 / height // pixels to screen units
-                view.z += view.x * by.x - view.y * by.y
-                view.w += view.x * by.y + view.y * by.x
-            }
-            nudge(&uniforms.layers.0.view)
-            nudge(&uniforms.layers.1.view)
-        }
-        let rig = animator.bloom
-        let budget = Double(targets.fieldBudget ?? bloomFieldBudget(animator.configuration.bloomQuality))
-        func dive(_ layer: Int, faint: Bool, share: Int, slots: Int) -> Targets.BloomField? {
-            let full = bloomFieldSize(width: Int(width), height: Int(height), budget: Int(budget * Targets.bloomShares[share]))
-            let size = faint ? (width: max(1, full.width / 2), height: max(1, full.height / 2)) : full
-            guard let target = targets.bloomField(slot: slots + (faint ? 1 : 0), dive: layer,
-                                                  width: size.width, height: size.height) else { return nil }
-            return encodeDive(command, target: target, layer: layer, uniforms: &uniforms, pipelines: pipelines) ? target : nil
-        }
-        let handing = rig.next != nil
-        func dives(share: Int, slots: Int) -> (Targets.BloomField, Targets.BloomField)? {
-            // The fainter of a handover's two dives gets the half-size field.
-            let currentFaint = handing && rig.blend > 0.5
-            guard let current = dive(0, faint: currentFaint, share: share, slots: slots) else { return nil }
-            guard handing else {
-                targets.release(slot: slots + 1)
-                return (current, current)
-            }
-            return (current, dive(1, faint: !currentFaint, share: share, slots: slots) ?? current)
-        }
-        guard let (current, next) = dives(share: targets.bloomShare, slots: 0) else { return false }
-        let (fadingCurrent, fadingNext) = fade != nil ? targets.fadingShare.flatMap { dives(share: $0, slots: 2) } ?? (current, next) : (current, next)
-        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
-        encoder.setRenderPipelineState(fade != nil ? pipelines.bloomFading : pipelines.bloom)
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-        // One by one: an array of them would be made anew every frame.
-        func bind(_ field: Targets.BloomField, from first: Int) {
-            encoder.setFragmentTexture(field.texture, index: first)
-            for (index, texture) in field.soft.enumerated() { encoder.setFragmentTexture(texture, index: first + 1 + index) }
-        }
-        bind(current, from: 0)
-        bind(next, from: 4)
-        bind(fadingCurrent, from: 8)
-        bind(fadingNext, from: 12)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        encoder.endEncoding()
-        return true
-    }
-
-    /// One dive's field, worked out afresh, then what its light follows round
-    /// each pixel, smoothed, then its smooth colour from them.
-    private static func encodeDive(_ command: MTLCommandBuffer, target: Targets.BloomField, layer: Int,
-                                   uniforms: inout BloomUniforms, pipelines: Pipelines) -> Bool {
-        var dive = BloomPassUniforms(layer: Int32(layer), pixel: 2 / Float(target.texture.height))
-        guard let field = command.makeRenderCommandEncoder(descriptor: target.pass) else { return false }
-        field.setRenderPipelineState(pipelines.bloomField)
-        field.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-        field.setFragmentBytes(&dive, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
-        field.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        field.endEncoding()
-        guard let stats = command.makeRenderCommandEncoder(descriptor: target.statsPass) else { return false }
-        stats.setRenderPipelineState(pipelines.bloomStats)
-        stats.setFragmentTexture(target.texture, index: 0)
-        stats.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        stats.endEncoding()
-        guard let smooth = command.makeRenderCommandEncoder(descriptor: target.smoothPass) else { return false }
-        smooth.setRenderPipelineState(pipelines.bloomSmooth)
-        smooth.setFragmentTexture(target.stats, index: 0)
-        smooth.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        smooth.endEncoding()
-        guard let soft = command.makeRenderCommandEncoder(descriptor: target.softPass) else { return false }
-        soft.setRenderPipelineState(pipelines.bloomSoft)
-        soft.setFragmentBytes(&uniforms, length: MemoryLayout<BloomUniforms>.stride, index: 0)
-        soft.setFragmentBytes(&dive, length: MemoryLayout<BloomPassUniforms>.stride, index: 1)
-        soft.setFragmentTexture(target.texture, index: 0)
-        soft.setFragmentTexture(target.smooth, index: 1)
-        soft.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        soft.endEncoding()
-        return true
-    }
-
     func update(running: Bool, configuration: BackgroundConfiguration) {
         var changed = !configured || animator.configuration != configuration
         // A running palette change crossfades; paused (and Reduce Motion) ones apply at once.
@@ -489,7 +226,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         guard running else {
             stop()
             if animator.settle() { changed = true }
-            if changed || needsStaticDraw { redrawIfPaused() } else { releaseIdleFields() }
+            if changed || needsStaticDraw { redrawIfPaused() }
             return
         }
         if !isTicking {
@@ -503,7 +240,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
     private var isTicking: Bool { link != nil || timer != nil }
 
     /// Beams' punches and wobbles need every refresh up to 60 Hz; Fluid only
-    /// drifts and swells, and Bloom dives slowly, so half that looks the same at half the cost.
+    /// drifts and swells, so half that looks the same at half the cost.
     private static func frameRate(_ kind: VisualSettings.BackgroundKind) -> Float { kind == .beams ? 60 : 30 }
 
     /// Frames come from the display's own clock, so each is shown for the same
@@ -565,18 +302,6 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         if inFlight == 0 { view?.draw() }
     }
 
-    /// Bloom's fields held now, for tests.
-    var bloomFieldCount: Int { targets.fieldCount }
-
-    /// A still frame is on screen and nothing is being drawn: Bloom's fields
-    /// (34 MB at High detail) aren't needed until the next frame, which works
-    /// them out afresh anyway. A command buffer keeps the textures it uses, so
-    /// this never takes one from under the GPU.
-    private func releaseIdleFields() {
-        guard !isTicking, inFlight == 0 else { return }
-        targets.releaseFields()
-    }
-
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
@@ -595,16 +320,14 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         command.present(drawable)
         command.addCompletedHandler { [weak self] command in
             let succeeded = command.status == .completed
-            let milliseconds = (command.gpuEndTime - command.gpuStartTime) * 1000
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.inFlight -= 1
                 if succeeded {
                     self.status?.backgroundFramesDrawn += 1
-                    if self.animator.configuration.kind == .bloom { self.targets.recordBloomFrame(milliseconds: milliseconds) }
                     // A color/resize update can arrive while the last GPU frame
                     // is in flight. Draw its replacement once, without a timer.
-                    if self.needsStaticDraw { self.redrawIfPaused() } else { self.releaseIdleFields() }
+                    if self.needsStaticDraw { self.redrawIfPaused() }
                 }
                 else { self.status?.backgroundFailure = L10n.string("Live background stopped unexpectedly."); self.stop() }
             }

@@ -12,9 +12,10 @@ struct RootView: View {
             if !player.hasConnected {
                 if player.session == .connecting {
                     ProgressView("Connecting to Spotify…").controlSize(.small)
-                } else {
+                } else if player.hasCheckedStoredSession {
                     OnboardingView(step: .playback)
                 }
+                // Else the saved login is still being read: only the backdrop for that moment.
             } else if library.connection != .connected {
                 if library.connection == .checking {
                     ProgressView().controlSize(.small)

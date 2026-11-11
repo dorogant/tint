@@ -18,6 +18,10 @@ final class PlayerModel {
     private(set) var session: Session = .loggedOut
     /// True once a session came up; reconnects after that keep the main UI.
     private(set) var hasConnected = false
+    /// False until the saved login has been looked for. Until then nobody knows
+    /// whether this is a first run, so the sign-in card must not show: it
+    /// flashed up for a few frames at every launch.
+    private(set) var hasCheckedStoredSession = false
     private(set) var track: TrackInfo?
     /// Selected locally, before the engine confirms the loaded track.
     private(set) var pendingTrack: TrackInfo?
@@ -94,8 +98,11 @@ final class PlayerModel {
     /// Restores the previous session from `CredentialStore`, if there is one.
     func restoreSession() async {
         let stored = await Self.readStoredSession()
+        defer { hasCheckedStoredSession = true }
         guard let stored, session == .loggedOut else { return }
         storedCredentials = stored
+        // Now, rather than when the core's first event arrives a moment later.
+        session = .connecting
         startSession(using: stored)
     }
 

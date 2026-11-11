@@ -59,12 +59,11 @@ struct SettingsView: View {
                         .formStyle(.grouped)
                         .scrollContentBackground(.hidden)
                 }
+                // At once, as System Settings does: arrow keys move through the list.
                 .id(section)
-                .transition(.opacity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Theme.base)
-            .floeAnimation(value: section, duration: 0.18)
         }
         .navigationSplitViewStyle(.balanced)
         .tint(palette.highlight)

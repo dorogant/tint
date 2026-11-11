@@ -178,6 +178,19 @@ private extension EnvironmentValues {
     }
 }
 
+private struct RevealsAtOnceKey: EnvironmentKey {
+    static var defaultValue: Bool { false }
+}
+
+extension EnvironmentValues {
+    /// Set on a page that was returned to or reached from the keyboard: its
+    /// sections show without their entrance.
+    var revealsAtOnce: Bool {
+        get { self[RevealsAtOnceKey.self] }
+        set { self[RevealsAtOnceKey.self] = newValue }
+    }
+}
+
 private struct RevealScope: ViewModifier {
     @ViewState private var ledger = RevealLedger()
     func body(content: Content) -> some View { content.environment(\.revealLedger, ledger) }
@@ -189,15 +202,22 @@ private struct Reveal: ViewModifier {
     let key: String
     let order: Int
     @Environment(\.revealLedger) private var ledger
+    @Environment(\.revealsAtOnce) private var atOnce
     @ReducedMotion private var reduceMotion
     @ViewState private var shown = false
 
     func body(content: Content) -> some View {
-        let visible = shown || ledger?.contains(key) == true
+        let visible = shown || atOnce || ledger?.contains(key) == true
         content
             .opacity(visible ? 1 : 0)
             .offset(y: visible || reduceMotion ? 0 : 10)
             .onAppear {
+                if atOnce, !shown {
+                    // Stays shown if the flag changes while this page is up.
+                    ledger?.claim(key)
+                    shown = true
+                    return
+                }
                 guard !visible else { return }
                 ledger?.claim(key)
                 let animation = reduceMotion ? FloeMotion.fade : FloeMotion.reveal.delay(FloeMotion.stagger(order))

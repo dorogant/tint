@@ -13,6 +13,12 @@ final class Navigator {
     enum Surface: String, CaseIterable { case library, nowPlaying, lyrics }
     var surface: Surface = .library
     private(set) var stack: [Route] = [.home]
+    /// How the current page was reached. A page opened by a click is new and
+    /// makes an entrance; one returned to (Back) or reached from the keyboard
+    /// (search) is simply there.
+    enum Arrival { case fresh, instant }
+    /// Set before the stack changes, so the view that sees the new page sees this too.
+    @ObservationIgnored private(set) var arrival = Arrival.fresh
 
     var current: Route { stack[stack.count - 1] }
     var root: Route { stack[0] }
@@ -38,16 +44,19 @@ final class Navigator {
             showSearch()
             searchFocusRequest += 1
         } else {
+            arrival = .fresh
             stack = [route]
         }
     }
 
     func push(_ route: Route) {
         surface = .library
+        arrival = .fresh
         if route != current { stack.append(route) }
     }
 
     func back() {
+        arrival = .instant
         if canGoBack { stack.removeLast() }
     }
 
@@ -56,6 +65,7 @@ final class Navigator {
     func showSearch() {
         surface = .library
         guard current != .search else { return }
+        arrival = .instant
         if let index = stack.lastIndex(of: .search) {
             stack.removeSubrange((index + 1)...)
         } else {
@@ -66,6 +76,7 @@ final class Navigator {
     /// Leaves the results for the page underneath, if Search opened over one.
     func closeSearch() {
         guard current == .search, canGoBack else { return }
+        arrival = .instant
         stack.removeLast()
     }
 

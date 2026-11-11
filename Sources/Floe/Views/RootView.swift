@@ -86,6 +86,7 @@ struct MainView: View {
                 ScrollView {
                     page.padding(.horizontal, scale.gutter).padding(.top, scale.gutter - 1).padding(.bottom, scale(32))
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.revealsAtOnce, navigator.arrival == .instant)
                 }
                 // A scroll view touching the toolbar's edge reaches up under
                 // it and insets its content to match. When a banner or a
@@ -102,7 +103,10 @@ struct MainView: View {
             // Shelves scroll to the panel's edge; keep them inside its corners.
             .clipShape(RoundedRectangle(cornerRadius: scale.corner, style: .continuous))
             .glassPanel()
-            .floeAnimation(value: navigator.current)
+            // A page returned to (Back, ⌘[) or reached from the keyboard is simply
+            // there: no crossfade, and its sections don't make their entrance again.
+            .animation(navigator.arrival == .instant ? nil : (still ? FloeMotion.fade : .spring(duration: 0.24, bounce: 0)),
+                       value: navigator.current)
         }
     }
 

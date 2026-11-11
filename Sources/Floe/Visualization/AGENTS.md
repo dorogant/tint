@@ -9,11 +9,12 @@ and the two live backgrounds, Fluid and Beams. The views that draw are in `../Vi
 ```
 Core Audio render thread (core/src/pcm.rs) -> stereo tap, 32 KiB ring (core/src/analysis.rs)
   -> SpectrumAnalyzer on a utility queue, ~30 Hz: FFT, 48 bands, 96 waveform points, RMS
-  -> VisualizationModel.frame (not observed)
+  -> VisualizationModel.frame (main thread, not observed)
        -> VisualizerLayerView: redraws its shape layers per analysis frame
-       -> BackgroundRenderer: takes the newest frame on its display link
+  -> BackgroundFeed (straight from the analysis queue, no main thread)
+       -> RenderLoop, on the background's own thread: takes the newest frame on its display link
             -> BeatDetector -> BackgroundAnimator (BackgroundMotion.swift) -> BeamRig / FluidMotion
-            -> ReactiveShader (Metal, compiled at runtime) -> MTKView drawable
+            -> ReactiveShader (Metal, compiled at runtime) -> CAMetalLayer drawable
        -> AutoPresetController / SoundClassifier: only while a song still needs classifying
 ```
 
@@ -41,9 +42,17 @@ File | Holds
 - **Frame rates are deliberate**: Beams 60 Hz, Fluid 30 Hz
   (`BackgroundRenderer.frameRate`). Pixel budgets per kind are in
   `BackgroundRenderer.pixelBudget`.
-- **The display link and its draws run on the main thread.** Anything that keeps the
-  main thread busy (a burst of SwiftUI updates, a hover animation per row) shows up
-  as dropped background frames. Keep main-thread work per frame small.
+- **The live background draws on its own thread** (`RenderLoop` in
+  `Views/ReactiveBackground.swift`): the display link, the motion and every Metal call.
+  `BackgroundRenderer` is only the main thread's side, passing on what SwiftUI and the
+  view tell it (`loop.perform { … }`). A blocked main thread costs it no frames (a
+  check in `scripts/test-background.sh` blocks it for 250 ms), and the renderer takes
+  under 1% of the main thread, down from 2.9% for Beams. Keep it that way: nothing in
+  `RenderLoop` may touch the view, the window or a model on the main actor. Sizes and
+  the display's scale are sent to it; analysis frames reach it through `BackgroundFeed`.
+- The display link exists only for a window that is on screen, so the offline tests
+  run on the timer that stands in for it. A change to how the link is made or handed
+  over needs a look in a real window; the tests can't see it.
 - **Flashing is bounded**: the strobe never exceeds three flashes a second, and tests
   hold the backgrounds to a luminance limit that keeps white text readable. Don't
   loosen these to make an effect livelier.

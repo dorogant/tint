@@ -1,5 +1,6 @@
 import AppKit
-import MetalKit
+import Metal
+import simd
 import SwiftUI
 
 /// Actual Metal submissions from the production renderer. Synthetic colors and
@@ -53,10 +54,10 @@ struct BackgroundTests {
         let initialPixel = fixture.pixel()
         check(initialPixel.red > initialPixel.green, "the initial paused frame must use the requested color")
         settle()
-        let initialDraws = fixture.view.drawAttempts
+        let initialDraws = fixture.renderer.drawAttempts
         for _ in 0..<5 { fixture.renderer.update(running: false, configuration: configuration(red)) }
         settle()
-        check(fixture.status.backgroundFramesDrawn == 1 && fixture.view.drawAttempts == initialDraws,
+        check(fixture.status.backgroundFramesDrawn == 1 && fixture.renderer.drawAttempts == initialDraws,
               "unchanged paused configuration must neither redraw nor start a timer")
 
         fixture.renderer.update(running: false, configuration: configuration(green))
@@ -76,13 +77,15 @@ struct BackgroundTests {
         fixture.renderer.update(running: false, configuration: configuration(green, reactivity: 1.2))
         fixture.renderer.update(running: false, configuration: configuration(blue, reactivity: 1.7))
         waitUntil("in-flight paused updates must get a replacement frame") {
-            fixture.status.backgroundFramesDrawn == beforeBurst + 2
+            fixture.status.backgroundFramesDrawn > beforeBurst
         }
         settle()
         let bluePixel = fixture.pixel()
         check(bluePixel.blue > bluePixel.red && bluePixel.blue > bluePixel.green,
               "the newest in-flight color must survive, rather than leaving the first color displayed")
-        check(fixture.status.backgroundFramesDrawn == beforeBurst + 2,
+        // The render thread may take all three before it draws (one frame) or
+        // draw the first as the others arrive (two); never one for each.
+        check(fixture.status.backgroundFramesDrawn <= beforeBurst + 2,
               "multiple in-flight paused changes must coalesce into one replacement")
 
         let beforeKind = fixture.status.backgroundFramesDrawn
@@ -98,14 +101,42 @@ struct BackgroundTests {
         waitUntil("a running background must submit repeated frames") {
             fixture.status.backgroundFramesDrawn >= beforeMotion + 4
         }
+        // The frames are drawn on their own thread: a main thread that is busy
+        // (here, asleep) doesn't hold them up. Off screen a 30 Hz timer stands in
+        // for the display link, so a quarter of a second is seven frames.
+        let beforeStall = fixture.status.backgroundFramesDrawn
+        Thread.sleep(forTimeInterval: 0.25)
+        let duringStall = fixture.status.backgroundFramesDrawn - beforeStall
+        print("Frames drawn while the main thread was blocked for 250 ms: \(duringStall)")
+        check(duringStall >= 5, "a blocked main thread must not stop the background's frames (\(duringStall) in 250 ms)")
         fixture.renderer.update(running: false, configuration: configuration(blue, reactivity: 1.7))
         settle() // an already submitted command may finish after the pause
         let pausedFrames = fixture.status.backgroundFramesDrawn
-        let pausedDraws = fixture.view.drawAttempts
+        let pausedDraws = fixture.renderer.drawAttempts
         settle()
-        check(fixture.status.backgroundFramesDrawn == pausedFrames && fixture.view.drawAttempts == pausedDraws,
+        check(fixture.status.backgroundFramesDrawn == pausedFrames && fixture.renderer.drawAttempts == pausedDraws,
               "running-to-paused must stop repeated GPU submissions")
         check(fixture.status.backgroundFailure == nil, "all GPU commands must complete successfully")
+
+        // Each renderer has a thread; turning the live background off must end it.
+        func threads() -> Int {
+            var list: thread_act_array_t?
+            var count = mach_msg_type_number_t(0)
+            guard task_threads(mach_task_self_, &list, &count) == KERN_SUCCESS, let list else { return 0 }
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: list)), vm_size_t(Int(count) * MemoryLayout<thread_act_t>.stride))
+            return Int(count)
+        }
+        settle()
+        let threadsBefore = threads()
+        for _ in 0..<12 {
+            let short = Fixture(device: device)
+            short.renderer.update(running: true, configuration: configuration(red))
+            pump(for: 0.05)
+            short.renderer.stop()
+            short.window.close()
+        }
+        settle()
+        check(threads() < threadsBefore + 6, "a renderer that is let go must end its thread (\(threadsBefore) threads before twelve of them, \(threads()) after)")
     }
 
     static func pausedSwiftUIResize() {
@@ -911,9 +942,21 @@ struct BackgroundTests {
             getrusage(RUSAGE_SELF, &usage)
             return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
         }
+        /// What the interface's own thread spent: the part that competes with SwiftUI.
+        func mainThreadSeconds() -> Double {
+            var info = thread_basic_info()
+            var count = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
+            let thread = mach_thread_self()
+            defer { mach_port_deallocate(mach_task_self_, thread) }
+            _ = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { thread_info(thread, thread_flavor_t(THREAD_BASIC_INFO), $0, &count) }
+            }
+            return Double(info.user_time.seconds + info.system_time.seconds)
+                + Double(info.user_time.microseconds + info.system_time.microseconds) / 1_000_000
+        }
         for kind in VisualSettings.BackgroundKind.allCases {
             let fixture = Fixture(device: device, bounds: CGRect(x: 0, y: 0, width: 1500, height: 950))
-            fixture.view.framebufferOnly = true
+            fixture.view.metalLayer.framebufferOnly = true
             let configuration = BackgroundConfiguration(kind: kind, colors: Covers.palette(Covers.sunset), beamCount: 8)
             fixture.renderer.update(running: true, configuration: configuration)
             pump(for: 0.5)
@@ -922,13 +965,14 @@ struct BackgroundTests {
             feed.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333))
             feed.setEventHandler { MainActor.assumeIsolated { fixture.status.frame = frames[next % frames.count]; next += 1 } }
             feed.resume()
-            let drawn = fixture.status.backgroundFramesDrawn, cpu = cpuSeconds(), start = Date()
+            let drawn = fixture.status.backgroundFramesDrawn, cpu = cpuSeconds(), main = mainThreadSeconds(), start = Date()
             pump(for: 4)
             let wall = Date().timeIntervalSince(start)
             let rate = Double(fixture.status.backgroundFramesDrawn - drawn) / wall
-            print(String(format: "Renderer CPU while running %@ (%dx%d drawable): %.1f%% of a core at %.0f frames/s (%.0f µs a frame, including this test's 30 Hz frame feed)",
+            print(String(format: "Renderer CPU while running %@ (%dx%d drawable): %.1f%% of a core at %.0f frames/s (%.0f µs a frame, including this test's 30 Hz frame feed); %.1f%% of the main thread",
                          kind.rawValue, Int(fixture.view.drawableSize.width), Int(fixture.view.drawableSize.height),
-                         (cpuSeconds() - cpu) / wall * 100, rate, (cpuSeconds() - cpu) / max(1, rate * wall) * 1_000_000))
+                         (cpuSeconds() - cpu) / wall * 100, rate, (cpuSeconds() - cpu) / max(1, rate * wall) * 1_000_000,
+                         (mainThreadSeconds() - main) / wall * 100))
             feed.cancel()
             fixture.renderer.update(running: false, configuration: configuration)
             fixture.renderer.stop()
@@ -1098,8 +1142,8 @@ struct BackgroundTests {
 
     // MARK: - Helpers
 
-    static func metalView(in root: NSView) -> MTKView? {
-        if let metal = root as? MTKView { return metal }
+    static func metalView(in root: NSView) -> BackgroundMetalView? {
+        if let metal = root as? BackgroundMetalView { return metal }
         return root.subviews.lazy.compactMap { metalView(in: $0) }.first
     }
 
@@ -1128,45 +1172,29 @@ struct BackgroundTests {
         exit(1)
     }
 
-    final class TrackingMetalView: MTKView {
-        var drawAttempts = 0
-        var lastTexture: MTLTexture?
-        override func draw() {
-            drawAttempts += 1
-            lastTexture = currentDrawable?.texture
-            super.draw()
-        }
-    }
-
     @MainActor final class Fixture {
         let window: NSWindow
-        let view: TrackingMetalView
+        let view: BackgroundMetalView
         let status = VisualizationModel()
         let renderer: BackgroundRenderer
         private let copyQueue: MTLCommandQueue
 
         init(device: MTLDevice, bounds: CGRect = CGRect(x: 0, y: 0, width: 512, height: 320)) {
-            view = TrackingMetalView(frame: bounds, device: device)
-            view.isPaused = true
-            view.enableSetNeedsDisplay = false
-            view.autoResizeDrawable = false
-            view.drawableSize = bounds.size
-            view.colorPixelFormat = .bgra8Unorm
+            view = BackgroundMetalView(frame: bounds, device: device)
             // Readback is test-only; Floe's view keeps framebufferOnly enabled.
-            view.framebufferOnly = false
+            view.metalLayer.framebufferOnly = false
             window = NSWindow(contentRect: bounds, styleMask: [.borderless], backing: .buffered, defer: false)
             window.contentView = view
             window.displayIfNeeded()
             do { renderer = try BackgroundRenderer(view: view, status: status) }
             catch { fail("cannot create the production background pipeline: \(error)") }
-            view.delegate = renderer
             guard let queue = device.makeCommandQueue() else { fail("cannot create texture readback queue") }
             copyQueue = queue
         }
 
         func pixel() -> (red: UInt8, green: UInt8, blue: UInt8) {
-            guard let texture = view.lastTexture,
-                  let device = view.device,
+            guard let texture = renderer.lastTexture,
+                  let device = view.metalLayer.device,
                   let buffer = device.makeBuffer(length: 256, options: .storageModeShared),
                   let command = copyQueue.makeCommandBuffer(),
                   let blit = command.makeBlitCommandEncoder() else { fail("cannot read the completed GPU texture") }

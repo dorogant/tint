@@ -6,14 +6,17 @@ import Observation
 ///
 /// Only `isRunning` and `backgroundFailure` are observed. Everything that
 /// changes per frame is ignored by Observation, so no SwiftUI view can come to
-/// depend on it and re-render the window 30 times a second; the views that
-/// draw frames take them through `addFrameListener` and `takeFrame` instead.
+/// depend on it and re-render the window 30 times a second; the visualizer
+/// takes frames through `setFrameListener`, and the live background, which
+/// draws on its own thread, straight from the analysis queue through `feed`.
 @MainActor
 @Observable
 final class VisualizationModel {
     var backgroundFailure: String?
     private(set) var isRunning = false
-    @ObservationIgnored var backgroundFramesDrawn: UInt64 = 0
+    /// The live background's frames, handed over without the main thread.
+    @ObservationIgnored let feed = BackgroundFeed()
+    var backgroundFramesDrawn: UInt64 { feed.framesDrawn }
     @ObservationIgnored private(set) var frame = SpectrumFrame.quiet
     @ObservationIgnored private(set) var framesAnalyzed: UInt64 = 0
     /// A clock in seconds that runs faster when the music is louder; drifting
@@ -21,10 +24,6 @@ final class VisualizationModel {
     @ObservationIgnored private(set) var flow: Double = 0
     @ObservationIgnored private let worker = AnalysisWorker()
     @ObservationIgnored private var generation: UInt64 = 0
-    /// The newest frame the live background hasn't taken yet, carrying the hits
-    /// of any frame it missed.
-    @ObservationIgnored private var unread: SpectrumFrame?
-    @ObservationIgnored private var unreadCount = 0
     @ObservationIgnored private var listeners: [ObjectIdentifier: () -> Void] = [:]
 
     /// Calls `listener` on the main thread as each analysis frame arrives, so a
@@ -34,34 +33,21 @@ final class VisualizationModel {
         listeners[ObjectIdentifier(owner)] = listener
     }
 
-    /// For the live background's display link: each analysis frame once, or nil
-    /// when nothing new has arrived since the last draw.
-    func takeFrame() -> SpectrumFrame? {
-        defer { unread = nil; unreadCount = 0 }
-        return unread
-    }
-
     func setRunning(_ running: Bool) {
         guard isRunning != running else { return }
         generation += 1
         isRunning = running
         if running {
             let generation = generation
-            worker.start { [weak self] frame in
+            worker.start(feed: feed) { [weak self] frame in
                 guard let self, self.isRunning, self.generation == generation else { return }
                 self.frame = frame
-                // A few missed frames are a busy main thread; more means nobody is
-                // drawing (the background is off), so old hits don't pile up.
-                self.unreadCount += 1
-                self.unread = self.unreadCount <= 4 ? self.unread.map { frame.folding(onsetsOf: $0) } ?? frame : frame
                 self.framesAnalyzed += 1
                 self.flow += (0.5 + min(1.5, Double(frame.rms) * 5)) / 30
                 for listener in self.listeners.values { listener() }
             }
         } else {
             worker.stop()
-            unread = nil
-            unreadCount = 0
         }
     }
 }
@@ -77,13 +63,16 @@ private final class AnalysisWorker: @unchecked Sendable {
     private var left = [Float](repeating: 0, count: SpectrumAnalyzer.size)
     private var right = [Float](repeating: 0, count: SpectrumAnalyzer.size)
     private var epoch: UInt64 = 0
+    private var feed: BackgroundFeed?
 
-    func start(deliver: @escaping @MainActor @Sendable (SpectrumFrame) -> Void) {
+    func start(feed: BackgroundFeed, deliver: @escaping @MainActor @Sendable (SpectrumFrame) -> Void) {
         queue.async { [self] in
             guard timer == nil else { return }
             if analyzer == nil { analyzer = SpectrumAnalyzer() }
             guard analyzer != nil else { return }
             analyzer?.reset()
+            feed.clear()
+            self.feed = feed
             floe_set_analysis_enabled(true)
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now(), repeating: .nanoseconds(33_333_333), leeway: .milliseconds(4))
@@ -93,6 +82,7 @@ private final class AnalysisWorker: @unchecked Sendable {
                 let count = Int(floe_read_analysis(&self.left, &self.right, UInt32(SpectrumAnalyzer.size), &epoch))
                 if epoch != self.epoch { analyzer.reset(); self.epoch = epoch }
                 let frame = analyzer.process(left: self.left, right: self.right, count: count)
+                self.feed?.post(frame)
                 DispatchQueue.main.async { deliver(frame) }
             }
             self.timer = timer
@@ -104,6 +94,8 @@ private final class AnalysisWorker: @unchecked Sendable {
         queue.async { [self] in
             timer?.cancel()
             timer = nil
+            // After the last frame this queue will post, so none is left for the next song.
+            feed?.clear()
             floe_set_analysis_enabled(false)
         }
     }

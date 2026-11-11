@@ -49,8 +49,9 @@ File | Holds
 ## Hover
 
 Dragging the pointer down a playlist once held the main thread at 15 ms a frame
-(measured with the benchmark's `sweep` run), and the live background, which draws on
-the main thread, dropped frames with it. What that taught:
+(measured with the benchmark's `sweep` run), and the live background, which then
+drew on the main thread, dropped frames with it. (It has its own thread now; the
+rest of the interface still needs the main thread free.) What that taught:
 
 - **A colour that animates redraws its text on every frame.** `foregroundStyle(hovering ?
   a : b)` under an animation is drawn again by the CPU each frame, and each redraw waits

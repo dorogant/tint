@@ -278,7 +278,7 @@ Analysis runs at about 30 Hz only while an effect is visible and Tint is active;
 it splits the spectrum into bass, low-mids, mids and highs and detects kicks,
 snares, hats and the tempo. The Metal background draws at about one pixel per point
 on the display's refresh (Beams 60 Hz, Fluid 30 Hz), with the haze at quarter
-resolution. Both clocks stop on pause, when effects are disabled, or with app/system
+resolution, on a thread of its own so the interface can't hold up its frames. Both clocks stop on pause, when effects are disabled, or with app/system
 Reduce Motion. Hidden visualizers stop analysis unless the live background needs
 it. Self-tests temporarily bypass the foreground requirement.
 
@@ -324,8 +324,10 @@ track row lights up once the pointer has stayed on it for 30 ms, so dragging the
 pointer down a playlist costs nothing: before, each row crossed took about 4 ms of
 main thread to light and its fade redrew the row's gradient wash and text on the
 CPU every frame (15 ms a frame in `scripts/benchmark-scroll.sh`'s `sweep` run, with
-the live background, which draws on the main thread, dropping frames). Rows now
-fade through opacity and transforms only. At launch the window fades in; on first
+the live background, which then drew on the main thread, dropping frames). Rows now
+fade through opacity and transforms only, and the live background draws on a thread
+of its own: with the main thread blocked for half a second it still shows all 30 of
+its frames (none before). At launch the window fades in; on first
 run the sign-in card stays up through both steps.
 
 The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics; the

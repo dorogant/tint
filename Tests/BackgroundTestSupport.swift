@@ -1,6 +1,7 @@
 import CoreText
 import ImageIO
-import MetalKit
+import Metal
+import simd
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -8,14 +9,10 @@ import UniformTypeIdentifiers
 // The production Metal renderer with synthetic analysis and no auth/audio core.
 @MainActor @Observable final class VisualizationModel {
     var backgroundFailure: String?
-    var backgroundFramesDrawn: UInt64 = 0
-    var frame = SpectrumFrame.quiet { didSet { unread = frame } }
+    @ObservationIgnored let feed = BackgroundFeed()
+    var backgroundFramesDrawn: UInt64 { feed.framesDrawn }
+    var frame = SpectrumFrame.quiet { didSet { feed.post(frame) } }
     var isRunning = false
-    @ObservationIgnored private var unread: SpectrumFrame?
-    func takeFrame() -> SpectrumFrame? {
-        defer { unread = nil }
-        return unread
-    }
 }
 
 enum L10n { static func string(_ text: String) -> String { text } }

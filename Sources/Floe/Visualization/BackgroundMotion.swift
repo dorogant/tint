@@ -1,5 +1,48 @@
 import Foundation
+import Synchronization
 import simd
+
+/// What the analysis hands the live background and what the background reports
+/// back, without either going through the main thread: the background draws on
+/// a thread of its own, and a busy interface must not hold up a frame.
+final class BackgroundFeed: Sendable {
+    private struct Unread {
+        var frame: SpectrumFrame?
+        var count = 0
+    }
+    private let unread = Mutex(Unread())
+    private let drawn = Atomic<UInt64>(0)
+
+    /// From the analysis queue, 30 times a second. The newest frame carries the
+    /// hits of the few before it that nobody drew, so a kick between two draws
+    /// isn't lost; more than a few means nobody is drawing (the background is
+    /// off), and old hits don't pile up.
+    func post(_ frame: SpectrumFrame) {
+        unread.withLock { unread in
+            unread.count += 1
+            if unread.count <= 4, let earlier = unread.frame {
+                unread.frame = frame.folding(onsetsOf: earlier)
+            } else {
+                unread.frame = frame
+            }
+        }
+    }
+
+    /// For the background's display link: each analysis frame once, or nil when
+    /// nothing new has arrived since the last draw.
+    func take() -> SpectrumFrame? {
+        unread.withLock { unread in
+            defer { unread = Unread() }
+            return unread.frame
+        }
+    }
+
+    func clear() { unread.withLock { $0 = Unread() } }
+
+    /// Frames that reached the screen.
+    var framesDrawn: UInt64 { drawn.load(ordering: .relaxed) }
+    func countFrame() { drawn.add(1, ordering: .relaxed) }
+}
 
 /// Everything a live background takes from settings and the cover. Compared on
 /// each SwiftUI update, so an unchanged configuration never redraws.

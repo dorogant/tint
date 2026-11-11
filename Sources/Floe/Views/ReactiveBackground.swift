@@ -237,11 +237,20 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         private let device: MTLDevice
         private var haze: MTLTexture?
         private let smoke = MTLRenderPassDescriptor()
-        /// Each dive's, this frame: two, so the next dive has its own while it
-        /// fades in, and both again at the old size while a step crossfades.
+        /// Bloom's fields by size: the full one, and the half-size one the
+        /// fainter dive of a handover gets; then both again at the size a step
+        /// is fading from. Kept by size, not by dive: the two dives swap sizes
+        /// halfway through a handover, and each is worked out afresh every
+        /// frame, so they simply swap textures (keyed by dive, both sets were
+        /// made again at the swap, and the dive that took over left a full-size
+        /// set, 34 MB at High detail, behind until the next handover).
         private var fields: [BloomField?] = [nil, nil, nil, nil]
-        /// What each dive found per pixel last frame, for tests to read back.
-        var fieldTextures: [MTLTexture?] { fields.map { $0?.texture } }
+        /// The field each dive drew into last frame (the current dive, the
+        /// next, and both at a fading size), for tests to read back.
+        private var drawn: [MTLTexture?] = [nil, nil, nil, nil]
+        var fieldTextures: [MTLTexture?] { drawn }
+        /// How many fields are held now.
+        var fieldCount: Int { fields.count { $0 != nil } }
 
         init(device: MTLDevice) {
             self.device = device
@@ -258,9 +267,11 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             return haze.map { ($0, smoke) }
         }
 
-        /// The field of `width`×`height` kept in `slot`: the dive drawn as the
-        /// uniforms' layer 0 or 1, plus 2 at the size a step is fading from.
-        func bloomField(slot: Int, width: Int, height: Int) -> BloomField? {
+        /// The field of `width`×`height` kept in `slot`: 0 for the full size
+        /// and 1 for half of it, plus 2 at the size a step is fading from.
+        /// `dive` is the uniforms' layer drawn into it this frame.
+        func bloomField(slot: Int, dive: Int, width: Int, height: Int) -> BloomField? {
+            defer { drawn[slot - slot % 2 + dive] = fields[slot]?.texture }
             if let field = fields[slot], field.texture.width == width, field.texture.height == height { return field }
             let made = ([Self.fieldFormat] + Self.softFormats).compactMap { texture($0, width: width, height: height) }
             let half = [Self.statsFormat, Self.statsFormat].compactMap { texture($0, width: (width + 1) / 2, height: (height + 1) / 2) }
@@ -302,6 +313,8 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         private func step(to share: Int) {
             bloomCost *= Self.bloomShares[share] / Self.bloomShares[bloomShare]
             (fadingShare, bloomShare, fadeDrawn, overloaded, underloaded) = (bloomShare, share, 0, 0, 0)
+            // The size being left fades out of the textures it already has.
+            (fields[2], fields[3], fields[0], fields[1]) = (fields[0], fields[1], nil, nil)
         }
 
         /// For the frame being drawn: how much of it the old size still draws
@@ -311,17 +324,24 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
             fadeDrawn += 1
             guard fadeDrawn <= Self.fadeFrames else {
                 fadingShare = nil
-                fields[2] = nil
-                fields[3] = nil
+                release(slot: 2)
+                release(slot: 3)
                 return nil
             }
             let x = Float(fadeDrawn) / Float(Self.fadeFrames + 1)
             return 1 - x * x * (3 - 2 * x)
         }
 
-        /// Lets Bloom's fields go while another kind draws.
+        /// Lets a field go that this frame didn't draw.
+        func release(slot: Int) {
+            if fields[slot] != nil { fields[slot] = nil }
+            if drawn[slot] != nil { drawn[slot] = nil }
+        }
+
+        /// Lets Bloom's fields go: while another kind draws, and once a still
+        /// frame is on screen (every frame works them out afresh).
         func releaseFields() {
-            if fields.contains(where: { $0 != nil }) { fields = [nil, nil, nil, nil] }
+            for slot in fields.indices { release(slot: slot) }
         }
     }
 
@@ -392,16 +412,23 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         }
         let rig = animator.bloom
         let budget = Double(targets.fieldBudget ?? bloomFieldBudget(animator.configuration.bloomQuality))
-        func dive(_ layer: Int, faint: Bool, share: Int, slot: Int) -> Targets.BloomField? {
+        func dive(_ layer: Int, faint: Bool, share: Int, slots: Int) -> Targets.BloomField? {
             let full = bloomFieldSize(width: Int(width), height: Int(height), budget: Int(budget * Targets.bloomShares[share]))
             let size = faint ? (width: max(1, full.width / 2), height: max(1, full.height / 2)) : full
-            guard let target = targets.bloomField(slot: slot, width: size.width, height: size.height) else { return nil }
+            guard let target = targets.bloomField(slot: slots + (faint ? 1 : 0), dive: layer,
+                                                  width: size.width, height: size.height) else { return nil }
             return encodeDive(command, target: target, layer: layer, uniforms: &uniforms, pipelines: pipelines) ? target : nil
         }
         let handing = rig.next != nil
         func dives(share: Int, slots: Int) -> (Targets.BloomField, Targets.BloomField)? {
-            guard let current = dive(0, faint: handing && rig.blend > 0.5, share: share, slot: slots) else { return nil }
-            return (current, handing ? dive(1, faint: rig.blend <= 0.5, share: share, slot: slots + 1) ?? current : current)
+            // The fainter of a handover's two dives gets the half-size field.
+            let currentFaint = handing && rig.blend > 0.5
+            guard let current = dive(0, faint: currentFaint, share: share, slots: slots) else { return nil }
+            guard handing else {
+                targets.release(slot: slots + 1)
+                return (current, current)
+            }
+            return (current, dive(1, faint: !currentFaint, share: share, slots: slots) ?? current)
         }
         guard let (current, next) = dives(share: targets.bloomShare, slots: 0) else { return false }
         let (fadingCurrent, fadingNext) = fade != nil ? targets.fadingShare.flatMap { dives(share: $0, slots: 2) } ?? (current, next) : (current, next)
@@ -462,7 +489,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         guard running else {
             stop()
             if animator.settle() { changed = true }
-            if changed || needsStaticDraw { redrawIfPaused() }
+            if changed || needsStaticDraw { redrawIfPaused() } else { releaseIdleFields() }
             return
         }
         if !isTicking {
@@ -538,6 +565,18 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
         if inFlight == 0 { view?.draw() }
     }
 
+    /// Bloom's fields held now, for tests.
+    var bloomFieldCount: Int { targets.fieldCount }
+
+    /// A still frame is on screen and nothing is being drawn: Bloom's fields
+    /// (34 MB at High detail) aren't needed until the next frame, which works
+    /// them out afresh anyway. A command buffer keeps the textures it uses, so
+    /// this never takes one from under the GPU.
+    private func releaseIdleFields() {
+        guard !isTicking, inFlight == 0 else { return }
+        targets.releaseFields()
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
@@ -565,7 +604,7 @@ final class BackgroundRenderer: NSObject, MTKViewDelegate {
                     if self.animator.configuration.kind == .bloom { self.targets.recordBloomFrame(milliseconds: milliseconds) }
                     // A color/resize update can arrive while the last GPU frame
                     // is in flight. Draw its replacement once, without a timer.
-                    if self.needsStaticDraw { self.redrawIfPaused() }
+                    if self.needsStaticDraw { self.redrawIfPaused() } else { self.releaseIdleFields() }
                 }
                 else { self.status?.backgroundFailure = L10n.string("Live background stopped unexpectedly."); self.stop() }
             }

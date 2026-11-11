@@ -150,6 +150,23 @@ struct BackgroundTests {
             fixture.status.backgroundFramesDrawn == beforeKind + 1
         }
 
+        // Bloom works its fields out afresh every frame, so a still frame keeps
+        // none once it's on screen, and a paused one gives them back.
+        let beforeBloom = fixture.status.backgroundFramesDrawn
+        fixture.renderer.update(running: false, configuration: configuration(blue, reactivity: 1.7, kind: .bloom))
+        waitUntil("a paused Bloom frame must draw") { fixture.status.backgroundFramesDrawn == beforeBloom + 1 }
+        settle()
+        check(fixture.renderer.bloomFieldCount == 0, "a still Bloom frame must let its fields go once it's drawn")
+        fixture.renderer.update(running: true, configuration: configuration(blue, reactivity: 1.7, kind: .bloom))
+        waitUntil("a running Bloom must submit repeated frames") { fixture.status.backgroundFramesDrawn >= beforeBloom + 5 }
+        check(fixture.renderer.bloomFieldCount == 1, "a running Bloom between handovers must hold one field (\(fixture.renderer.bloomFieldCount))")
+        fixture.renderer.update(running: false, configuration: configuration(blue, reactivity: 1.7, kind: .bloom))
+        settle()
+        check(fixture.renderer.bloomFieldCount == 0, "pausing Bloom must let its fields go")
+        let stillFrames = fixture.status.backgroundFramesDrawn
+        settle()
+        check(fixture.status.backgroundFramesDrawn == stillFrames, "letting the fields go must not draw again")
+
         let beforeMotion = fixture.status.backgroundFramesDrawn
         fixture.status.frame = SpectrumFrame(bands: [Float](repeating: 0.5, count: 48),
                                              levels: [Float](repeating: 0.5, count: 48), rms: 0.2)

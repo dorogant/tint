@@ -228,12 +228,27 @@ extension BackgroundTests {
         var music = diving(0, at: BloomRig.handoffStart(0) - 0.4 / BloomRig.destinations[0].depth, fast)
         var steps: [Float] = [], blending: [Int] = [], takeover: Int?
         var previous: RenderedFrame?
+        // The fields are kept by size, so the dives swap them at the midpoint
+        // and no new ones are made there or left behind at the takeover.
+        var fieldsMade = Set<ObjectIdentifier>(), mostFields = 0, sizesFollowBlend = true
         playBloom(&music, BloomSong.held(pitch: 7, tonality: 1, loudness: 0.6, seconds: 18), renderer: renderer) { animator, frame, _ in
             if let previous { steps.append(frame.difference(from: previous)) }
             if animator.bloom.next != nil { blending.append(steps.count - 1) }
             if takeover == nil, animator.bloom.destination != 0 { takeover = steps.count - 1 }
             previous = frame
+            let drawn = renderer.targets.fieldTextures
+            for texture in drawn.compactMap({ $0 }) { fieldsMade.insert(ObjectIdentifier(texture)) }
+            mostFields = max(mostFields, renderer.targets.fieldCount)
+            if animator.bloom.next != nil, let current = drawn[0], let next = drawn[1] {
+                // The fainter dive is the half-size one.
+                if (current.width < next.width) != (animator.bloom.blend > 0.5) { sizesFollowBlend = false }
+            }
         }
+        check(sizesFollowBlend, "through a handover the fainter dive must be the one drawn at half size")
+        check(mostFields == 2 && fieldsMade.count == 2,
+              "a handover must use two fields, made once (\(mostFields) held at most, \(fieldsMade.count) made)")
+        check(renderer.targets.fieldCount == 1 && renderer.targets.fieldTextures[1] == nil,
+              "after the takeover only the full-size field may stay (\(renderer.targets.fieldCount))")
         let typical = steps.prefix(60).sorted()[30]
         let worstBlend = blending.map { steps[$0] }.max() ?? 0
         let atTakeover = takeover.map { steps[$0] } ?? 0

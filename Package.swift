@@ -21,6 +21,8 @@ let package = Package(
             name: "Floe",
             dependencies: ["CFloeCore"],
             path: "Sources/Floe",
+            // Guides for coding agents, not resources.
+            exclude: ["Views/AGENTS.md", "Visualization/AGENTS.md"],
             linkerSettings: [
                 .unsafeFlags(["-L", rustLibDir]),
                 // Needed by librespot's native-tls / networking / sysinfo deps.

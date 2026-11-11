@@ -539,6 +539,10 @@ of one per song). The audio graph is built on the first play rather than at laun
 
 ## Layout
 
+`AGENTS.md` here and in `Sources/Floe/Views`, `Sources/Floe/Visualization`, `core` and
+`Tests` are short maps for coding agents: where things are, the rules that cost time
+when broken, and which script checks which change.
+
 ```
 core/                 Rust staticlib: librespot session + Spirc + player, C ABI (src/lib.rs)
 Sources/CFloeCore/    C header + modulemap for the Rust library

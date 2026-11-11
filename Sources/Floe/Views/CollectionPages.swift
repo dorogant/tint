@@ -374,6 +374,7 @@ struct SongsView: View {
     /// Rows take their place in the list as their identity; songs added at the
     /// top later count down from here instead.
     @ViewState private var addedID = 0
+    @ReducedMotion private var still
     @Environment(\.interfaceScale) private var scale
 
     private var contextURI: String? {
@@ -431,11 +432,14 @@ struct SongsView: View {
         guard kept.count != entries.count || !fresh.isEmpty else { return }
         // Later pages moved by as many places as the list grew or shrank.
         if let offset = nextOffset { nextOffset = max(0, offset + fresh.count - (entries.count - kept.count)) }
-        entries = fresh.map { saved in
-            addedID -= 1
-            return TrackEntry(id: addedID, track: saved.track, addedAt: saved.addedAt)
-        } + kept
-        revision += 1
+        // The row leaves and the rows below close up, rather than jumping.
+        withAnimation(still ? FloeMotion.fade : FloeMotion.glide) {
+            entries = fresh.map { saved in
+                addedID -= 1
+                return TrackEntry(id: addedID, track: saved.track, addedAt: saved.addedAt)
+            } + kept
+            revision += 1
+        }
         library.markLiked(fresh.map(\.track.uri))
     }
 

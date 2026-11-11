@@ -30,7 +30,7 @@ struct NowPlayingView: View {
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
                             CoverStage(size: coverSize, ring: ring) {
-                                if circular { VisualizerView(circular: true).opacity(ringShown ? 1 : 0) }
+                                if circular { VisualizerView(circular: true).opacity(ringShown ? 1 : 0).transition(.opacity) }
                             }
                             // A new song's details rise into place as the old ones lift away.
                             ZStack {
@@ -57,10 +57,17 @@ struct NowPlayingView: View {
                         }
                     }
                     .frame(maxHeight: .infinity)
-                    if normal { VisualizerView().frame(height: scale(84)).padding(.horizontal, scale(24)) }
+                    if normal {
+                        VisualizerView().frame(height: scale(84)).padding(.horizontal, scale(24))
+                            .transition(still ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                    }
                 }
                 .padding(scale.margin)
                 .animation(still ? nil : FloeMotion.enter, value: showLyrics)
+                // Turning the visualizer on or off, or changing its style, eases
+                // the strip, the ring and the cover's new size into place.
+                .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.showVisualizer)
+                .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.style)
             }
             .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(2 * scale.margin) }
             .onAppear {

@@ -39,6 +39,8 @@ struct SidebarView: View {
             // Clear of the toolbar's edge, as the page's scroll view is (see MainView).
             .padding(.top, 1)
             .floeGlide(value: navigator.section)
+            // A pin makes room for its row instead of the list jumping.
+            .floeGlide(value: library.pinnedIDs)
             Rectangle().fill(Theme.panelStroke).frame(height: 1)
             AccountRow()
                 .padding(.horizontal, metrics.inset + metrics.padding)

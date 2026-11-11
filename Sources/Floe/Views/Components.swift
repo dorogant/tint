@@ -33,6 +33,7 @@ struct Backdrop: View {
                     let cover = appearance.coverURL == nil ? palette : appearance.palette
                     ReactiveBackground(colors: cover.colors, neutral: cover.isNeutral)
                         .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
                 RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
                                center: .topLeading, startRadius: 0, endRadius: 700)
@@ -40,6 +41,8 @@ struct Backdrop: View {
             }
             .floeAnimation(value: appearance.backgroundURL, duration: 0.45)
             .floeAnimation(value: palette.rgb, duration: 0.45)
+            // The light show fades in and out like every other change to the backdrop.
+            .floeAnimation(value: visuals.liveBackground, duration: 0.45)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)

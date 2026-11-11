@@ -506,6 +506,10 @@ been benchmarked. For a diagnostic comparison with upstream buffering, launch wi
 
 Artwork sizes now share one in-flight HTTP download per URL; decoded variants
 remain in the existing bounded cache, and raw bytes are not kept after processing.
+The playing song's 640 px covers (1.6 MB each) have a small cache of their own, four
+at most, so a long listening session no longer fills the 48 MB browsing cache with
+them; and once no Tint window has been visible for 30 s the browsing covers are let
+go (views on screen keep theirs, the rest decode again from disk when scrolled to).
 Control Center retains a pending artwork task across metadata updates and shows
 the 720 px cover Now Playing already decoded. Covers decode in parallel, off the
 cache's actor. Synthetic tests verify concurrent sizes, memory hits, failed-request

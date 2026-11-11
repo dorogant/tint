@@ -79,6 +79,27 @@ struct ArtworkTests {
         _ = await row.value
         precondition(cover?.width == 720 && ArtworkHTTP.requestCount() == 1,
                      "a disappearing row must not cancel the shared cover download")
-        print("PASS: shared artwork downloads, decoded cache, HTTP retry and cancelled callers")
+
+        // Playing covers (1.6 MB each) keep to a few in a cache of their own, so a
+        // long session can't fill the browsing cache with them; trimming drops the
+        // browsing covers and keeps the playing ones.
+        ArtworkHTTP.reset(data as Data)
+        let songs = (0..<6).map { URL(string: "https://artwork.invalid/song-\($0).png")! }
+        for song in songs {
+            _ = await cache.image(for: song, pixels: 720)
+            _ = await cache.image(for: song, pixels: 96)
+        }
+        let coversKept = songs.filter { cache.cached($0, pixels: 720) != nil }.count
+        precondition(coversKept <= 4 && cache.cached(songs[5], pixels: 720) != nil,
+                     "only the last few playing covers stay decoded (\(coversKept) kept)")
+        precondition(songs.allSatisfy { cache.cached($0, pixels: 96) != nil },
+                     "playing covers must not push thumbnails out")
+        cache.trim()
+        precondition(songs.allSatisfy { cache.cached($0, pixels: 96) == nil }
+                     && cache.cached(songs[5], pixels: 720) != nil,
+                     "a trim drops the browsing covers and keeps the playing one")
+        let again = await cache.image(for: songs[0], pixels: 96)
+        precondition(again?.width == 96, "a trimmed cover must load again")
+        print("PASS: shared artwork downloads, decoded cache, HTTP retry, cancelled callers, cover tier and trim")
     }
 }

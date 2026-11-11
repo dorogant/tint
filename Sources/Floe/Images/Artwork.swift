@@ -9,6 +9,12 @@ actor ArtworkCache {
     /// Unsafe only to the compiler: NSCache is documented thread-safe but not marked
     /// Sendable. Synchronous lookups from views skip the actor through it.
     private nonisolated(unsafe) let memory = NSCache<NSString, CGImage>()
+    /// Now Playing's covers, apart from the browsing budget: each is 1.6 MB
+    /// (640 px), and one arrives with every song, so in `memory` thirty songs
+    /// of listening filled all of it with covers only Previous would show again.
+    private nonisolated(unsafe) let covers = NSCache<NSString, CGImage>()
+    /// From this size up an image is a playing cover, not a row or a card.
+    private static let coverPixels = 600
     private var inFlight: [String: Task<CGImage?, Never>] = [:]
     private var downloads: [URL: Task<Data?, Never>] = [:]
     private let session: URLSession
@@ -17,6 +23,8 @@ actor ArtworkCache {
         // Decoded bitmaps; the disk cache refills it. Room for a long shelf of
         // Standard-size cards, so scrolling back doesn't re-decode and re-fade covers.
         memory.totalCostLimit = 48 * 1024 * 1024
+        // The playing song's, the one before and the one after, and one to spare.
+        covers.countLimit = 4
         if let session {
             self.session = session
             return
@@ -30,11 +38,22 @@ actor ArtworkCache {
     }
 
     nonisolated func cached(_ url: URL, pixels: Int) -> CGImage? {
-        memory.object(forKey: Self.key(url, pixels))
+        store(pixels).object(forKey: Self.key(url, pixels))
+    }
+
+    private nonisolated func store(_ pixels: Int) -> NSCache<NSString, CGImage> {
+        pixels >= Self.coverPixels ? covers : memory
+    }
+
+    /// Drops the browsing covers; the few playing ones stay. For when nobody is
+    /// looking: views on screen keep the images they show, and anything
+    /// scrolled back to decodes again from the disk cache (a page in ~10 ms).
+    nonisolated func trim() {
+        memory.removeAllObjects()
     }
 
     func image(for url: URL, pixels: Int) async -> CGImage? {
-        let key = Self.key(url, pixels)
+        let key = Self.key(url, pixels), memory = store(pixels)
         if let hit = memory.object(forKey: key) { return hit }
         if let running = inFlight[key as String] { return await running.value }
         let task = Task<CGImage?, Never> {

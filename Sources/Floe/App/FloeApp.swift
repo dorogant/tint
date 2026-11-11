@@ -71,6 +71,12 @@ struct FloeApp: App {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
                 .task(id: player.displayTrack.map(LyricsRequest.init)) { await lyrics.load(player.displayTrack) }
+                // Playing with no window in sight is how Tint spends most of its time:
+                // after half a minute of that, the covers kept for browsing (up to 48 MB) go.
+                .task(id: presence.isVisible) {
+                    guard !presence.isVisible, (try? await Task.sleep(for: .seconds(30))) != nil else { return }
+                    ArtworkCache.shared.trim()
+                }
                 .task(id: "\(player.displayTrack?.uri ?? "")#\(autoPresetActive)") {
                     await autoPreset.update(player.displayTrack.map(AutoPresetController.Song.init), enabled: autoPresetActive)
                 }

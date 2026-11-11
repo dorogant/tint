@@ -19,7 +19,7 @@ You touched | Run | Time
 `Views/CrawlingCover.swift`, `ProgressTrack.swift`, `VisualizerView.swift` | `scripts/test-layers.sh` | seconds
 auto preset, genres, `SoundClassifier` | `scripts/test-autopreset.sh` | seconds
 `Views/LyricsView.swift` | `scripts/test-lyrics-follow.sh`, `scripts/benchmark-lyrics.sh` | a few minutes
-`Views/ReactiveBackground.swift`, `Visualization/Background*`, `BeamRig`, `ReactiveShader` | `scripts/test-background.sh` | a minute or two
+`Views/ReactiveBackground.swift`, `Visualization/Background*`, `VisualizationModel`'s feed, `BeamRig`, `ReactiveShader` | `scripts/test-background.sh` | a minute or two
 page layout, guides, sidebar, toolbar | `scripts/test-layout.sh` (PNGs in /tmp/tint-layout) | a minute
 track rows, covers in lists, `LibraryModel` liked state | `scripts/benchmark-scroll.sh` | ~3 minutes
 `core/src/*.rs` | `cd core && cargo test --release` | seconds once built
@@ -27,6 +27,13 @@ anything | `swift build -c release --product Floe` | ~50 s
 
 `.github/workflows/build.yml` runs the build and the fast suites; the rendering ones
 are advisory there because CI GPUs differ.
+
+`scripts/test-lyrics-follow.sh` measures where lines are frame by frame, so one pass
+proves little: after a change to anything a lyric row draws, run it five times, with
+other apps busy for some of them. Don't build or run another suite beside it: a
+compile running next to it fails its frame-gap checks ("list moves at most … pt
+between frames") whatever the code. A change that makes it fail now and then has
+broken it (it happened on 2026-11-11: `Sources/Floe/Views/AGENTS.md`, "Hover").
 
 ## Benchmarks and what their numbers mean
 

@@ -58,6 +58,12 @@ rest of the interface still needs the main thread free.) What that taught:
   on the window server. An `.opacity` over an opaque colour only fades the layer. Dim
   and brighten text with `secondaryText(lit:)` (`TrackList.swift`) or `.foregroundStyle(.white).opacity(…)`.
   Measured in isolation: 341 redraws for the colour, 0 for the opacity, over the same eight hovers.
+- **The lyric lines are the exception**: `LyricRow` still dims through a translucent
+  colour. Dimming it through `.opacity` saved about 1 ms a frame during a line change,
+  but `scripts/test-lyrics-follow.sh` then failed two runs in three on a busy machine
+  (a list grabbed mid-glide stepped back 2–4 pt) where it passed seven of seven with
+  the colour. Why wasn't found; the glide's clock (`ListLayout.glides`) assumes when its
+  first frame shows. Don't retry it without running that test five times under load.
 - **No gradient-filled shapes in anything that animates in a list.** `shape.fill(LinearGradient(…))`
   was drawn on the CPU into a row-sized bitmap on every frame of the fade (27% of the
   main thread). A `LinearGradient` view under `.clipShape(shape)` and flat-colour strokes

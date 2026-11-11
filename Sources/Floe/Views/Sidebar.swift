@@ -184,11 +184,20 @@ private struct PlaylistRow: View {
         let metrics = SidebarMetrics(scale)
         Button { navigator.select(.playlist(playlist.id)) } label: {
             HStack(spacing: metrics.spacing) {
+                // The shadow sits behind the cover, only while it shows: rows at
+                // rest carry no shadow layer.
                 ArtworkView(images: playlist.images, size: metrics.column, cornerRadius: metrics.coverRadius)
-                    .shadow(color: .black.opacity(hovering || selected ? 0.35 : 0), radius: 4, y: 2)
+                    .background {
+                        if hovering || selected {
+                            RoundedRectangle(cornerRadius: metrics.coverRadius).fill(Color(white: 0.11))
+                                .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                                .transition(.opacity)
+                        }
+                    }
                 Text(playlist.name)
                     .floeFont(size: 12.5, weight: selected ? .semibold : .regular)
-                    .foregroundStyle(playing ? palette.highlight : (selected || hovering ? .white : Theme.secondary))
+                    .foregroundStyle(playing ? palette.highlight : .white)
+                    .opacity(playing || selected || hovering ? 1 : 0.62)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if playing {

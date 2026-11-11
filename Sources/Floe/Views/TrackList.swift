@@ -125,9 +125,17 @@ private struct TrackRow: View {
             leading(isCurrent: isCurrent, playable: playable).frame(width: scale(28))
             if showCover {
                 // The cover lifts a touch toward the pointer, as cards do; the
-                // shadow only deepens, so Reduce Motion keeps it.
+                // shadow only fades in, so Reduce Motion keeps it. It sits behind
+                // the cover and only while hovered: a row at rest has no shadow
+                // layer (there was one per row on screen, with a clear colour).
                 ArtworkView(images: track.album?.images, size: scale(40), cornerRadius: scale(6))
-                    .shadow(color: .black.opacity(hovering ? 0.45 : 0), radius: hovering ? 6 : 0, y: 2)
+                    .background {
+                        if hovering {
+                            RoundedRectangle(cornerRadius: scale(6)).fill(Color(white: 0.11))
+                                .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
+                                .transition(.opacity)
+                        }
+                    }
                     .scaleEffect(hovering && !still ? 1.03 : 1)
             }
             VStack(alignment: .leading, spacing: scale(3)) {

@@ -420,7 +420,8 @@ catalogue metadata and lyrics retain their original language.
 Streaming quality (96/160/320 kbps), normalization and gapless playback take effect
 on the next playback session. **Apply and reconnect** preserves the current song,
 position and whether it was paused, and reloads Tint's context. Manually queued
-songs may be reset. Session loss stops the UI clock and retries with backoff;
+songs may be reset. Session loss stops the UI clock and retries with backoff (a saved login that
+Spotify refuses isn't retried; the banner asks to sign in again);
 **Reconnect now** and **Sign in again** provide recovery. Unavailable tracks show a
 human-readable, dismissible error with **Next song**. Expired/revoked library tokens
 lead back to library authorization; stale refreshes cannot reinstall signed-out

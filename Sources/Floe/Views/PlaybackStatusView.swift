@@ -19,7 +19,11 @@ struct PlaybackStatusView: View {
         if player.hasConnected && !player.isConnected {
             HStack(spacing: scale(12)) {
                 Image(systemName: "wifi.exclamationmark")
-                Text("Playback connection lost. Tint will try to reconnect.").font(.callout)
+                if case .failed = player.session {
+                    Text("Spotify didn't accept the saved login. Sign in again to keep playing.").font(.callout)
+                } else {
+                    Text("Playback connection lost. Tint will try to reconnect.").font(.callout)
+                }
                 Spacer()
                 Button("Reconnect now") { player.reconnectPlayback() }
                 Button("Sign in again") { player.logIn() }.disabled(player.session == .authorizing)

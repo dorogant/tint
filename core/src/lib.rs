@@ -180,8 +180,15 @@ impl Core {
                 Ok(pair) => pair,
                 Err(e) => {
                     warn!("login failed: {e}");
+                    // Spotify turning the credentials down, as opposed to the
+                    // network failing: trying the same ones again can't help.
+                    let refused = matches!(
+                        e.kind,
+                        librespot_core::error::ErrorKind::PermissionDenied
+                            | librespot_core::error::ErrorKind::Unauthenticated
+                    );
                     if self.state().generation == generation {
-                        self.emit(json!({ "type": "login_failed", "message": e.to_string() }));
+                        self.emit(json!({ "type": "login_failed", "message": e.to_string(), "refused": refused }));
                     }
                     session.shutdown();
                     tokio::task::spawn_blocking(move || drop(player));

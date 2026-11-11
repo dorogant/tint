@@ -355,9 +355,20 @@ final class PlayerModel {
         case let .credentials(blob):
             storedCredentials = blob
             Task.detached { CredentialStore.shared.write(blob, account: .playbackSession) }
-        case let .loginFailed(message):
+        case let .loginFailed(message, refused):
             log.error("Login failed: \(message, privacy: .public)")
-            if hasConnected || reconnectAttempt > 0 { session = .connecting; scheduleReconnect() } else { session = .failed(message) }
+            if refused {
+                // A saved login Spotify no longer accepts was tried again every
+                // 30 s for as long as Tint ran. Signing in again is the way out.
+                reconnectTask?.cancel()
+                reconnectAttempt = 0
+                session = .failed(message)
+            } else if hasConnected || reconnectAttempt > 0 {
+                session = .connecting
+                scheduleReconnect()
+            } else {
+                session = .failed(message)
+            }
         case .disconnected:
             rememberPlayback()
             log.notice("Session dropped; reconnecting")

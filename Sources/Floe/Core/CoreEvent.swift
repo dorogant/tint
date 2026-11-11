@@ -48,7 +48,8 @@ enum CoreEvent: Sendable {
     case connected(username: String)
     /// Reusable librespot credentials (JSON) to keep in `CredentialStore`.
     case credentials(Data)
-    case loginFailed(String)
+    /// `refused`: Spotify turned the credentials down, so the same ones won't work later either.
+    case loginFailed(String, refused: Bool)
     case disconnected
     case loggedOut
     case track(TrackInfo)
@@ -85,7 +86,7 @@ enum CoreEvent: Sendable {
             else { return nil }
             self = .credentials(blob)
         case "login_failed":
-            self = .loginFailed(object["message"] as? String ?? "")
+            self = .loginFailed(object["message"] as? String ?? "", refused: object["refused"] as? Bool ?? false)
         case "disconnected":
             self = .disconnected
         case "logged_out":

@@ -326,7 +326,20 @@ import Foundation
         precondition(AudioOutput.latest?.isRunning == true && model.isPlaying && !model.isLoading,
                      "A slow load must start the audio engine again when playback begins")
         print("PASS: an unanswered load gives the audio engine back until playback starts")
-        print("PASS: 27 production playback transport regressions")
+
+        // A saved login Spotify turns down must not be tried again on a timer.
+        guard case let .loginFailed(wireMessage, wireRefused)? = CoreEvent(json: Data(#"{"type":"login_failed","message":"bad","refused":true}"#.utf8)),
+              case let .loginFailed(_, legacyRefused)? = CoreEvent(json: Data(#"{"type":"login_failed","message":"bad"}"#.utf8)) else {
+            preconditionFailure("Login failures must decode, with and without the refused flag")
+        }
+        precondition(wireMessage == "bad" && wireRefused && !legacyRefused)
+        model = playing(first, at: 800)
+        core.deliver(.disconnected)
+        core.deliver(.loginFailed("refused by Spotify", refused: true))
+        precondition(model.session == .failed("refused by Spotify") && model.hasConnected,
+                     "A refused saved login must stop the reconnect loop and ask for a new sign-in")
+        print("PASS: a refused saved login stops reconnecting")
+        print("PASS: 28 production playback transport regressions")
     }
 
     @MainActor private static func playing(_ track: TrackInfo, at position: Double) -> PlayerModel {

@@ -91,6 +91,7 @@
 "Playback" = "Playback";
 "Playback changes apply after reconnecting or restarting Tint." = "Playback changes apply after reconnecting or restarting Tint.";
 "Playback connection lost. Tint will try to reconnect." = "Playback connection lost. Tint will try to reconnect.";
+"Spotify didn't accept the saved login. Sign in again to keep playing." = "Spotify didn't accept the saved login. Sign in again to keep playing.";
 "Playback engine: librespot" = "Playback engine: librespot";
 "Playback position" = "Playback position";
 "Playlist" = "Playlist";

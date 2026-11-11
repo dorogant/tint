@@ -91,6 +91,7 @@
 "Playback" = "Відтворення";
 "Playback changes apply after reconnecting or restarting Tint." = "Зміни відтворення застосовуються після повторного підключення або перезапуску Tint.";
 "Playback connection lost. Tint will try to reconnect." = "З'єднання для відтворення втрачено. Tint спробує підключитися знову.";
+"Spotify didn't accept the saved login. Sign in again to keep playing." = "Spotify не прийняв збережений вхід. Увійдіть знову, щоб слухати далі.";
 "Playback engine: librespot" = "Рушій відтворення: librespot";
 "Playback position" = "Позиція відтворення";
 "Playlist" = "Плейлист";

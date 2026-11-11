@@ -117,6 +117,19 @@ struct ScrollBenchmark {
         await run("hover", seconds: seconds, speed: speed, hover: true)
         // Back up three times as fast, as a flick does.
         await run("flick", seconds: seconds / 3, speed: -3 * speed)
+        // The list at rest and the pointer dragged quickly up and down it, so rows
+        // light up and fade one after another.
+        if only?.contains("sweep") ?? true {
+            await settle(window, seconds: 1)
+            let litBefore = ScrollProbe.lit
+            let result = await sweep(host: host, meter: meter, seconds: seconds, speed: 1.5 * speed)
+            print(result.line("sweep"))
+            // Offscreen, SwiftUI runs its animations as fast as the main thread
+            // allows, so "busy" is always 100% here: the cost of one pass is the measure.
+            print(String(format: "  sweep: %d rows crossed, %d lit; %.2f ms of main thread per window layout", result.hoverChanges,
+                         ScrollProbe.lit - litBefore, result.frames.reduce(0, +) / Double(max(result.layouts, 1)) * 1_000))
+            if let redraws = result.redraws { print(redraws) }
+        }
         // A second playlist, cold, with liked-state checks answered as rows appear.
         library.benchmarkConnect()
         await run("cold-liked", playlist: ScrollFixture.playlistIDs[1], seconds: seconds, speed: speed)
@@ -204,6 +217,52 @@ struct ScrollBenchmark {
         result.likeBodies = after.likes - probe.likes
         result.hoverChanges = after.hovers - probe.hovers
         result.moves = after.moves - probe.moves
+        return result
+    }
+
+    /// Runs the stand-in pointer up and down the list's rows at `speed` points
+    /// per second while the list rests.
+    static func sweep(host: CountingHostingView<some View>, meter: MainThreadMeter, seconds: Double, speed: Double) async -> Result {
+        var result = Result()
+        let probe = ScrollProbe.snapshot()
+        let layouts = host.layouts, cpuBefore = cpu()
+        let started = CACurrentMediaTime()
+        var lastTick = started, lastIdle = meter.idle
+        // The rows' span in the window: from under the list's header to above the mini player.
+        let (top, bottom) = (size.height * 0.42, size.height * 0.84)
+        let redraws = ProcessInfo.processInfo.environment["FLOE_SCROLL_REDRAWS"] == "1" ? Redraws() : nil
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { timer in
+                let finished = MainActor.assumeIsolated {
+                    let now = CACurrentMediaTime()
+                    let idle = meter.idle
+                    result.frames.append(max(0, (now - lastTick) - (idle - lastIdle)))
+                    lastTick = now
+                    lastIdle = idle
+                    // A triangle wave between the two edges.
+                    let travelled = speed * (now - started), span = bottom - top
+                    let phase = travelled.truncatingRemainder(dividingBy: 2 * span)
+                    ScrollProbe.sweep(to: CGPoint(x: size.width * 0.45, y: top + (phase < span ? phase : 2 * span - phase)))
+                    if let redraws { redraws.sample(host.window?.contentView?.superview?.layer) }
+                    return now - started >= seconds
+                }
+                if finished {
+                    timer.invalidate()
+                    done.resume()
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        ScrollProbe.sweep(to: nil)
+        result.redraws = redraws?.summary
+        result.frames.removeFirst()
+        result.elapsed = CACurrentMediaTime() - started
+        result.cpu = cpu() - cpuBefore
+        result.layouts = host.layouts - layouts
+        let after = ScrollProbe.snapshot()
+        result.rowBodies = after.rows - probe.rows
+        result.likeBodies = after.likes - probe.likes
+        result.hoverChanges = after.hovers - probe.hovers
         return result
     }
 
@@ -360,7 +419,25 @@ final class MainThreadMeter: @unchecked Sendable {
 /// one resting over the list: a row under it takes the hover state.
 enum ScrollProbe {
     nonisolated(unsafe) static var rows = 0, likes = 0, hovers = 0, moves = 0
+    /// Rows that took the hover state (the pointer stayed on them long enough).
+    nonisolated(unsafe) static var lit = 0
     nonisolated(unsafe) static var pointer: CGPoint?
+    /// Each row on screen: where it is in the window, and its hover handler.
+    nonisolated(unsafe) static var rowFrames: [Int: (frame: CGRect, hover: (Bool) -> Void)] = [:]
+    nonisolated(unsafe) static var swept: Int?
+
+    /// Moves the stand-in pointer over a resting list: the row it leaves and
+    /// the row it enters hear it, as `onHover` would tell them.
+    static func sweep(to point: CGPoint?) {
+        let under = point.flatMap { point in rowFrames.first { $0.value.frame.contains(point) }?.key }
+        guard under != swept else { return }
+        if let swept, let row = rowFrames[swept] { row.hover(false) }
+        if let under, let row = rowFrames[under] {
+            row.hover(true)
+            hovers += 1
+        }
+        swept = under
+    }
     static func snapshot() -> (rows: Int, likes: Int, hovers: Int, moves: Int) { (rows, likes, hovers, moves) }
 }
 

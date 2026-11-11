@@ -2,7 +2,7 @@
 # Scrolls the real playlist page through 600 synthetic tracks (paged, with
 # generated covers) in an offscreen window and reports main-thread time per
 # frame, CPU, window layouts and row rebuilds. No login, network, audio or
-# visible window. FLOE_SCROLL_ONLY=cold,warm,hover,flick,cold-liked picks
+# visible window. FLOE_SCROLL_ONLY=cold,warm,hover,flick,sweep,cold-liked picks
 # runs; FLOE_SCROLL_SECONDS and FLOE_SCROLL_SPEED (pt/s) set their length and pace;
 # FLOE_SCROLL_PLAYING=1 runs the mini player's clock; FLOE_SCROLL_VIEWS=1 counts AppKit
 # views and layer shadows after each run, FLOE_SCROLL_BACKING=1 lists the layers

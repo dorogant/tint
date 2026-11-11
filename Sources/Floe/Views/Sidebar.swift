@@ -141,13 +141,17 @@ private struct NavRow: View {
         let metrics = SidebarMetrics(scale)
         Button { navigator.select(route) } label: {
             HStack(spacing: metrics.spacing) {
+                // Dimmed by opacity, not by colour: a colour animating under the
+                // pointer draws the text again on every frame, an opacity fades its layer.
                 Image(systemName: systemImage)
                     .floeFont(size: 13, weight: .medium)
-                    .foregroundStyle(selected ? palette.highlight : (hovering ? .white : Theme.secondary))
+                    .foregroundStyle(selected ? palette.highlight : .white)
+                    .opacity(selected || hovering ? 1 : 0.62)
                     .frame(width: metrics.column)
                 Text(title)
                     .floeFont(size: 13, weight: selected ? .semibold : .medium)
-                    .foregroundStyle(selected || hovering ? .white : Theme.secondary)
+                    .foregroundStyle(.white)
+                    .opacity(selected || hovering ? 1 : 0.62)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, metrics.padding)

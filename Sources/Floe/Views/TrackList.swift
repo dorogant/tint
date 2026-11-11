@@ -160,7 +160,7 @@ private struct TrackRow: View {
             LikeButton(uri: track.uri, revealed: hovering)
             Text(Format.duration(ms: Double(track.durationMs)))
                 .monospacedDigit().floeFont(size: 12)
-                .foregroundStyle(hovering ? litSecondary : Theme.secondary)
+                .secondaryText(lit: hovering)
                 .frame(width: scale(44), alignment: .trailing)
             Group {
                 // Built only while hovered: a menu per visible row costs layout.
@@ -190,6 +190,10 @@ private struct TrackRow: View {
         // makes AppKit re-walk the window's regions.
         .focusEffectDisabled(!NSApplication.shared.isFullKeyboardAccessEnabled)
         #if SCROLL_BENCHMARK
+        // Where the row is, for the benchmark's pointer sweeping over a resting list.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+            ScrollProbe.rowFrames[entry.id] = ($0, pointer)
+        }
         // The benchmark's stand-in for a pointer resting over the list.
         .onGeometryChange(for: Bool.self) { proxy in
             ScrollProbe.pointer.map { proxy.frame(in: .global).contains($0) } ?? false
@@ -207,37 +211,58 @@ private struct TrackRow: View {
         .contextMenu { TrackMenuItems(track: track) }
         .onAppear { library.requestLikedState(track.uri) }
         // A row scrolled away under a resting pointer may never hear the exit.
-        .onDisappear { pointer(false) }
+        .onDisappear {
+            pointer(false)
+            #if SCROLL_BENCHMARK
+            ScrollProbe.rowFrames[entry.id] = nil
+            #endif
+        }
     }
 
     /// Rows passing under a resting pointer mid-scroll stay dark; the one it
-    /// rests on lights up once the list stops. Leaving is never held back.
+    /// rests on lights up once the list stops. A row the pointer only crosses
+    /// stays dark too (`ListMotion.dwell`). Leaving is never held back.
     private func pointer(_ inside: Bool) {
-        if inside, let motion, motion.isMoving {
-            motion.hold(entry.id) { hovering = true }
+        if inside, let motion {
+            if motion.isMoving {
+                motion.hold(entry.id, light)
+            } else if !hovering {
+                motion.enter(entry.id, light)
+            }
             return
         }
         motion?.release(entry.id)
         if hovering != inside { hovering = inside }
     }
 
+    private func light() {
+        hovering = true
+        #if SCROLL_BENCHMARK
+        ScrollProbe.lit += 1
+        #endif
+    }
+
     /// The playing row keeps its selection; any other row fills in a soft wash,
     /// tinted lightly toward the cover, that settles in from just under full size.
-    /// A top-lit hairline acknowledges the pointer on either.
+    /// A hairline acknowledges the pointer on either.
+    ///
+    /// Flat colours and a gradient view under a clip, never a gradient-filled
+    /// shape: SwiftUI draws those on the CPU into a bitmap the size of the row,
+    /// again on every frame the wash fades. Dragging the pointer down the list
+    /// spent 15 ms a frame on that and on text changing colour, with the main
+    /// thread (and the live background that draws on it) at a standstill.
     private func highlight(isCurrent: Bool) -> some View {
         let shape = RoundedRectangle(cornerRadius: scale(TrackRow.radius), style: .continuous)
         let tint = palette.accent.mix(with: .white, by: 0.55)
         return ZStack {
             shape.fill(Theme.selection).opacity(isCurrent ? 1 : 0)
-            ZStack {
-                shape.fill(LinearGradient(colors: [tint.opacity(0.11), Theme.hover],
-                                          startPoint: .leading, endPoint: .trailing))
-                    .opacity(isCurrent ? 0 : 1)
-                shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.09), .white.opacity(0.02)],
-                                                  startPoint: .top, endPoint: .bottom))
-            }
-            .opacity(hovering ? 1 : 0)
-            .scaleEffect(hovering || still ? 1 : 0.985)
+            LinearGradient(colors: [tint.opacity(0.11), Theme.hover], startPoint: .leading, endPoint: .trailing)
+                .clipShape(shape)
+                .opacity(hovering && !isCurrent ? 1 : 0)
+                .scaleEffect(hovering || still ? 1 : 0.985)
+            shape.strokeBorder(.white.opacity(0.05))
+                .opacity(hovering ? 1 : 0)
+                .scaleEffect(hovering || still ? 1 : 0.985)
         }
     }
 
@@ -248,8 +273,10 @@ private struct TrackRow: View {
         let loading = isCurrent && player.isLoading
         let glyph = hovering && playable && !loading
         return ZStack {
+            // One opacity over opaque text: the number's dimness (40% unless it's
+            // the playing row's) and its fade under the pointer.
             resting(isCurrent: isCurrent, loading: loading)
-                .opacity(glyph ? 0 : 1)
+                .opacity(glyph ? 0 : (isCurrent ? 1 : 0.4))
                 .scaleEffect(glyph && !still ? 0.75 : 1)
                 .blur(radius: glyph && !still ? 2 : 0)
                 .accessibilityHidden(glyph)
@@ -282,13 +309,19 @@ private struct TrackRow: View {
         } else {
             Text("\(number)")
                 .monospacedDigit().floeFont(size: 12)
-                .foregroundStyle(isCurrent ? palette.highlight : Theme.tertiary)
+                .foregroundStyle(isCurrent ? palette.highlight : .white)
         }
     }
 }
 
-/// Secondary text brightens toward white while its row is hovered.
-private let litSecondary = Color.white.opacity(0.82)
+extension View {
+    /// Secondary text, brighter while its row is hovered. White text behind an
+    /// opacity, not a colour that changes: a colour animating re-draws the text
+    /// on every frame, an opacity only fades its layer.
+    func secondaryText(lit: Bool = false, bright: Bool = false) -> some View {
+        foregroundStyle(.white).opacity(bright ? 1 : (lit ? 0.82 : 0.62))
+    }
+}
 
 /// "Artist, Artist" where each name opens the artist page.
 struct ArtistLinks: View {
@@ -303,7 +336,7 @@ struct ArtistLinks: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(artists.enumerated()), id: \.offset) { index, artist in
-                if index > 0 { Text(", ").foregroundStyle(lit ? litSecondary : Theme.secondary) }
+                if index > 0 { Text(", ").secondaryText(lit: lit) }
                 LinkText(artist.name, lit: lit) {
                     if let id = artist.id { navigator.push(.artist(id)) }
                 }
@@ -331,7 +364,7 @@ struct LinkText: View {
     var body: some View {
         Text(text)
             .underline(hovering)
-            .foregroundStyle(hovering ? .white : (lit ? litSecondary : Theme.secondary))
+            .secondaryText(lit: lit, bright: hovering)
             .lineLimit(1)
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)

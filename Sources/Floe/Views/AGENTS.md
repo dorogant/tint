@@ -46,6 +46,31 @@ File | Holds
   redraws, and read models as narrowly as possible: `library.isLiked(uri)` observes
   one track's flag, not the library.
 
+## Hover
+
+Dragging the pointer down a playlist once held the main thread at 15 ms a frame
+(measured with the benchmark's `sweep` run), and the live background, which draws on
+the main thread, dropped frames with it. What that taught:
+
+- **A colour that animates redraws its text on every frame.** `foregroundStyle(hovering ?
+  a : b)` under an animation is drawn again by the CPU each frame, and each redraw waits
+  on the window server. An `.opacity` over an opaque colour only fades the layer. Dim
+  and brighten text with `secondaryText(lit:)` (`TrackList.swift`) or `.foregroundStyle(.white).opacity(…)`.
+  Measured in isolation: 341 redraws for the colour, 0 for the opacity, over the same eight hovers.
+- **No gradient-filled shapes in anything that animates in a list.** `shape.fill(LinearGradient(…))`
+  was drawn on the CPU into a row-sized bitmap on every frame of the fade (27% of the
+  main thread). A `LinearGradient` view under `.clipShape(shape)` and flat-colour strokes
+  are layers the render server draws.
+- Scale, offset, blur and shadow changes were measured too: none of them redraws anything.
+- **A row lights up only after the pointer has stayed on it for 30 ms** (`ListMotion.dwell`,
+  through `ListMotion.enter`). Each change of a row's hover state costs about 4 ms
+  (its body, its "…" menu, the lazy stack measuring it again), whatever is animated.
+  Rows only crossed do no work; a row the pointer rests on answers two frames later,
+  inside the 160 ms its highlight takes to fade in. Leaving is never delayed.
+- Check a change to a row with `FLOE_SCROLL_ONLY=cold,sweep FLOE_SCROLL_REDRAWS=1
+  scripts/benchmark-scroll.sh`: it prints the rows crossed and lit, the main-thread time
+  per window layout, and which layers were drawn again (there should be none per frame).
+
 ## Motion
 
 Use the tokens in `Motion.swift`; don't type a new duration at a call site.
@@ -64,10 +89,12 @@ Token | Value | For
 Rules:
 
 - Ask first whether it should animate. Keyboard-driven actions (Space, ⌘←/→, volume
-  keys, ⌘F) and anything seen hundreds of times a day get no animation. Hover gets
+  keys, ⌘F, ⌘[) and anything seen hundreds of times a day get no animation. A page
+  reached by Back or from the keyboard sets `Navigator.arrival = .instant`: no
+  crossfade, and its sections skip their `reveal`. Hover gets
   the fast tokens only. Rare moments (first run, empty states) may have more.
-- Animate transform (`scaleEffect`, `offset`) and `opacity`. Animating a shadow's
-  radius, a blur's radius or a frame redraws or re-lays out every frame.
+- Animate transform (`scaleEffect`, `offset`) and `opacity`. Never a text's colour or a
+  gradient-filled shape (see Hover above), and not a frame where an offset will do.
 - Never enter from `scale(0)`; 0.95–0.98 with opacity.
 - Every moving animation needs its Reduce Motion form: read `@ReducedMotion private var
   still` and keep the opacity/colour change while dropping scale and offset. The

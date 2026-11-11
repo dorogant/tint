@@ -318,6 +318,16 @@ in at their edges as they scroll, artwork lifts on hover, and the playing indica
 in the sidebar and track lists animate. Volume and the mini player's progress are
 soft capsules that thicken under the pointer.
 
+Going back (the toolbar's Back or **⌘[**) and searching from the keyboard show the
+page at once: no crossfade, and its sections don't make their entrance again. A
+track row lights up once the pointer has stayed on it for 30 ms, so dragging the
+pointer down a playlist costs nothing: before, each row crossed took about 4 ms of
+main thread to light and its fade redrew the row's gradient wash and text on the
+CPU every frame (15 ms a frame in `scripts/benchmark-scroll.sh`'s `sweep` run, with
+the live background, which draws on the main thread, dropping frames). Rows now
+fade through opacity and transforms only. At launch the window fades in; on first
+run the sign-in card stays up through both steps.
+
 The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics; the
 cover and visualizer slide to the centre and grow.
 

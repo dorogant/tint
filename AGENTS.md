@@ -98,14 +98,17 @@ interface text | both `Support/Localizations/*.lproj/Localizable.strings` (and `
    Window snapshots can't draw glass and that helper swaps in a flat tint for them.
 5. **Sizes in views are Compact points** and pass through `@Environment(\.interfaceScale)`:
    `scale(12)`, `scale.gutter`, `.floeFont(size:)`. A bare literal ignores the interface size.
-6. **Memory is a feature** (target: under 150 MB while playing). Images are decoded at
+6. **A colour that animates redraws its text; a gradient-filled shape redraws its
+   bitmap.** Both on the CPU, every frame of the animation. Fade with `.opacity` over
+   an opaque colour and use gradient views under a clip (`Sources/Floe/Views/AGENTS.md`, "Hover").
+7. **Memory is a feature** (target: under 150 MB while playing). Images are decoded at
    display size only; a gradient-filled SwiftUI shape gets a bitmap as large as its
    bounds; one tall `Text` gets one tall layer. `FLOE_SCROLL_BACKING=1
    scripts/benchmark-scroll.sh` lists the layers holding the most pixels.
-7. **Measure before and after** a performance change with the script that covers it
+8. **Measure before and after** a performance change with the script that covers it
    (Tests/AGENTS.md), and put the numbers in the comment or commit. Guesses have been
    wrong here in both directions.
-8. Spotify's Development Mode limits what the Web API answers (README, "Web API
+9. Spotify's Development Mode limits what the Web API answers (README, "Web API
    limits"). Check there before building on an endpoint.
 
 ## Conventions

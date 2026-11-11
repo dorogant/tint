@@ -1,6 +1,6 @@
 # 008 — First run: one sign-in card that carries through, and a soft arrival
 
-- **Status**: TODO
+- **Status**: DONE (2026-11-11; the feel checks are still the owner's to do)
 - **Commit**: 95ea037
 - **Severity**: MEDIUM
 - **Category**: Missed opportunities (preventing a jarring change; first-run delight)

@@ -33,7 +33,8 @@ are advisory there because CI GPUs differ.
 - `scripts/benchmark-scroll.sh` scrolls a 600-track playlist in the real window.
   Read "main thread busy", the p95 frame time and "frames over 8.3 ms". Baseline on
   an M3 Air (2026-11-11): cold p50 1.8 ms / p95 4.9 ms; warm p50 1.7 ms / p95 9.7 ms.
-  `FLOE_SCROLL_ONLY=cold,warm,hover,flick,cold-liked` picks runs;
+  `FLOE_SCROLL_ONLY=cold,warm,hover,flick,sweep,cold-liked` picks runs (`sweep` drags a
+  stand-in pointer up and down the resting list, at 1.5 × `FLOE_SCROLL_SPEED`);
   `FLOE_SCROLL_VIEWS=1` counts AppKit views and layer shadows;
   `FLOE_SCROLL_BACKING=1` lists the layers holding the most pixels (memory);
   `FLOE_SCROLL_REDRAWS=1` lists layers redrawn during the run. To profile, build the
@@ -41,6 +42,10 @@ are advisory there because CI GPUs differ.
 - `scripts/benchmark-core.sh`: cover decoding, per-song cover work, core-event
   decoding and the Rust audio path.
 - `scripts/benchmark-lyrics.sh`: CPU, window layouts and clock wakeups of the lyric view.
+- Offscreen, SwiftUI runs an animation as fast as the main thread allows instead of
+  once per display refresh, so while anything animates "main thread busy" reads near
+  100% and the layouts per second are in the thousands. Compare the time per window
+  layout (the sweep prints it; otherwise busy time ÷ layouts), not the busy share.
 - Timings move by 10–20% between runs. Compare a before and an after taken in the
   same sitting, with nothing else building.
 

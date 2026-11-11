@@ -1,6 +1,6 @@
 # 007 — Row covers: no shadow at rest, and fade it in instead of growing it
 
-- **Status**: TODO
+- **Status**: DONE (2026-11-11; the feel checks are still the owner's to do)
 - **Commit**: 95ea037
 - **Severity**: LOW
 - **Category**: Performance

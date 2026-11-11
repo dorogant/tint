@@ -1,6 +1,6 @@
 # 009 — Bridge four pops: live background, visualizer, pinned playlists, unliked rows
 
-- **Status**: TODO
+- **Status**: DONE (2026-11-11; the feel checks are still the owner's to do)
 - **Commit**: 95ea037
 - **Severity**: LOW
 - **Category**: Missed opportunities (preventing a jarring change)

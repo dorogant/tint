@@ -1,6 +1,6 @@
 # 006 — Back and keyboard navigation land at once
 
-- **Status**: TODO
+- **Status**: DONE (2026-11-11; the feel checks are still the owner's to do)
 - **Commit**: 95ea037
 - **Severity**: MEDIUM
 - **Category**: Purpose & frequency

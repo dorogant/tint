@@ -44,9 +44,13 @@ struct PlayRequest: Sendable {
 }
 
 @MainActor final class AudioOutput {
+    /// The newest model's, so a test can ask whether its engine is running.
+    private(set) static var latest: AudioOutput?
+    private(set) var isRunning = false
     var volume: Float = 0
-    func start() {}
-    func pause() {}
+    init() { Self.latest = self }
+    func start() { isRunning = true }
+    func pause() { isRunning = false }
 }
 
 @MainActor final class NowPlayingController {

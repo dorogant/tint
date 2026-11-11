@@ -288,7 +288,45 @@ import Foundation
         precondition(core.loads.isEmpty,
                      "An expired local Previous must not restart a later unrelated stop")
         print("PASS: expired Previous does not restart a later stop")
-        print("PASS: 24 production playback transport regressions")
+
+        // The audio engine renders (and keeps the Mac awake) from `start()` until
+        // an engine event pauses it. A Play that no event follows must not leave
+        // it running for good.
+        PlayerModel.unansweredPlay = .milliseconds(150)
+        PlayerModel.unansweredLoad = .milliseconds(150)
+        core.reset()
+        model = PlayerModel()
+        model.resume()
+        precondition(core.commands.isEmpty && AudioOutput.latest?.isRunning == false,
+                     "Play without a session must not start the audio engine")
+        print("PASS: Play without a session leaves the audio engine stopped")
+
+        model = playing(first, at: 800)
+        core.deliver(.paused(positionMs: 900))
+        model.resume()
+        precondition(core.commands == [.play] && AudioOutput.latest?.isRunning == true)
+        try await Task.sleep(for: .milliseconds(400))
+        precondition(AudioOutput.latest?.isRunning == false && !model.isPlaying,
+                     "A Play the engine ignores must give the audio engine back")
+        model.resume()
+        core.deliver(.playing(positionMs: 900))
+        try await Task.sleep(for: .milliseconds(400))
+        precondition(AudioOutput.latest?.isRunning == true && model.isPlaying,
+                     "An answered Play must keep the audio engine running")
+        print("PASS: an unanswered Play gives the audio engine back; an answered one keeps it")
+
+        model = playing(first, at: 800)
+        core.deliver(.paused(positionMs: 900))
+        model.play(PlayRequest(tracks: [preceding.uri]))
+        precondition(model.isLoading && AudioOutput.latest?.isRunning == true)
+        try await Task.sleep(for: .milliseconds(400))
+        precondition(AudioOutput.latest?.isRunning == false,
+                     "A load the engine never answers must give the audio engine back")
+        core.deliver(.playing(positionMs: 0))
+        precondition(AudioOutput.latest?.isRunning == true && model.isPlaying && !model.isLoading,
+                     "A slow load must start the audio engine again when playback begins")
+        print("PASS: an unanswered load gives the audio engine back until playback starts")
+        print("PASS: 27 production playback transport regressions")
     }
 
     @MainActor private static func playing(_ track: TrackInfo, at position: Double) -> PlayerModel {

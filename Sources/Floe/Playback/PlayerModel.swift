@@ -174,7 +174,12 @@ final class PlayerModel {
 
     func resume() {
         previousRestart = nil
+        // Without a session the core drops the command and no event follows.
+        guard isConnected else { return }
         audio.start()
+        // Spirc can ignore a Play too (nothing to take over): give the engine
+        // back unless playback starts. `setAnchor(_:playing: true)` cancels this.
+        scheduleIdle(after: Self.unansweredPlay)
         if isActiveDevice && track != nil {
             core.play()
         } else {
@@ -291,8 +296,10 @@ final class PlayerModel {
     private func beginLoading(at ms: Double) {
         isLoading = true
         setAnchor(ms, playing: false)
-        idleTask?.cancel()
         audio.start()
+        // A load the engine never answers must not leave the audio engine
+        // rendering silence for good. A slow one only restarts it on `playing`.
+        scheduleIdle(after: Self.unansweredLoad)
     }
 
     private func setAnchor(_ ms: Double, playing: Bool) {
@@ -308,12 +315,18 @@ final class PlayerModel {
         nowPlaying.update()
     }
 
+    /// How long the audio engine waits for playback after a Play or a load
+    /// before it stops again. A running engine wakes its render thread about
+    /// 90 times a second and keeps the Mac from idle sleep, playing or not.
+    static var unansweredPlay = Duration.seconds(10)
+    static var unansweredLoad = Duration.seconds(30)
+
     /// Stops the audio engine shortly after playback stops (≈0% CPU when idle);
     /// the delay lets buffered audio play out and avoids churn on quick toggles.
-    private func scheduleIdle() {
+    private func scheduleIdle(after delay: Duration = .seconds(2)) {
         idleTask?.cancel()
         idleTask = Task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled, !isPlaying else { return }
             audio.pause()
         }

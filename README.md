@@ -4,6 +4,13 @@ A native Spotify client for macOS. It covers everyday listening (your library, s
 playback, lyrics, Spotify Connect) without the embedded browser the official app is
 built on, and uses about a sixth of its memory.
 
+![Tint playing a song: the visualizer around the cover, synced lyrics beside it](docs/screenshots/now-playing.jpg)
+
+<p>
+  <img src="docs/screenshots/live-background.jpg" width="49%" alt="The live background, lit in the colours of the cover">
+  <img src="docs/screenshots/visual-options.jpg" width="49%" alt="The options for the visualizer and the live background">
+</p>
+
 Built with SwiftUI, Core Animation and Metal on top of
 [librespot](https://github.com/librespot-org/librespot). Needs Spotify Premium.
 

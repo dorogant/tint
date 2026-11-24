@@ -6,10 +6,9 @@ built on, and uses about a sixth of its memory.
 
 ![Tint playing a song: the visualizer around the cover, synced lyrics beside it](docs/screenshots/now-playing.jpg)
 
-<p>
-  <img src="docs/screenshots/live-background.jpg" width="49%" alt="The live background, lit in the colours of the cover">
-  <img src="docs/screenshots/visual-options.jpg" width="49%" alt="The options for the visualizer and the live background">
-</p>
+https://github.com/user-attachments/assets/d1be912e-72f9-47e6-bd91-8671f65c4938
+
+https://github.com/user-attachments/assets/71409bcd-6803-4178-b1d2-96befeec9820
 
 Built with SwiftUI, Core Animation and Metal on top of
 [librespot](https://github.com/librespot-org/librespot). Needs Spotify Premium.
@@ -23,6 +22,11 @@ Built with SwiftUI, Core Animation and Metal on top of
 - Visualizers and live backgrounds that take their colours from the album cover
 - Media keys and the Control Center player
 - English and Ukrainian
+
+<p>
+  <img src="docs/screenshots/live-background.jpg" width="49%" alt="The live background, lit in the colours of the cover">
+  <img src="docs/screenshots/visual-options.jpg" width="49%" alt="The options for the visualizer and the live background">
+</p>
 
 ## Compared with the official app
 

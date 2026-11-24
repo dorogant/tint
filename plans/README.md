@@ -25,7 +25,7 @@ Plans 006–009 come from the second audit and the opportunity sweep (2026-11-11
 
 None of them has had its feel check: that needs the running app.
 
-**Found while doing them (2026-11-11):** dragging the pointer down a playlist held the main thread at about 15 ms a frame. See "Hover" in `Sources/Floe/Views/AGENTS.md` for what caused it and the rules that came out of it (opacity over opaque text instead of a colour that animates; a gradient view under a clip instead of a gradient-filled shape; rows light only after the pointer stays 30 ms).
+**Found while doing them (2026-11-11):** dragging the pointer down a playlist held the main thread at about 15 ms a frame. The rules that came out of it: opacity over opaque text instead of a colour that animates; a gradient view under a clip instead of a gradient-filled shape; rows light only after the pointer stays 30 ms.
 
 **Considered and left alone (second audit):**
 - Sorting or filtering a track list moves thousands of rows the user is reading: no animation.

@@ -35,8 +35,7 @@ actor LyricsService {
     private var nextRequest = Date.distantPast
 
     /// LRCLIB asks clients to name themselves and link a homepage.
-    /// PLACEHOLDER: set the real repository URL before publishing.
-    static let homepage = "https://github.com/<owner>/tint"
+    static let homepage = "https://github.com/dorogant/tint"
     static let userAgent = "Tint v0.1.0 (\(homepage))"
 
     init(session: URLSession? = nil) {

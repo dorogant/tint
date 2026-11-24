@@ -118,7 +118,8 @@ interface text | both `Support/Localizations/*.lproj/Localizable.strings` (and `
 - Value types for data; `@MainActor @Observable final class` for models; `actor` only
   where state is truly shared off the main actor (`ArtworkCache`, `LyricsService`).
 - Commit messages are one plain sentence in the imperative ("Stop the playing symbols
-  in the Library while it's hidden"). There is no git remote; never push or add one
-  without asking.
-- Work on a branch off `integrate-redesign`; parallel agents work in git worktrees
-  (symlink `core/target/release` from the main checkout so they build).
+  in the Library while it's hidden"). The remote `origin` is github.com/dorogant/tint;
+  never push without asking.
+- Work on a branch off `integrate-redesign`, which GitHub has as `main`; parallel
+  agents work in git worktrees (symlink `core/target/release` from the main checkout
+  so they build).

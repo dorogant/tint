@@ -6,7 +6,7 @@
 # (FLOE_DEVELOPER_ID at build time) and FLOE_NOTARY_PROFILE naming a keychain
 # profile saved with `xcrun notarytool store-credentials`, the zip is sent to
 # Apple, the ticket is stapled to the app and the zip is packed again. Without
-# them the zip is un-notarized: see README, Sharing a build, for how to open it.
+# them the zip is un-notarized: see docs/REFERENCE.md, Sharing a build, for how to open it.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/Tint.app"

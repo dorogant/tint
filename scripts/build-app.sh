@@ -3,7 +3,7 @@
 #   1. Rust core      cargo build --release        -> core/target/release/libfloe_core.a
 #   2. Swift app      swift build -c release       -> .build/release/Floe
 #   3. Bundle         Info.plist, icon, executable -> build/Tint.app
-#   4. Sign           Developer ID, a local certificate, or ad-hoc (see README: Signing)
+#   4. Sign           Developer ID, a local certificate, or ad-hoc (see docs/REFERENCE.md: Signing)
 #
 # Usage: scripts/build-app.sh [--debug] [--zip] [--install] [--open]
 #   --debug   Swift debug build (the Rust core is always release)
@@ -122,7 +122,7 @@ PLIST="$APP/Contents/Info.plist"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$PLIST"
 if [[ -n "${FLOE_BUNDLE_ID:-}" ]]; then
-    # Another bundle ID starts with fresh settings; saved logins are shared (see README).
+    # Another bundle ID starts with fresh settings; saved logins are shared (see docs/REFERENCE.md).
     plutil -replace CFBundleIdentifier -string "$FLOE_BUNDLE_ID" "$PLIST"
 fi
 if [[ -n "$CLIENT_ID" ]]; then
@@ -145,7 +145,7 @@ else
     if [[ -n "$SIGN_IDENTITY" ]]; then
         step "Sign (ad-hoc: no \"$SIGN_IDENTITY\" certificate in the keychain)"
     else
-        step "Sign (ad-hoc: no certificate configured, see README: Signing)"
+        step "Sign (ad-hoc: no certificate configured, see docs/REFERENCE.md: Signing)"
     fi
     codesign --force --sign - --timestamp=none "$APP"
 fi

@@ -1,8 +1,11 @@
 # Tint — guide for agents
 
 Tint is a native macOS Spotify client: SwiftUI + Core Animation + Metal on top of
-librespot (Rust). README.md is the full reference (design, measurements, every
-test); this file is the short map. Read the nested guide before working in a folder:
+librespot (Rust). docs/REFERENCE.md is the full reference (design, measurements, every
+test); this file is the short map. README.md is what a visitor to the repository reads
+first: what Tint is, screenshots, how it compares and how to install it. Keep it that
+short, and keep personal details out of it. Read the nested guide before working in a
+folder:
 
 - [Sources/Floe/Views/AGENTS.md](Sources/Floe/Views/AGENTS.md) — UI, motion tokens, what may animate
 - [Sources/Floe/Visualization/AGENTS.md](Sources/Floe/Visualization/AGENTS.md) — analysis, visualizer, Metal backgrounds
@@ -64,6 +67,7 @@ Sources/Floe/
 Support/                 Info.plist, en/uk strings
 Tests/, scripts/         offline test and benchmark executables and the scripts that build them
 plans/                   motion plans from the improve-animations audits (README.md there has the status)
+docs/                    REFERENCE.md (the full reference), screenshots for the README
 ```
 
 To change… | start in
@@ -108,8 +112,8 @@ interface text | both `Support/Localizations/*.lproj/Localizable.strings` (and `
 8. **Measure before and after** a performance change with the script that covers it
    (Tests/AGENTS.md), and put the numbers in the comment or commit. Guesses have been
    wrong here in both directions.
-9. Spotify's Development Mode limits what the Web API answers (README, "Web API
-   limits"). Check there before building on an endpoint.
+9. Spotify's Development Mode limits what the Web API answers (docs/REFERENCE.md, "Web
+   API limits"). Check there before building on an endpoint.
 
 ## Conventions
 

@@ -80,5 +80,9 @@ broken it (it happened on 2026-11-11: `Sources/Floe/Views/AGENTS.md`, "Hover").
 ## Live checks (owner only)
 
 `build/Tint.app/Contents/MacOS/Tint -FloeSelfTest YES …` plays music and drives the
-real app; README lists the modes (`-FloeSelfTestPerf YES` measures CPU and footprint
+real app; docs/REFERENCE.md lists the modes (`-FloeSelfTestPerf YES` measures CPU and footprint
 per visual scenario). Don't run these unasked.
+
+`scripts/measure-app.sh <app> [seconds]` measures any running app from outside (CPU
+and memory footprint over all of its processes). It produced the comparison with the
+official client in the README, and plays nothing itself.

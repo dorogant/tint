@@ -12,7 +12,7 @@ Package.resolved
 .env
 credentials.json
 
-# Per-machine build settings, see README: signing certificate (name or SHA-1) and
+# Per-machine build settings, see docs/REFERENCE.md: signing certificate (name or SHA-1) and
 # the Spotify Web API client ID built into the app
 /.signing-identity
 /.spotify-client-id

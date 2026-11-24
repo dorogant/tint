@@ -504,7 +504,8 @@ enum SelfTest {
         // `-FloeSelfTestPerfOnly <name>` holds one scenario for 30 s, e.g. for `sample`.
         let only = defaults.string(forKey: "FloeSelfTestPerfOnly")
         var profiles: [(raw: [Float], adaptive: [Float])] = []
-        for (index, track) in (only == nil ? [first, second] : []).enumerated() {
+        let songs: [Track] = only == nil ? [first, second] : []
+        for (index, track) in songs.enumerated() {
             if index > 0 { ok = check(ok, await play(track), "second song starts") }
             navigator.surface = .nowPlaying
             visuals.liveBackground = false; visuals.showVisualizer = true

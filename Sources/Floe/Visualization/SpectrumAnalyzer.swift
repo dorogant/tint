@@ -290,6 +290,12 @@ struct OnsetFollower {
     private var last: Float = 0
     private var since = 99
 
+    /// Written out because Swift before 6.4 makes the synthesized initializer private
+    /// when any stored property is.
+    init(refractory: Int) {
+        self.refractory = refractory
+    }
+
     /// The hit's strength (0 when none) and how far the flux stands above the
     /// floor, which feeds the tempo whether or not it counts as a hit.
     mutating func update(flux: Float, present: Bool) -> (onset: Float, novelty: Float) {

@@ -19,9 +19,17 @@ Built with SwiftUI, Core Animation and Metal on top of
 - A Spotify Connect device: control it from your phone, see the queue, move playback
   between devices
 - Synced lyrics that follow the song; click a line to jump to it
-- Visualizers and live backgrounds that take their colours from the album cover
+- Visualizers and live backgrounds (Fluid and Beams) that take their colours from the album cover
+- Local encrypted audio cache (1 GiB) so replayed songs and seeks start from disk without waiting on the network
 - Media keys and the Control Center player
 - English and Ukrainian
+
+## What's new in 0.3.0
+
+- **Faster playback starts & encrypted audio cache**: songs played to completion stay cached (encrypted, up to 1 GiB) for instant replays and seeks, and uncached tracks request the audio key alongside the file.
+- **Smoother animations & lower GPU/CPU**: Metal live backgrounds use 13–25% less GPU time, synced lyrics layouts are ~41% faster with hover dwell and zero per-frame text redraws, and returning from Now Playing to Library is ~3.5× faster without resizing or rebuilding the underlying views.
+- **True idle gating & bounded memory**: clocks, playhead glides, looping symbols and lyrics timers pause whenever the window is hidden, minimized or covered; artwork decoding skips cancelled scroll requests and long-session caches are bounded.
+- **Refreshed icon**: Tint's scalloped cover shape holding bands of indigo sound on a pale body.
 
 <p>
   <img src="docs/screenshots/live-background.jpg" width="49%" alt="The live background, lit in the colours of the cover">

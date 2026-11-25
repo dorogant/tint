@@ -12,7 +12,8 @@ Appearance, Account and About. English and Ukrainian interface text is bundled; 
 language in Appearance. Queue and Devices have dedicated toolbar panels and an
 opt-in Spotify permission flow. Playback quality, normalization and gapless
 settings now reach librespot, and reconnecting preserves the song, position and
-pause state. Tint's icon is its scalloped cover shape as a glass disc holding a wash of colour.
+pause state. Tint's icon is its scalloped cover shape holding bands of indigo sound,
+on a pale body.
 A design pass adds a standard macOS toolbar and Settings window, Liquid Glass
 controls, smooth transitions, redesigned lyrics and reference-style visualizers
 (see [Design and motion](#design-and-motion)).
@@ -536,7 +537,8 @@ of one per song). The audio graph is built on the first play rather than at laun
 ## Layout
 
 ```
-core/                 Rust staticlib: librespot session + Spirc + player, C ABI (src/lib.rs)
+core/                 Rust staticlib: librespot session + Spirc + player, C ABI (src/lib.rs);
+                      vendor/ is librespot's player crate with Tint's one change
 Sources/CFloeCore/    C header + modulemap for the Rust library
 Sources/Floe/         SwiftUI app
   App/                app entry, self-test, snapshot hook
@@ -568,6 +570,13 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
   using vDSP, and publishes 48 log-spaced bands, 96 waveform points and RMS. A full
   analysis ring drops visual samples without disrupting playback. Seek, track,
   pause and enable changes reset the analysis generation; PCM never goes to disk.
+- **Audio cache.** A song that has downloaded completely (in practice, one played to
+  the end) is kept, still encrypted as it arrived, in
+  `~/Library/Caches/com.antonchurchyn.floe/Audio`. The cache holds 1 GiB, about a
+  hundred songs at 320 kbps; past that librespot deletes the ones played longest ago.
+  The next play reads the file from disk: no CDN lookup, no download, and seeking never
+  waits for the network. Spotify is still asked for the track and its key, so this is
+  not offline playback. Deleting the folder is safe.
 - **Playing context.** Tint runs librespot's Spirc, so it is a Spotify Connect device
   ("Tint"): playlists, albums, artists and Liked Songs play as *contexts*, and Spotify's
   own logic handles queue, shuffle, repeat and autoplay, exactly as in the official apps.
@@ -603,6 +612,32 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
   tokens (429, `Retry-After` up to 86400 s). Tint doesn't send them.
 - **librespot version.** Pinned to a commit on `dev` (see `core/Cargo.toml`): the 0.8.0
   release doesn't build from crates.io (librespot-org/librespot#1760). Bump it on purpose.
+  The player crate alone is built from `core/vendor/librespot-playback`, that same commit
+  with one change: the audio key is requested together with the file, not after it has
+  opened, so a song that isn't preloaded starts one round trip sooner
+  (`core/vendor/README.md`). Its effect on start time is not measured yet;
+  `-FloeSelfTestSwitching YES` prints the start times to compare.
+- **0.3.0 performance pass (2026-11-25, Apple M3, offline suites).**
+  - Live background Metal shaders (`scripts/test-background.sh`): hoisted Fluid blob
+    orbits and Beams head directions to CPU uniforms, switched color/blending paths to
+    `half` + `exp2`, added early-outs for beam cores/motes and off-region lens flares,
+    and switched the main render pass to `loadAction = .dontCare`. Fluid GPU fell from
+    0.53 ms → 0.40 ms (−25% at 1500×950); Beams GPU fell from 0.68 ms → 0.59 ms (−13% at
+    1500×950) and 3.25 ms → 2.79 ms (−14% at full Retina 3456×2234).
+  - Lyrics (`scripts/benchmark-lyrics.sh`): switched `LyricRow` to opaque white + layer
+    `.opacity` (adjusting `ListLayout.glides` start offset to 1 frame) and added
+    `ListMotion` hover dwell/scroll suppression; per-layout time fell from 3.09 ms →
+    1.82 ms (−41%).
+  - Surface transitions (`NowPlaying → Library`): layered `NowPlayingView` over the
+    fixed-size Library + MiniPlayer stack, kept `MiniPlayerView` mounted, and replaced
+    8-piece `PanelEdge.fill(LinearGradient)` with a Core Animation `strokeBorder` + 1 pt
+    GPU sheen; main-thread CPU per transition layout fell from 2.23–3.11 ms → 0.78 ms
+    (~3.5× faster), peak layout from 16–37 ms → 5.5–7.3 ms.
+  - Idle gating & memory bounds: propagated `windowVisible` (`WindowPresence`) to pause
+    `ProgressBar`, `CrawlingCover`, `LoopingSymbol` and `SyncedLyricsView` when occluded;
+    stopped 30 Hz main-thread analysis dispatches when only the live background runs;
+    skipped downsampling for cancelled fast-scroll artwork tasks; capped `LibraryModel.liked`
+    (4,000) and `Navigator.stack` (64); aborted timed-out `spirc_task` on teardown.
 
 ### Command Line Tools quirks
 

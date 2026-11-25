@@ -20,7 +20,7 @@ extension View {
     }
 
     /// The playing cover flies between the mini player and Now Playing.
-    func heroCover() -> some View { modifier(HeroCover()) }
+    func heroCover(active: Bool = true) -> some View { modifier(HeroCover(active: active)) }
 }
 
 /// The shared timings, so browsing and playback surfaces move alike. Hover
@@ -123,6 +123,19 @@ extension View {
     }
 }
 
+private struct WindowVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// False while Tint's window is covered by other apps, minimized or on
+    /// another Space. Clocks and looping animations stop while nobody is looking.
+    var windowVisible: Bool {
+        get { self[WindowVisibleKey.self] }
+        set { self[WindowVisibleKey.self] = newValue }
+    }
+}
+
 private struct HeroNamespaceKey: EnvironmentKey {
     static var defaultValue: Namespace.ID? { nil }
 }
@@ -135,9 +148,13 @@ extension EnvironmentValues {
 }
 
 private struct HeroCover: ViewModifier {
+    var active: Bool
     @Environment(\.heroNamespace) private var namespace
+
+    init(active: Bool = true) { self.active = active }
+
     @ViewBuilder func body(content: Content) -> some View {
-        if let namespace { content.matchedGeometryEffect(id: "cover", in: namespace) } else { content }
+        if active, let namespace { content.matchedGeometryEffect(id: "cover", in: namespace) } else { content }
     }
 }
 

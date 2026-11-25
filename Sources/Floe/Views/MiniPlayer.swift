@@ -144,6 +144,7 @@ private struct MiniCover: View {
     let url: URL?
     let open: () -> Void
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.isOnstage) private var onstage
     @ReducedMotion private var still
     @ViewState private var hovering = false
 
@@ -151,7 +152,7 @@ private struct MiniCover: View {
         let lifted = hovering && !still
         Button(action: open) {
             ArtworkView(url: url, size: scale(48), cornerRadius: scale(7))
-                .heroCover()
+                .heroCover(active: onstage)
                 .overlay {
                     RoundedRectangle(cornerRadius: scale(7), style: .continuous)
                         .fill(.black.opacity(0.38))
@@ -190,7 +191,8 @@ private struct MiniAction: View {
             Image(systemName: active ? "\(systemImage).fill" : systemImage)
                 .floeFont(size: 12, weight: .semibold)
                 .contentTransition(.symbolEffect(.replace))
-                .foregroundStyle(active ? palette.highlight : (hovering ? .white : Theme.secondary))
+                .foregroundStyle(active ? palette.highlight : .white)
+                .opacity(active || hovering ? 1 : 0.62)
                 .frame(width: scale(22), height: scale(22))
                 .background(Circle().fill(Theme.hover).opacity(hovering ? 1 : 0))
                 .contentShape(Circle())
@@ -214,6 +216,8 @@ struct ProgressBar: View {
     var large = false
     @ReducedMotion private var still
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.windowVisible) private var windowVisible
+    @Environment(\.isOnstage) private var onstage
     @Environment(PlayerModel.self) private var player
     @Environment(\.interfaceScale) private var scale
     @ViewState private var dragFraction: Double?
@@ -222,14 +226,15 @@ struct ProgressBar: View {
     var body: some View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
         let enabled = player.displayTrack != nil && !player.isLoading
+        let visible = scenePhase == .active && windowVisible && onstage
         // Both bars tick once a second; Core Animation glides the Now Playing
         // playhead in between and moves the pointer readout.
-        TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil || scenePhase != .active)) { context in
+        TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil || !visible)) { context in
             let fraction = dragFraction ?? min(player.positionMs(at: context.date) / duration, 1)
             // Aim the glide at where playback will be on the next tick.
             let ahead = dragFraction ?? min(player.positionMs(at: context.date.addingTimeInterval(1)) / duration, 1)
             let scrubbing = dragFraction != nil
-            let glide = large && player.isPlaying && !scrubbing && scenePhase == .active && !still
+            let glide = large && player.isPlaying && !scrubbing && visible && !still
             let track = self.track(progress: glide ? ahead : fraction, glide: glide, scrubbing: scrubbing,
                                    duration: duration, enabled: enabled)
             let elapsed = Text(Format.duration(ms: fraction * duration))
@@ -316,7 +321,8 @@ struct VolumeControl: View {
                       variableValue: player.volume)
                     .contentTransition(.symbolEffect(.replace))
                     .floeFont(size: 13)
-                    .foregroundStyle(speakerHovering ? .white : Theme.secondary)
+                    .foregroundStyle(.white)
+                    .opacity(speakerHovering ? 1 : 0.62)
                     .frame(width: scale(22), height: scale(22))
                     .contentShape(Rectangle())
             }

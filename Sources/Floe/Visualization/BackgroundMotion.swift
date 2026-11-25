@@ -63,6 +63,7 @@ struct BackgroundConfiguration: Equatable {
 }
 
 typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+typealias Blobs = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 typealias Heads = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
                    SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 
@@ -73,6 +74,9 @@ struct FluidUniforms {
     var motion: SIMD4<Float>
     /// Drawable width and height, the bass breath, the ink's body (the mids).
     var size: SIMD4<Float>
+    /// Per blob: centre x (aspect-scaled), centre y, inverse squared radius, spare.
+    /// Precomputed on the CPU so the fragment shader skips 18 sines and 6 divides per pixel.
+    var blobs: Blobs
 }
 
 /// Matches `BeamUniforms` in `ReactiveShader`.
@@ -86,12 +90,16 @@ struct BeamUniforms {
     var floor: SIMD4<Float>
     /// The haze's colour, then 1 for a neutral cover.
     var haze: SIMD4<Float>
+    /// Average palette colour, then the floor beams' direction cosine.
+    var average: SIMD4<Float>
     /// The left and right floor beams' colours.
     var floorColors: (SIMD4<Float>, SIMD4<Float>)
     /// Per head: angle from straight down, intensity, spread, glint.
     var heads: Heads
     /// Per head: colour, then the sine of its angle.
     var tints: Heads
+    /// Per head: source x (aspect-scaled), direction x, direction y, spare.
+    var geometry: Heads
 }
 
 /// The live background's state between frames, apart from Metal so tests can
@@ -175,9 +183,19 @@ struct BackgroundAnimator {
     }
 
     func fluidUniforms(width: Float, height: Float) -> FluidUniforms {
-        FluidUniforms(colors: Self.palette(colors),
-                      motion: SIMD4(fluid.flow, min(1, pulse.energy * configuration.reactivity), fluid.glow, fluid.detail),
-                      size: SIMD4(width, height, fluid.breath.position, fluid.body))
+        let t = fluid.flow
+        let aspect = width / max(height, 1)
+        func blob(_ i: Int) -> SIMD4<Float> {
+            let fi = Float(i)
+            let cx = (0.5 + 0.4 * sinf(t * (0.21 + 0.037 * fi) + fi * 2.39)) * aspect
+            let cy = 0.5 + 0.38 * sinf(t * (0.17 + 0.045 * fi) + fi * 1.31 + 1.6)
+            let radius = 0.2 + 0.05 * sinf(t * 0.4 + fi * 1.9)
+            return SIMD4(cx, cy, 1 / (radius * radius), 0)
+        }
+        return FluidUniforms(colors: Self.palette(colors),
+                             motion: SIMD4(t, min(1, pulse.energy * configuration.reactivity), fluid.glow, fluid.detail),
+                             size: SIMD4(width, height, fluid.breath.position, fluid.body),
+                             blobs: (blob(0), blob(1), blob(2), blob(3), blob(4), blob(5)))
     }
 
     func beamUniforms(width: Float, height: Float) -> BeamUniforms {
@@ -192,13 +210,26 @@ struct BackgroundAnimator {
         var haze = palette[0] * 0.6 + average * 0.4
         if configuration.neutral { haze = haze * 0.3 + SIMD3(repeating: (haze * SIMD3(0.2126, 0.7152, 0.0722)).sum()) * 0.7 }
         let fill = min(1.2, beams.hazeFill * configuration.reactivity) * (configuration.neutral ? 0.7 : 1)
+        let aspect = width / max(height, 1)
+        let invCount = aspect / Float(count)
+        func geom(_ i: Int, _ tint: SIMD4<Float>) -> SIMD4<Float> {
+            let s = tint.w
+            return SIMD4((Float(i) + 0.5) * invCount, s, -sqrtf(max(0, 1 - s * s)), 0)
+        }
+        let geometry: Heads = (
+            geom(0, rig.tints.0), geom(1, rig.tints.1), geom(2, rig.tints.2), geom(3, rig.tints.3),
+            geom(4, rig.tints.4), geom(5, rig.tints.5), geom(6, rig.tints.6), geom(7, rig.tints.7)
+        )
+        let floorSin = sinf(beams.floorAngle)
+        let floorCos = sqrtf(max(0, 1 - floorSin * floorSin))
         return BeamUniforms(colors: Self.palette(palette),
                             motion: SIMD4(beams.haze, 0, beams.flash, configuration.glow),
                             size: SIMD4(width, height, Float(count), beams.floorLevel * (0.75 + 0.5 * beams.kickGlow)),
-                            floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, sin(beams.floorAngle)),
+                            floor: SIMD4(beams.floorAngle, beams.floorSpread, fill, floorSin),
                             haze: SIMD4(haze, configuration.neutral ? 1 : 0),
+                            average: SIMD4(average, floorCos),
                             floorColors: (SIMD4(palette[pair.bass], 0), SIMD4(palette[pair.treble], 0)),
-                            heads: rig.heads, tints: rig.tints)
+                            heads: rig.heads, tints: rig.tints, geometry: geometry)
     }
 
     /// Vividness pushes each colour away from (or toward) its own grey.

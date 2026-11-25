@@ -59,6 +59,9 @@ final class VisualizerLayerView: NSView {
     private var running = false
     private var listening = false
     private var drawnFrame: UInt64?
+    /// Last visual configuration applied; unchanged SwiftUI updates skip layer
+    /// mutations and full `CGPath` rebuilds.
+    private var lastConfig: (style: Style, sensitivity: Float, color: NSColor, pale: NSColor)?
     /// This frame's levels, reused so drawing a frame allocates no array.
     private var levels: [CGFloat] = []
 
@@ -96,6 +99,12 @@ final class VisualizerLayerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func configure(style: Style, sensitivity: Float, color: NSColor, pale: NSColor, running: Bool) {
+        if let last = lastConfig, last.style == style, last.sensitivity == sensitivity,
+           last.color == color, last.pale == pale {
+            setRunning(running)
+            return
+        }
+        lastConfig = (style, sensitivity, color, pale)
         self.style = style
         self.sensitivity = sensitivity
         let beads = style == .beads

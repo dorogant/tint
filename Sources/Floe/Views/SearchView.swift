@@ -147,7 +147,8 @@ private struct ShowMoreButton: View {
         Button(action: action) {
             Text("Show more")
                 .floeFont(size: 12, weight: .semibold)
-                .foregroundStyle(hovering ? .white : Theme.secondary)
+                .foregroundStyle(.white)
+                .opacity(hovering ? 1 : 0.62)
                 .padding(.horizontal, scale(12))
                 .padding(.vertical, scale(6))
                 .background(.white.opacity(hovering ? 0.12 : 0.07), in: Capsule())

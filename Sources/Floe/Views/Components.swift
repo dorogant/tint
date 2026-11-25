@@ -35,8 +35,14 @@ struct Backdrop: View {
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
-                RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
-                               center: .topLeading, startRadius: 0, endRadius: 700)
+                // Crossfade static gradient layers instead of animating the gradient's
+                // colour, which re-rasterized a full-window bitmap every frame on song change.
+                ZStack {
+                    RadialGradient(colors: [palette.accent.opacity(0.22), .clear],
+                                   center: .topLeading, startRadius: 0, endRadius: 700)
+                        .id(palette.rgb)
+                        .transition(.opacity)
+                }
                 Color.black.opacity(0.28)
             }
             .floeAnimation(value: appearance.backgroundURL, duration: 0.45)
@@ -64,55 +70,24 @@ private struct GlassPanelModifier: ViewModifier {
     @AppStorage("glassOpacity") private var opacity = 0.62
     @Environment(\.interfaceScale) private var scale
 
-    private static let edge = LinearGradient(colors: [.white.opacity(0.14), Theme.panelStroke, .white.opacity(0.035)],
-                                             startPoint: .topLeading, endPoint: .bottomTrailing)
-
     func body(content: Content) -> some View {
         let cornerRadius = radius ?? scale.corner
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content.background(Color(white: 0.11).opacity(opacity), in: shape)
             .overlay {
-                // One gradient across the panel, drawn as eight pieces of its edge.
-                ZStack {
-                    ForEach(PanelEdge.Piece.allCases, id: \.self) { piece in
-                        PanelEdge(cornerRadius: cornerRadius, piece: piece).fill(Self.edge)
-                    }
-                }
-                .allowsHitTesting(false)
+                // Flat strokeBorder draws directly in Core Animation without a
+                // panel-sized bitmap, CPU gradient evaluation or CGPath clipping.
+                shape.strokeBorder(Theme.panelStroke, lineWidth: 1)
+                    .allowsHitTesting(false)
             }
-    }
-}
-
-/// A piece of a panel's 1 pt edge, exactly where `strokeBorder` draws it.
-/// SwiftUI draws a gradient-filled shape into a bitmap the size of the shape's
-/// bounds, so the whole hairline cost a panel-sized backing store (19 MB for
-/// the page at 1710×1000, 24 MB for Now Playing); cut into corners and sides,
-/// it costs a few kilobytes.
-private struct PanelEdge: Shape {
-    enum Piece: CaseIterable { case topLeading, top, topTrailing, trailing, bottomTrailing, bottom, bottomLeading, leading }
-
-    let cornerRadius: CGFloat
-    let piece: Piece
-
-    func path(in rect: CGRect) -> Path {
-        // Continuous corners blend into the sides over about 1.53 radii.
-        let corner = min((cornerRadius * 1.6).rounded(.up), rect.width / 2, rect.height / 2)
-        let (x0, x1, x2) = (rect.minX, rect.minX + corner, rect.maxX - corner)
-        let (y0, y1, y2) = (rect.minY, rect.minY + corner, rect.maxY - corner)
-        let middle = (width: max(x2 - x1, 0), height: max(y2 - y1, 0))
-        let clip = switch piece {
-        case .topLeading: CGRect(x: x0, y: y0, width: corner, height: corner)
-        case .top: CGRect(x: x1, y: y0, width: middle.width, height: corner)
-        case .topTrailing: CGRect(x: x2, y: y0, width: corner, height: corner)
-        case .trailing: CGRect(x: x2, y: y1, width: corner, height: middle.height)
-        case .bottomTrailing: CGRect(x: x2, y: y2, width: corner, height: corner)
-        case .bottom: CGRect(x: x1, y: y2, width: middle.width, height: corner)
-        case .bottomLeading: CGRect(x: x0, y: y2, width: corner, height: corner)
-        case .leading: CGRect(x: x0, y: y1, width: corner, height: middle.height)
-        }
-        let edge = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).inset(by: 0.5)
-            .path(in: rect).strokedPath(StrokeStyle(lineWidth: 1))
-        return edge.intersection(Path(clip))
+            .overlay(alignment: .top) {
+                // Subtle top-leading rim sheen on a 1 pt GPU gradient layer.
+                LinearGradient(colors: [.white.opacity(0.08), .white.opacity(0.03), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(height: 1)
+                    .padding(.horizontal, cornerRadius)
+                    .allowsHitTesting(false)
+            }
     }
 }
 
@@ -194,7 +169,8 @@ struct IconButton: View {
                 .floeFont(size: size, weight: .medium)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion || systemImage == "shuffle" ? 0 : presses)
-                .foregroundStyle(active ? palette.highlight : (lit ? .white : Theme.secondary))
+                .foregroundStyle(active ? palette.highlight : .white)
+                .opacity(active || lit ? 1 : 0.62)
                 .modifier(ShufflePressFeedback(trigger: presses, enabled: animatedShuffle,
                                                diameter: diameter, tint: palette.highlight))
                 .frame(width: diameter, height: diameter)

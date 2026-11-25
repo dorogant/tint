@@ -1,6 +1,7 @@
 import CFloeCore
 import Foundation
 import Observation
+import Synchronization
 
 /// Publishes compact frames at 30 Hz only when a visible effect needs them.
 ///
@@ -18,7 +19,8 @@ final class VisualizationModel {
     @ObservationIgnored let feed = BackgroundFeed()
     var backgroundFramesDrawn: UInt64 { feed.framesDrawn }
     @ObservationIgnored private(set) var frame = SpectrumFrame.quiet
-    @ObservationIgnored private(set) var framesAnalyzed: UInt64 = 0
+    @ObservationIgnored private let counters = AnalysisCounters()
+    var framesAnalyzed: UInt64 { counters.analyzed.load(ordering: .relaxed) }
     /// A clock in seconds that runs faster when the music is louder; drifting
     /// visuals use it so their pace follows the song. Frozen while analysis is off.
     @ObservationIgnored private(set) var flow: Double = 0
@@ -31,6 +33,8 @@ final class VisualizationModel {
     /// clock of its own. One listener per owner; `nil` removes it.
     func setFrameListener(for owner: AnyObject, _ listener: (() -> Void)?) {
         listeners[ObjectIdentifier(owner)] = listener
+        let needed = !listeners.isEmpty || UserDefaults.standard.bool(forKey: "FloeSelfTest")
+        counters.needsMainDelivery.store(needed, ordering: .relaxed)
     }
 
     func setRunning(_ running: Bool) {
@@ -39,10 +43,9 @@ final class VisualizationModel {
         isRunning = running
         if running {
             let generation = generation
-            worker.start(feed: feed) { [weak self] frame in
+            worker.start(feed: feed, counters: counters) { [weak self] frame in
                 guard let self, self.isRunning, self.generation == generation else { return }
                 self.frame = frame
-                self.framesAnalyzed += 1
                 self.flow += (0.5 + min(1.5, Double(frame.rms) * 5)) / 30
                 for listener in self.listeners.values { listener() }
             }
@@ -50,6 +53,13 @@ final class VisualizationModel {
             worker.stop()
         }
     }
+}
+
+/// Shared atomics between the main actor and `AnalysisWorker` so frames stay
+/// off the main thread when only the live background is listening.
+private final class AnalysisCounters: Sendable {
+    let analyzed = Atomic<UInt64>(0)
+    let needsMainDelivery = Atomic<Bool>(UserDefaults.standard.bool(forKey: "FloeSelfTest"))
 }
 
 /// All mutable DSP state belongs to this serial queue. The render callback only
@@ -65,7 +75,8 @@ private final class AnalysisWorker: @unchecked Sendable {
     private var epoch: UInt64 = 0
     private var feed: BackgroundFeed?
 
-    func start(feed: BackgroundFeed, deliver: @escaping @MainActor @Sendable (SpectrumFrame) -> Void) {
+    func start(feed: BackgroundFeed, counters: AnalysisCounters,
+               deliver: @escaping @MainActor @Sendable (SpectrumFrame) -> Void) {
         queue.async { [self] in
             guard timer == nil else { return }
             if analyzer == nil { analyzer = SpectrumAnalyzer() }
@@ -82,8 +93,11 @@ private final class AnalysisWorker: @unchecked Sendable {
                 let count = Int(floe_read_analysis(&self.left, &self.right, UInt32(SpectrumAnalyzer.size), &epoch))
                 if epoch != self.epoch { analyzer.reset(); self.epoch = epoch }
                 let frame = analyzer.process(left: self.left, right: self.right, count: count)
+                counters.analyzed.add(1, ordering: .relaxed)
                 self.feed?.post(frame)
-                DispatchQueue.main.async { deliver(frame) }
+                if counters.needsMainDelivery.load(ordering: .relaxed) {
+                    DispatchQueue.main.async { deliver(frame) }
+                }
             }
             self.timer = timer
             timer.resume()

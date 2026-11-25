@@ -10,8 +10,12 @@ final class AudioOutput {
     /// ~50 ms of main thread, which launch doesn't need to pay before any audio.
     private var engine: AVAudioEngine?
     private var wantsRunning = false
-    private var configObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var configObserver: NSObjectProtocol?
     private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "audio")
+
+    deinit {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+    }
 
     /// Linear gain; kept here until the graph exists.
     var volume: Float = 1 {

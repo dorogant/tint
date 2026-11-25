@@ -364,6 +364,7 @@ final class RenderLoop: NSObject, @unchecked Sendable {
     private var previous: CFTimeInterval?
     private var points = CGSize.zero
     private var scale: CGFloat = 2
+    private var lastDrawableSize = CGSize.zero
     private var needsStaticDraw = true
 
     private let inFlight = Atomic<Int>(0)
@@ -381,8 +382,8 @@ final class RenderLoop: NSObject, @unchecked Sendable {
         self.pipelines = pipelines
         self.targets = targets
         self.feed = feed
-        pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
+        // Both shaders draw a full-screen triangle that overwrites every pixel.
+        pass.colorAttachments[0].loadAction = .dontCare
         pass.colorAttachments[0].storeAction = .store
         runLoop = Self.startThread()
         super.init()
@@ -490,21 +491,26 @@ final class RenderLoop: NSObject, @unchecked Sendable {
         attempts.add(1, ordering: .relaxed)
         let limit = isTicking ? Self.maximumInFlight : 1
         guard inFlight.load(ordering: .sequentiallyConsistent) < limit, points.width > 0, points.height > 0 else { return }
-        let size = BackgroundRenderer.drawableSize(points: points, scale: scale, kind: animator.configuration.kind)
-        if layer.drawableSize != size { layer.drawableSize = size }
-        guard let drawable = layer.nextDrawable(), let command = commandQueue.makeCommandBuffer() else { return }
-        pass.colorAttachments[0].texture = drawable.texture
-        defer { pass.colorAttachments[0].texture = nil }
-        guard BackgroundRenderer.encode(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator,
-                                        width: Float(size.width), height: Float(size.height))
-        else { return }
-        inFlight.add(1, ordering: .sequentiallyConsistent)
-        needsStaticDraw = false
-        stillPending.store(false, ordering: .sequentiallyConsistent)
-        if !layer.framebufferOnly { presentedLock.withLock { presented = drawable.texture } }
-        command.present(drawable)
-        command.addCompletedHandler { [weak self] command in self?.finished(command.status == .completed) }
-        command.commit()
+        autoreleasepool {
+            let size = BackgroundRenderer.drawableSize(points: points, scale: scale, kind: animator.configuration.kind)
+            if lastDrawableSize != size {
+                layer.drawableSize = size
+                lastDrawableSize = size
+            }
+            guard let drawable = layer.nextDrawable(), let command = commandQueue.makeCommandBuffer() else { return }
+            pass.colorAttachments[0].texture = drawable.texture
+            defer { pass.colorAttachments[0].texture = nil }
+            guard BackgroundRenderer.encode(command, pass: pass, pipelines: pipelines, targets: targets, animator: animator,
+                                            width: Float(size.width), height: Float(size.height))
+            else { return }
+            inFlight.add(1, ordering: .sequentiallyConsistent)
+            needsStaticDraw = false
+            stillPending.store(false, ordering: .sequentiallyConsistent)
+            if !layer.framebufferOnly { presentedLock.withLock { presented = drawable.texture } }
+            command.present(drawable)
+            command.addCompletedHandler { [weak self] command in self?.finished(command.status == .completed) }
+            command.commit()
+        }
     }
 
     /// On Metal's thread, when a frame has left the GPU.

@@ -104,8 +104,11 @@ private struct SelectionIndicator: View {
         let shape = RoundedRectangle(cornerRadius: SidebarMetrics(scale).radius, style: .continuous)
         shape
             .fill(Theme.selection)
-            .overlay(shape.fill(LinearGradient(colors: [palette.accent.opacity(0.2), palette.accent.opacity(0.03)],
-                                               startPoint: .leading, endPoint: .trailing)))
+            .overlay {
+                LinearGradient(colors: [palette.accent.opacity(0.2), palette.accent.opacity(0.03)],
+                               startPoint: .leading, endPoint: .trailing)
+                    .clipShape(shape)
+            }
             .overlay(shape.strokeBorder(.white.opacity(0.06)))
             .floeMatched("selection", in: namespace)
     }

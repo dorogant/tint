@@ -11,6 +11,7 @@ trap 'rm -rf "$TEMP"' EXIT
 VIEW="${1:-$ROOT/Sources/Floe/Views/LyricsView.swift}"
 swiftc -swift-version 6 -O -D LYRICS_FOLLOW_TESTING \
     "$ROOT/Sources/Floe/Support/ViewState.swift" "$ROOT/Sources/Floe/Support/InterfaceScale.swift" \
+    "$ROOT/Sources/Floe/Support/ListMotion.swift" \
     "$ROOT/Sources/Floe/Views/Motion.swift" "$ROOT/Sources/Floe/Views/LoopingSymbol.swift" \
     "$ROOT/Sources/Floe/Lyrics/LRC.swift" "$VIEW" \
     "$ROOT/Tests/LyricsRenderingSupport.swift" "$ROOT/Tests/LyricsFollowTests.swift" "$ROOT/Tests/AllocationCounter.swift" \

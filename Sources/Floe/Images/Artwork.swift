@@ -16,6 +16,10 @@ actor ArtworkCache {
     /// From this size up an image is a playing cover, not a row or a card.
     private static let coverPixels = 600
     private var inFlight: [String: Task<CGImage?, Never>] = [:]
+    /// Active (non-cancelled) callers per decoded size key. If every caller for
+    /// a size scrolls away before the download returns, we skip downsampling so
+    /// fast scrolling doesn't decode bitmaps nobody will display.
+    private var waiters: [String: Int] = [:]
     private var downloads: [URL: Task<Data?, Never>] = [:]
     private let session: URLSession
 
@@ -55,18 +59,45 @@ actor ArtworkCache {
     func image(for url: URL, pixels: Int) async -> CGImage? {
         let key = Self.key(url, pixels), memory = store(pixels)
         if let hit = memory.object(forKey: key) { return hit }
-        if let running = inFlight[key as String] { return await running.value }
-        let task = Task<CGImage?, Never> {
-            guard let data = await self.data(for: url) else { return nil }
-            return await Self.downsample(data, maxPixels: pixels)
+        let keyString = key as String
+        waiters[keyString, default: 0] += 1
+        let task: Task<CGImage?, Never>
+        let owner: Bool
+        if let running = inFlight[keyString] {
+            task = running
+            owner = false
+        } else {
+            let created = Task<CGImage?, Never> {
+                guard let data = await self.data(for: url) else { return nil }
+                guard self.hasWaiters(for: keyString) else { return nil }
+                return await Self.downsample(data, maxPixels: pixels)
+            }
+            inFlight[keyString] = created
+            task = created
+            owner = true
         }
-        inFlight[key as String] = task
-        let image = await task.value
-        inFlight[key as String] = nil
-        if let image {
-            memory.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
+        let image = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            Task { await self.dropWaiter(for: keyString) }
+        }
+        if !Task.isCancelled { dropWaiter(for: keyString) }
+        if owner {
+            inFlight[keyString] = nil
+            if let image {
+                memory.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
+            }
         }
         return image
+    }
+
+    private func hasWaiters(for key: String) -> Bool {
+        waiters[key, default: 0] > 0
+    }
+
+    private func dropWaiter(for key: String) {
+        let remaining = (waiters[key] ?? 0) - 1
+        if remaining > 0 { waiters[key] = remaining } else { waiters[key] = nil }
     }
 
     /// All sizes share the same HTTP request. Retain bytes only while downloading;
@@ -114,6 +145,9 @@ struct ArtworkView: View {
     @Environment(\.listMotion) private var listMotion
     @ViewState private var loaded: CGImage?
     @ViewState private var loadedURL: URL?
+    /// Keeps a synchronously cached image alive across `ArtworkCache.trim()`
+    /// without writing `@ViewState` and causing a second layout pass on scroll-in.
+    @ViewState private var retained = RetainedArtwork()
 
     init(url: URL?, size: CGFloat, cornerRadius: CGFloat = 6, circle: Bool = false) {
         self.url = url
@@ -129,10 +163,18 @@ struct ArtworkView: View {
 
     private var pixels: Int { Int((size * displayScale).rounded(.up)) }
 
+    private func resolvedImage() -> CGImage? {
+        if let url, let cached = ArtworkCache.shared.cached(url, pixels: pixels) {
+            retained.store(cached, for: url)
+            return cached
+        }
+        if retained.url == url, let kept = retained.image { return kept }
+        return loadedURL == url ? loaded : nil
+    }
+
     var body: some View {
-        let cached = url.flatMap { ArtworkCache.shared.cached($0, pixels: pixels) }
-        let image = cached ?? loaded
-        let displayedURL = cached == nil ? loadedURL : url
+        let image = resolvedImage()
+        let displayedURL = image == nil ? nil : url
         ZStack {
             Rectangle().fill(.white.opacity(0.06))
             if let image {
@@ -151,10 +193,18 @@ struct ArtworkView: View {
         .clipShape(circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: cornerRadius)))
         .floeAnimation(value: displayedURL, duration: 0.22)
         .task(id: "\(url?.absoluteString ?? "")#\(pixels)") {
-            guard let url else { loaded = nil; loadedURL = nil; return }
-            var image = ArtworkCache.shared.cached(url, pixels: pixels)
-            if image == nil { image = await ArtworkCache.shared.image(for: url, pixels: pixels) }
+            guard let url else {
+                retained.clear()
+                if loaded != nil || loadedURL != nil { loaded = nil; loadedURL = nil }
+                return
+            }
+            if let cached = ArtworkCache.shared.cached(url, pixels: pixels) {
+                retained.store(cached, for: url)
+                return
+            }
+            let image = await ArtworkCache.shared.image(for: url, pixels: pixels)
             guard !Task.isCancelled else { return }
+            if let image { retained.store(image, for: url) }
             // In a scrolling list a cover just appears: its fade would be an
             // animation, and each animation frame mid-scroll updates the whole window.
             var transaction = Transaction()
@@ -164,5 +214,21 @@ struct ArtworkView: View {
                 loadedURL = url
             }
         }
+    }
+}
+
+@MainActor
+private final class RetainedArtwork {
+    var image: CGImage?
+    var url: URL?
+
+    func store(_ image: CGImage, for url: URL) {
+        self.image = image
+        self.url = url
+    }
+
+    func clear() {
+        image = nil
+        url = nil
     }
 }

@@ -489,9 +489,10 @@ struct LikedCover: View {
     static let violet = Color(red: 0.27, green: 0.2, blue: 0.75)
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius ?? scale(size > scale(60) ? 12 : 5))
-            .fill(LinearGradient(colors: [Self.violet, palette.accent.opacity(0.85)],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+        let shape = RoundedRectangle(cornerRadius: cornerRadius ?? scale(size > scale(60) ? 12 : 5))
+        LinearGradient(colors: [Self.violet, palette.accent.opacity(0.85)],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+            .clipShape(shape)
             .overlay(Image(systemName: "star.fill").font(.system(size: size * 0.32)).foregroundStyle(.white))
             .frame(width: size, height: size)
     }

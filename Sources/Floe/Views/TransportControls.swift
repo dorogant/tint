@@ -66,7 +66,8 @@ private struct TransportButton: View {
                 .floeFont(size: size, weight: .medium)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, options: .speed(1.4), value: still || crossover || nudge != 0 ? 0 : presses)
-                .foregroundStyle(on ? palette.highlight : (hovering ? .white : Theme.secondary))
+                .foregroundStyle(on ? palette.highlight : .white)
+                .opacity(on || hovering ? 1 : 0.62)
                 .modifier(ShufflePressFeedback(trigger: presses, enabled: crossover && !still,
                                                diameter: diameter, tint: palette.highlight, ripple: on))
                 .frame(width: diameter, height: diameter)
@@ -132,10 +133,10 @@ private struct PlayPauseButton: View {
         }
         .buttonStyle(PlayButtonStyle(hovering: hovering))
         .background {
-            Circle()
-                .fill(RadialGradient(colors: [palette.accent.opacity(0.5), palette.accent.opacity(0)], center: .center,
-                                     startRadius: size * 0.35, endRadius: size * 0.85))
+            RadialGradient(colors: [palette.accent.opacity(0.5), palette.accent.opacity(0)], center: .center,
+                           startRadius: size * 0.35, endRadius: size * 0.85)
                 .frame(width: size * 1.7, height: size * 1.7)
+                .clipShape(Circle())
                 .opacity(hovering ? 1 : 0)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)

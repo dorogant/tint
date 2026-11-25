@@ -83,21 +83,31 @@ final class CoverAppearance {
             guard !Task.isCancelled else { return }
         }
         guard let url else { return }
-        if !sameCover {
-            if let cached = ArtworkCache.shared.cached(url, pixels: 720)
+        if !sameCover || image == nil || imageURL != url {
+            if !sameCover,
+               let cached = ArtworkCache.shared.cached(url, pixels: 720)
                 ?? ArtworkCache.shared.cached(url, pixels: 96) {
                 image = cached
                 imageURL = url
             }
+            async let cover = ArtworkCache.shared.image(for: url, pixels: 720)
+            async let thumbnail = ArtworkCache.shared.image(for: url, pixels: 96)
+            let loaded = await cover
+            guard !Task.isCancelled else { return }
+            image = loaded
+            imageURL = url
+            let small = await thumbnail
+            guard !Task.isCancelled else { return }
+            await applyProcessed(small, url: url, blur: blur)
+        } else {
+            // Only the blur changed for the same cover: skip re-fetching the 720 px image.
+            let small = await ArtworkCache.shared.image(for: url, pixels: 96)
+            guard !Task.isCancelled else { return }
+            await applyProcessed(small, url: url, blur: blur)
         }
-        async let cover = ArtworkCache.shared.image(for: url, pixels: 720)
-        async let thumbnail = ArtworkCache.shared.image(for: url, pixels: 96)
-        let loaded = await cover
-        guard !Task.isCancelled else { return }
-        image = loaded
-        imageURL = url
-        let small = await thumbnail
-        guard !Task.isCancelled else { return }
+    }
+
+    private func applyProcessed(_ small: CGImage?, url: URL, blur: Double) async {
         // A blur change reloads the same cover; its colours are already known.
         let known = paletteURL == url ? palette : nil
         let processed = await Self.process(small, blur: blur, known: known)

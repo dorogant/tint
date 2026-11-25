@@ -8,7 +8,7 @@ import Observation
 @Observable
 final class WindowPresence {
     private(set) var isVisible = true
-    @ObservationIgnored private var watchers: [Task<Void, Never>] = []
+    @ObservationIgnored private nonisolated(unsafe) var watchers: [Task<Void, Never>] = []
 
     init() {
         // Minimizing doesn't post an occlusion change, so it's asked about separately.
@@ -17,6 +17,10 @@ final class WindowPresence {
                                            NSApplication.didHideNotification, NSApplication.didUnhideNotification]
         watchers = window.map { watch($0, on: .default) }
             + [watch(NSWorkspace.activeSpaceDidChangeNotification, on: NSWorkspace.shared.notificationCenter)]
+    }
+
+    deinit {
+        for watcher in watchers { watcher.cancel() }
     }
 
     private func watch(_ name: Notification.Name, on center: NotificationCenter) -> Task<Void, Never> {

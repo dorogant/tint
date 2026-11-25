@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-struct RGB: Equatable, Sendable {
+struct RGB: Hashable, Sendable {
     var r, g, b: Double
     /// Tint's own colour when there's no cover to take one from: the calm blue
     /// of the Blue accent, so nothing borrows a streaming service's green.

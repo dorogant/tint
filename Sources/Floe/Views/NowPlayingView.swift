@@ -112,10 +112,10 @@ private struct CoverStage<Ring: View>: View {
     var body: some View {
         let lifted = hovering && !still
         ZStack {
-            Ellipse()
-                .fill(RadialGradient(colors: [.black.opacity(0.5), .black.opacity(0)], center: .center,
-                                     startRadius: 0, endRadius: size * 0.52))
+            RadialGradient(colors: [.black.opacity(0.5), .black.opacity(0)], center: .center,
+                           startRadius: 0, endRadius: size * 0.52)
                 .frame(width: size * 1.05, height: size * 0.92)
+                .clipShape(Ellipse())
                 .offset(y: size * (lifted ? 0.1 : 0.06))
                 .opacity(hovering ? 1 : 0.5)
                 .allowsHitTesting(false)
@@ -188,7 +188,8 @@ private struct LyricsToggle: View {
                 Text("Lyrics")
             }
             .floeFont(size: 12, weight: .semibold)
-            .foregroundStyle(on ? palette.highlight.mix(with: .white, by: 0.3) : (hovering ? .white : Theme.secondary))
+            .foregroundStyle(on ? palette.highlight.mix(with: .white, by: 0.3) : .white)
+            .opacity(on || hovering ? 1 : 0.62)
             .padding(.horizontal, scale(12))
             .frame(height: scale(30))
             .glassControl(tint: on ? palette.accent.opacity(0.22) : nil, in: .capsule)
@@ -212,9 +213,10 @@ private struct FlowerCoverView: View {
     @Environment(CoverAppearance.self) private var appearance
     @Environment(\.coverPalette) private var palette
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.windowVisible) private var windowVisible
     @ReducedMotion private var still
 
-    private var running: Bool { player.isPlaying && !still && scenePhase == .active }
+    private var running: Bool { player.isPlaying && !still && scenePhase == .active && windowVisible }
 
     var body: some View {
         // A tinted rim, like a bottle cap's edge, separates the cover from the ring.

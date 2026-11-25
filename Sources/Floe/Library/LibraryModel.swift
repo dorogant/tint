@@ -27,7 +27,10 @@ final class LibraryModel {
     @ObservationIgnored let api: WebAPI
     /// Liked state per track URI, each observed on its own: a batch of answers
     /// redraws only the rows whose star changed, not every visible row.
+    /// Bounded so multi-day browsing sessions don't retain every track ever seen.
     @ObservationIgnored private var liked: [String: LikedState] = [:]
+    @ObservationIgnored private var likedOrder: [String] = []
+    private static let likedCapacity = 4000
     /// Waiting for the next batch, in the order rows appeared.
     @ObservationIgnored private var likedQueue: [String] = []
     /// Queued or being checked: a row that scrolls away and back meanwhile
@@ -83,6 +86,8 @@ final class LibraryModel {
         likedQueue = []
         likedAsked = []
         for state in liked.values { state.value = nil }
+        liked = [:]
+        likedOrder = []
     }
 
     /// Everything loads at once and shows as it arrives: Home's shelves don't
@@ -232,6 +237,13 @@ final class LibraryModel {
         if let state = liked[uri] { return state }
         let state = LikedState()
         liked[uri] = state
+        likedOrder.append(uri)
+        if liked.count > Self.likedCapacity {
+            let drop = Self.likedCapacity / 10
+            let evicted = likedOrder.prefix(drop)
+            for key in evicted { liked[key] = nil }
+            likedOrder.removeFirst(evicted.count)
+        }
         return state
     }
 

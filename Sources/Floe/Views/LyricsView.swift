@@ -100,6 +100,7 @@ private struct SyncedLyricsView: View {
     @Binding var follow: Bool
     @Environment(PlayerModel.self) private var player
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.windowVisible) private var windowVisible
     @ReducedMotion private var still
     @ViewState private var active: Int?
     @ViewState private var position = ScrollPosition(idType: Int.self)
@@ -108,6 +109,7 @@ private struct SyncedLyricsView: View {
     @ViewState private var jumped: CGFloat = 0
     @ViewState private var glided: CGFloat = 0
     @ViewState private var layout = ListLayout()
+    @ViewState private var motion = ListMotion()
 
     /// Lines switch slightly early so the glide lands with the vocal.
     private static let lead: TimeInterval = 0.15
@@ -165,12 +167,14 @@ private struct SyncedLyricsView: View {
             }
             .scrollPosition($position)
             .scrollIndicators(.hidden)
+            .environment(\.listMotion, motion)
             .mask(edgeFade)
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting {
                     follow = false
                     holdGlide()
                 }
+                if phase != .idle { motion.moved() }
                 layout.settled = phase == .idle
             }
             .onChange(of: follow) {
@@ -192,7 +196,15 @@ private struct SyncedLyricsView: View {
             // scales in, the line can land a few points off.
             reanchor(settling: [.milliseconds(50), .milliseconds(600)])
         }
-        .task(id: player.playbackAnchor) { await followPlayback() }
+        .task(id: FollowClock(anchor: player.playbackAnchor, visible: windowVisible)) {
+            guard windowVisible else { return }
+            await followPlayback()
+        }
+    }
+
+    private struct FollowClock: Equatable {
+        let anchor: Date
+        let visible: Bool
     }
 
     /// Eager up to `eagerLines`: a lazy stack's estimated heights made Follow
@@ -260,8 +272,10 @@ private struct SyncedLyricsView: View {
                 self.active = index
                 glided += distance
             }
-            // It shows on screen about two frames after this.
-            layout.glides.append((Date(timeIntervalSinceNow: 2.0 / 60), distance))
+            motion.moved()
+            // With layer opacity (no per-frame text redraw), the first frame
+            // shows about one frame after this.
+            layout.glides.append((Date(timeIntervalSinceNow: 1.0 / 60), distance))
             return
         }
         var transaction = Transaction(animation: animated && !still ? Self.glide : nil)
@@ -356,6 +370,7 @@ private struct LyricRow: View, Equatable {
     let seek: () -> Void
     @Environment(\.coverPalette) private var palette
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.listMotion) private var motion
     @ViewState private var hovering = false
 
     /// With Reduce Motion, hover and press only fade.
@@ -372,11 +387,15 @@ private struct LyricRow: View, Equatable {
         let current = distance == 0
         let shape = RoundedRectangle(cornerRadius: scale(18), style: .continuous)
         // The sung line glows softly, tinted toward the cover.
-        let glow = palette.highlight.mix(with: .white, by: 0.6)
+        let glow = current ? palette.highlight.mix(with: .white, by: 0.6) : .clear
         Button(action: seek) {
             label
                 .font(.system(size: fontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(opacity))
+                // Opaque white dimmed with `.opacity` instead of an animated translucent
+                // foreground colour: animating colour re-rasterizes the text on the CPU
+                // every frame of hover and line changes, while layer opacity fades in CA.
+                .foregroundStyle(.white)
+                .opacity(opacity)
                 .shadow(color: .white.opacity(current ? 0.35 : 0), radius: current ? 2 : 0)
                 .shadow(color: glow.opacity(current ? 0.6 : 0), radius: current ? 12 : 0)
                 .multilineTextAlignment(.leading)
@@ -407,10 +426,28 @@ private struct LyricRow: View, Equatable {
                 .contentShape(shape)
         }
         .buttonStyle(LyricPressStyle(still: still))
-        .onHover { hovering = $0 }
+        .focusEffectDisabled(!NSApplication.shared.isFullKeyboardAccessEnabled)
+        .onHover(perform: pointer)
+        .onDisappear { pointer(false) }
         .animation(rowAnimation, value: distance)
         .animation(still ? Self.stillFade : FloeMotion.hover(hovering), value: hovering)
         .help("Seek to this line")
+    }
+
+    /// Lines passing under a resting pointer while scrolling or gliding stay
+    /// dim, and lines only crossed by a moving pointer skip hover work until it
+    /// rests for `ListMotion.dwell`. Leaving is never delayed.
+    private func pointer(_ inside: Bool) {
+        if inside, let motion {
+            if motion.isMoving {
+                motion.hold(line.id) { hovering = true }
+            } else if !hovering {
+                motion.enter(line.id) { hovering = true }
+            }
+            return
+        }
+        motion?.release(line.id)
+        if hovering != inside { hovering = inside }
     }
 
     /// Where a click lands, so the row reads as a way to seek.
@@ -435,7 +472,6 @@ private struct LyricRow: View, Equatable {
             // the row's dimming reaches AppKit through `opacity`, not the foreground style.
             Image(systemName: "ellipsis").hidden().overlay {
                 LoopingSymbol.instrumental(pointSize: fontSize, running: distance == 0 && playing && !still)
-                    .opacity(opacity)
             }
         } else {
             Text(line.text)

@@ -64,29 +64,49 @@ struct MainView: View {
     @AppStorage("reduceMotion") private var reduceMotion = false
     @ReducedMotion private var still
     @Environment(\.interfaceScale) private var scale
+    @Environment(\.windowVisible) private var windowVisible
 
     var body: some View {
         VStack(spacing: scale.margin) {
             PlaybackStatusView()
             ZStack {
-                // Library stays mounted under Now Playing and Lyrics, so raising one never
-                // rebuilds it, and coming back is instant and keeps its scroll position.
-                libraryPanel
-                    .opacity(navigator.surface == .library ? 1 : 0)
-                    .allowsHitTesting(navigator.surface == .library)
-                    .accessibilityHidden(navigator.surface != .library)
-                    .environment(\.isOnstage, navigator.surface == .library)
-                if navigator.surface != .library {
-                    raisedSurface
-                        .id(navigator.surface)
-                        .transition(SurfaceTransition(still: still))
+                // Library and Lyrics share the bottom MiniPlayer inside a fixed layout;
+                // Now Playing rises over both at full height so neither Library nor
+                // Now Playing resizes during the transition.
+                VStack(spacing: scale.margin) {
+                    ZStack {
+                        // Library stays mounted under Now Playing and Lyrics, so raising one never
+                        // rebuilds it, and coming back is instant and keeps its scroll position.
+                        libraryPanel
+                            .opacity(navigator.surface == .library ? 1 : 0)
+                            .allowsHitTesting(navigator.surface == .library)
+                            .accessibilityHidden(navigator.surface != .library)
+                            .environment(\.isOnstage, navigator.surface == .library && windowVisible)
+                        if navigator.surface == .lyrics {
+                            LyricsView().frame(maxWidth: scale(780)).frame(maxWidth: .infinity).glassPanel()
+                                .environment(\.isOnstage, windowVisible)
+                                .transition(SurfaceTransition(still: still))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    MiniPlayerView().frame(height: scale(MiniPlayerView.height)).glassPanel()
+                        .opacity(navigator.surface == .nowPlaying ? 0 : 1)
+                        .offset(y: navigator.surface == .nowPlaying && !still ? scale(MiniPlayerView.height) : 0)
+                        .allowsHitTesting(navigator.surface != .nowPlaying)
+                        .accessibilityHidden(navigator.surface == .nowPlaying)
+                        .environment(\.isOnstage, navigator.surface != .nowPlaying && windowVisible)
+                }
+                if navigator.surface == .nowPlaying {
+                    NowPlayingView().glassPanel()
+                        .environment(\.isOnstage, windowVisible)
+                        .transition(.asymmetric(
+                            insertion: AnyTransition(SurfaceTransition(still: still)),
+                            removal: AnyTransition(SurfaceTransition(still: still))
+                                .animation(still ? FloeMotion.fade : FloeMotion.exit)
+                        ))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if navigator.surface != .nowPlaying {
-                MiniPlayerView().frame(height: scale(MiniPlayerView.height)).glassPanel()
-                    .transition(still ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-            }
         }
         .padding([.horizontal, .bottom], scale.margin)
         .environment(\.heroNamespace, hero)
@@ -129,14 +149,6 @@ struct MainView: View {
             // there: no crossfade, and its sections don't make their entrance again.
             .animation(navigator.arrival == .instant ? nil : (still ? FloeMotion.fade : .spring(duration: 0.24, bounce: 0)),
                        value: navigator.current)
-        }
-    }
-
-    @ViewBuilder private var raisedSurface: some View {
-        switch navigator.surface {
-        case .library: EmptyView()
-        case .nowPlaying: NowPlayingView().glassPanel()
-        case .lyrics: LyricsView().frame(maxWidth: scale(780)).frame(maxWidth: .infinity).glassPanel()
         }
     }
 

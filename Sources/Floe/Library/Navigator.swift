@@ -49,10 +49,17 @@ final class Navigator {
         }
     }
 
+    private static let maxStackDepth = 64
+
     func push(_ route: Route) {
         surface = .library
         arrival = .fresh
-        if route != current { stack.append(route) }
+        guard route != current else { return }
+        stack.append(route)
+        if stack.count > Self.maxStackDepth {
+            // Keep the root route so sidebar section highlighting stays intact.
+            stack.remove(at: 1)
+        }
     }
 
     func back() {

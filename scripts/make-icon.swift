@@ -1,162 +1,139 @@
-// Tint's icon: the app's 22-petal scalloped cover mask as a glass disc
-// holding a wash of cover tints, on a dark glowing ground. No green and no
+// Tint's icon: sound as bands of indigo, navy at the edges and ice along the middle
+// line, seen through the app's scalloped cover shape on a pale body. No green and no
 // sound arcs, so it never reads as Spotify's mark.
+//
+// The whole picture is one function of the pixel over signed distances (negative
+// inside a shape), so every edge, shadow and glass rim comes from the same outline.
 // Usage: swift scripts/make-icon.swift out.png
 import AppKit
 
 typealias RGB = (r: Double, g: Double, b: Double)
-func color(_ c: RGB, _ a: Double = 1) -> NSColor { NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: a) }
+typealias Shape = (Double, Double) -> Double
+
+func clamp01(_ v: Double) -> Double { max(0, min(1, v)) }
 func mix(_ a: RGB, _ b: RGB, _ t: Double) -> RGB { (a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t) }
-func smooth(_ t: Double) -> Double { let x = max(0, min(1, t)); return x * x * (3 - 2 * x) }
-/// Cyclic ramp through `stops`, t in 0..<1.
-func ring(_ stops: [RGB], _ t: Double) -> RGB {
-    let n = Double(stops.count), u = (t - floor(t)) * n
-    let i = Int(u) % stops.count
-    return mix(stops[i], stops[(i + 1) % stops.count], smooth(u - floor(u)))
-}
-/// Paints a per-pixel colour field (canvas coordinates, y up) into an image.
-func field(_ rect: NSRect, _ f: (Double, Double) -> (RGB, Double)) -> NSImage {
-    let w = Int(rect.width), h = Int(rect.height)
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8,
-                               samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                               colorSpaceName: .deviceRGB, bytesPerRow: w * 4, bitsPerPixel: 32)!
-    let p = rep.bitmapData!
-    for j in 0..<h {
-        for i in 0..<w {
-            let (c, a) = f(rect.minX + Double(i) + 0.5, rect.maxY - Double(j) - 0.5)
-            let o = (j * w + i) * 4
-            func byte(_ v: Double) -> UInt8 { UInt8(max(0, min(255, (v * 255).rounded()))) }
-            p[o] = byte(c.r * a); p[o + 1] = byte(c.g * a); p[o + 2] = byte(c.b * a); p[o + 3] = byte(a)
-        }
+func scale(_ a: RGB, _ k: Double) -> RGB { (a.r * k, a.g * k, a.b * k) }
+func smooth(_ t: Double) -> Double { let x = clamp01(t); return x * x * (3 - 2 * x) }
+/// How much of a pixel at signed distance `d` the shape covers.
+func cover(_ d: Double) -> Double { clamp01(0.5 - d) }
+let white: RGB = (1, 1, 1)
+let center = 512.0
+
+// MARK: Shapes
+
+func roundedSquare(half: Double, radius: Double) -> Shape {
+    { x, y in
+        let qx = abs(x - center) - half + radius, qy = abs(y - center) - half + radius
+        return (max(qx, 0) * max(qx, 0) + max(qy, 0) * max(qy, 0)).squareRoot() + min(max(qx, qy), 0) - radius
     }
-    let image = NSImage(size: rect.size)
-    image.addRepresentation(rep.retagging(with: .sRGB)!)
-    return image
+}
+/// The scalloped cover mask. The app's own has 22 shallow petals; twelve deeper ones
+/// are still petals at 32 px, where 22 turn into a plain circle.
+func scallop(tip: Double, petals: Double = 12, depth: Double = 0.1) -> Shape {
+    let soft = 0.16, peak = (1 + soft * soft).squareRoot() - soft, base = tip / (1 + depth)
+    func radius(_ a: Double) -> Double {
+        let wave = cos(petals / 2 * (a - .pi / 2))
+        return base * (1 + depth * ((wave * wave + soft * soft).squareRoot() - soft) / peak)
+    }
+    return { x, y in
+        let dx = x - center, dy = y - center, a = atan2(dy, dx)
+        // r - R is the distance along the ray; dividing by the outline's slope makes it the distance to the outline.
+        let R = radius(a), slope = (radius(a + 0.002) - R) / 0.002 / R
+        return ((dx * dx + dy * dy).squareRoot() - R) / (1 + slope * slope).squareRoot()
+    }
+}
+/// Band `index` of the sound: `half` tall either side of the middle line, with a
+/// different wave on its upper and lower edge so the two halves don't mirror.
+func band(_ index: Int, half: Double) -> Shape {
+    let n = Double(index), amp = 12 + half * 0.13
+    let k1 = 2 * .pi / ((560 - n * 30) * 0.72), p1 = 0.6 + n * 1.7
+    let k2 = 2 * .pi / ((500 + n * 36) * 0.72), p2 = 3.4 + n * 1.1
+    func top(_ x: Double) -> Double { center + half + amp * sin(x * k1 + p1) }
+    func low(_ x: Double) -> Double { center - half - amp * sin(x * k2 + p2) }
+    return { x, y in
+        let st = (top(x + 1) - top(x - 1)) / 2, sl = (low(x + 1) - low(x - 1)) / 2
+        return max((y - top(x)) / (1 + st * st).squareRoot(), (low(x) - y) / (1 + sl * sl).squareRoot())
+    }
 }
 
-// Cover tints, warm to cool and back.
-let tints: [RGB] = [(1.00, 0.36, 0.42), (1.00, 0.62, 0.30), (1.00, 0.83, 0.42), (0.36, 0.80, 0.96),
-                    (0.33, 0.45, 1.00), (0.62, 0.38, 0.98), (0.93, 0.33, 0.72)]
+// MARK: Shading
+
+/// Navy to ice, t in 0...1.
+func indigo(_ t: Double) -> RGB {
+    let stops: [RGB] = [(0.20, 0.20, 0.66), (0.33, 0.42, 0.98), (0.50, 0.68, 1.0), (0.82, 0.93, 1.0)]
+    let u = clamp01(t) * Double(stops.count - 1), i = min(Int(u), stops.count - 2)
+    return mix(stops[i], stops[i + 1], u - Double(i))
+}
+/// How much of a soft shadow `s` throws on the point, the light coming from above.
+func shadow(_ s: Shape, _ x: Double, _ y: Double, drop: Double, blur: Double) -> Double {
+    1 - smooth((s(x, y + drop) + blur * 0.4) / blur)
+}
+/// Glass edge on colour `c`: denser toward the rim, then a lit line on the upper left.
+func glass(_ c: RGB, _ s: Shape, _ x: Double, _ y: Double, rim: Double, light: Double) -> RGB {
+    let d = s(x, y)
+    let gx = (s(x + 1, y) - s(x - 1, y)) / 2, gy = (s(x, y + 1) - s(x, y - 1)) / 2
+    let lit = max(0, -0.66 * gx + 0.75 * gy)
+    let dense = mix(c, scale(c, 0.8), 0.5 * smooth((d + rim * 5) / (rim * 5)))
+    return mix(dense, white, light * smooth((d + rim) / rim) * (0.22 + 0.78 * lit))
+}
+/// Diagonal sheen over a shape `size` across, brighter toward the upper left.
+func sheen(_ c: RGB, _ x: Double, _ y: Double, size: Double, _ amount: Double) -> RGB {
+    mix(c, white, amount * smooth((((y - center) * 0.8 - (x - center) * 0.6) / size + 0.15) / 1.3))
+}
+
+// MARK: The icon
+
+let body = roundedSquare(half: 412, radius: 185)
+let disc = scallop(tip: 306)
+let bands = [236.0, 176, 118, 64, 20].enumerated().map { band($0, half: $1) }
+
+/// The colour at a point inside the body.
+func icon(_ x: Double, _ y: Double) -> RGB {
+    // Pale body with a little of the disc's blue behind it.
+    var c: RGB = mix((0.89, 0.91, 0.98), (0.985, 0.985, 1.0), smooth((y - 100) / 824))
+    let r2 = (x - center) * (x - center) + (y - center) * (y - center)
+    c = mix(c, (0.72, 0.82, 1.0), 0.35 * exp(-r2 / (400 * 400) * 1.6))
+    // The disc's shadow is blue, not grey: grey looks like dirt on a pale body.
+    c = mix(c, (0.30, 0.36, 0.75), 0.42 * shadow(disc, x, y, drop: 24, blur: 56))
+
+    let a = cover(disc(x, y))
+    guard a > 0 else { return c }
+    // The disc has a navy of its own under the bands, so its outline is whole where the widest band dips away from it.
+    var inside = sheen((0.12, 0.12, 0.44), x, y, size: 320, 0.12)
+    for (i, s) in bands.enumerated() {
+        inside = mix(inside, scale(inside, 0.4), 0.5 * (1 - smooth((s(x, y + 10) + 12) / 30)))
+        let tone = indigo(0.04 + 0.96 * Double(i) / Double(bands.count - 1))
+        inside = mix(inside, glass(sheen(tone, x, y, size: 420, 0.2), s, x, y, rim: 7, light: 0.6), cover(s(x, y)))
+    }
+    return mix(c, glass(inside, disc, x, y, rim: 9, light: 0.9), a)
+}
 
 let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "AppIcon.png")
-let center = NSPoint(x: 512, y: 518)
-let tipRadius = 268.0
-
-func cookie(_ tip: Double) -> NSBezierPath {
-    let lobes = 22.0, depth = 0.06, soft = 0.16, peak = (1 + soft * soft).squareRoot() - soft
-    let base = tip / (1 + depth)
-    let path = NSBezierPath()
-    let steps = 22 * 24
-    for i in 0..<steps {
-        let theta = Double(i) / Double(steps) * 2 * .pi + .pi / 2
-        let wave = cos(lobes / 2 * (theta - .pi / 2))
-        let petal = ((wave * wave + soft * soft).squareRoot() - soft) / peak
-        let r = base * (1 + depth * petal)
-        let p = NSPoint(x: center.x + r * cos(theta), y: center.y + r * sin(theta))
-        i == 0 ? path.move(to: p) : path.line(to: p)
+let side = 1024
+let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+                           samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                           colorSpaceName: .deviceRGB, bytesPerRow: side * 4, bitsPerPixel: 32)!
+let pixels = rep.bitmapData!
+// One row per task: `swift` runs this without optimisation, about 5 s on one thread and 1.2 s across the cores.
+DispatchQueue.concurrentPerform(iterations: side) { row in
+    for column in 0..<side {
+        let x = Double(column) + 0.5, y = Double(side - row) - 0.5
+        let d = body(x, y), a = cover(d)
+        var c: RGB = (0, 0, 0)
+        if a > 0 {
+            c = icon(x, y)
+            // Tahoe-style lit edge on the body: brightest along the top, faint along the bottom.
+            let t = (y - 100) / 824
+            let lit = t > 0.5 ? 0.04 + 0.30 * smooth((t - 0.5) * 2) : 0.04 + 0.06 * smooth((0.5 - t) * 2)
+            c = mix(c, white, 0.5 * lit * (1 - cover(d + 3)))
+        }
+        // The macOS drop shadow under the body.
+        let alpha = a + (1 - a) * 0.3 * (1 - smooth((body(x, y + 12) + 14) / 44))
+        let o = (row * side + column) * 4
+        func byte(_ v: Double) -> UInt8 { UInt8(max(0, min(255, (v * 255).rounded()))) }
+        pixels[o] = byte(c.r * a); pixels[o + 1] = byte(c.g * a); pixels[o + 2] = byte(c.b * a); pixels[o + 3] = byte(alpha)
     }
-    path.close()
-    return path
 }
-
-let image = NSImage(size: NSSize(width: 1024, height: 1024), flipped: false) { _ in
-    let bodyRect = NSRect(x: 100, y: 100, width: 824, height: 824)
-    let body = NSBezierPath(roundedRect: bodyRect, xRadius: 185, yRadius: 185)
-    let ctx = NSGraphicsContext.current!
-
-    // Body with the macOS drop shadow.
-    ctx.saveGraphicsState()
-    let shadow = NSShadow()
-    shadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
-    shadow.shadowBlurRadius = 24
-    shadow.shadowOffset = NSSize(width: 0, height: -12)
-    shadow.set()
-    NSGradient(colors: [color((0.035, 0.035, 0.07)), color((0.09, 0.075, 0.15))])!.draw(in: body, angle: 90)
-    ctx.restoreGraphicsState()
-
-    ctx.saveGraphicsState()
-    body.addClip()
-
-    // Dark ground with cover-coloured glows bleeding from behind the disc.
-    let glows: [(RGB, Double, Double, Double, Double)] = [
-        (tints[6], 260, 300, 360, 0.5), (tints[4], 780, 760, 380, 0.55), (tints[5], 760, 240, 260, 0.3)]
-    field(bodyRect) { x, y in
-        var c = mix((0.03, 0.03, 0.065), (0.085, 0.07, 0.14), smooth((y - 100) / 824))
-        for (g, gx, gy, r, a) in glows {
-            let d2 = ((x - gx) * (x - gx) + (y - gy) * (y - gy)) / (r * r)
-            c = mix(c, g, a * exp(-2.2 * d2))
-        }
-        return (c, 1)
-    }.draw(in: bodyRect)
-
-    let disc = cookie(tipRadius)
-
-    // Soft contact shadow under the disc.
-    ctx.saveGraphicsState()
-    let discShadow = NSShadow()
-    discShadow.shadowColor = NSColor.black.withAlphaComponent(0.45)
-    discShadow.shadowBlurRadius = 40
-    discShadow.shadowOffset = NSSize(width: 0, height: -22)
-    discShadow.set()
-    NSColor.black.setFill()
-    disc.fill()
-    ctx.restoreGraphicsState()
-
-    // The glass: a ring of tints, frosted toward a bright centre.
-    ctx.saveGraphicsState()
-    disc.addClip()
-    let box = NSRect(x: center.x - tipRadius - 2, y: center.y - tipRadius - 2, width: tipRadius * 2 + 4, height: tipRadius * 2 + 4)
-    // Mesh-like wash of cover tints, each anchored at a point inside the disc.
-    let anchors: [(RGB, Double, Double)] = [
-        (tints[0], -0.6, 0.35), (tints[1], -0.35, -0.6), (tints[2], 0.25, -0.8),
-        (tints[6], 0.75, -0.15), (tints[5], 0.45, 0.65), (tints[4], -0.1, 0.9)]
-    field(box) { x, y in
-        let nx = (x - center.x) / tipRadius, ny = (y - center.y) / tipRadius
-        let d = (nx * nx + ny * ny).squareRoot()
-        var sum: RGB = (0, 0, 0), wsum = 0.0
-        for (c, ax, ay) in anchors {
-            let w = 1 / pow((nx - ax) * (nx - ax) + (ny - ay) * (ny - ay) + 0.12, 1.7)
-            sum = (sum.r + c.r * w, sum.g + c.g * w, sum.b + c.b * w); wsum += w
-        }
-        var c: RGB = (sum.r / wsum, sum.g / wsum, sum.b / wsum)
-        // Frosted bright core where the light passes straight through.
-        let core = exp(-pow(d / 0.42, 2) * 1.0)
-        c = mix(c, (1, 0.96, 0.94), 0.42 * core)
-        // Diagonal sheen, brighter toward the upper left.
-        let sheen = smooth((ny * 0.8 - nx * 0.6 + 0.15) / 1.3)
-        c = mix(c, (1, 1, 1), 0.2 * sheen)
-        // Thick-glass rim: denser colour, then a thin lit edge on the light side.
-        let rimBand = smooth((d - 0.78) / 0.2)
-        c = mix(c, (c.r * 0.8, c.g * 0.74, c.b * 0.88), rimBand * 0.55)
-        let lightSide = max(0, (ny * 0.75 - nx * 0.66) / d)
-        c = mix(c, (1, 1, 1), smooth((d - 0.86) / 0.1) * lightSide * 0.6)
-        return (c, 1)
-    }.draw(in: box)
-    ctx.restoreGraphicsState()
-
-    // Glass rim: bright where the light hits, faint opposite.
-    ctx.saveGraphicsState()
-    let cg = ctx.cgContext
-    cg.addPath(disc.cgPath)
-    cg.setLineWidth(10)
-    cg.replacePathWithStrokedPath()
-    cg.clip()
-    disc.addClip()
-    NSGradient(colors: [NSColor.white.withAlphaComponent(0.95), NSColor.white.withAlphaComponent(0.25),
-                        NSColor.white.withAlphaComponent(0.55)])!.draw(in: box, angle: -50)
-    ctx.restoreGraphicsState()
-
-    // Tahoe-style lit edge on the body.
-    let inner = NSBezierPath(roundedRect: bodyRect.insetBy(dx: 3, dy: 3), xRadius: 182, yRadius: 182)
-    let edge = NSBezierPath()
-    edge.append(body)
-    edge.append(inner.reversed)
-    NSGradient(colors: [NSColor.white.withAlphaComponent(0.34), NSColor.white.withAlphaComponent(0.04),
-                        NSColor.white.withAlphaComponent(0.1)])!.draw(in: edge, angle: -90)
-    ctx.restoreGraphicsState()
-    return true
-}
-guard let tiff = image.tiffRepresentation,
-      let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+guard let png = rep.retagging(with: .sRGB)?.representation(using: .png, properties: [:])
 else { fatalError("could not render the icon") }
 try png.write(to: output)

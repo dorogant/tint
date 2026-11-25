@@ -26,8 +26,17 @@ final class FloeCore {
 
     var onEvent: ((CoreEvent) -> Void)?
 
+    /// Room for about a hundred songs at 320 kbps (a four-minute one is ~10 MB). A song
+    /// in the cache starts without asking the CDN for its address or downloading
+    /// anything, and seeking in it never waits for the network.
+    private static let audioCacheBytes: UInt64 = 1 << 30
+
     private init() {
         floe_init(floeEventCallback, nil)
+        // In Caches, beside the covers: macOS may empty it when the disk fills, and it stays out of backups.
+        let audio = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("com.antonchurchyn.floe/Audio")
+        floe_set_audio_cache(audio.path, Self.audioCacheBytes)
     }
 
     /// Spotify's own client ID, which librespot's session login requires

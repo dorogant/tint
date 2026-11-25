@@ -20,6 +20,10 @@ typedef struct FloeStats {
 /// Starts the core. Returns false if it was already started.
 bool floe_init(FloeEventCallback callback, void *_Nullable context);
 
+/// Keeps played audio files (encrypted, as downloaded) in `directory`, deleting the ones
+/// played longest ago past `limit_bytes`. Call before the first login; 0 leaves it off.
+void floe_set_audio_cache(const char *directory, uint64_t limit_bytes);
+
 /// Spotify's own client ID, which librespot's session login requires. Process lifetime.
 const char *floe_session_client_id(void);
 

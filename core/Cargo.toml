@@ -47,6 +47,12 @@ features = ["native-tls"]
 git = "https://github.com/librespot-org/librespot"
 rev = "e023adbbf017ae1fc10d01531dbe50c409786f2d"
 
+# The player is built from Tint's copy, which differs from the pinned commit by one
+# change (vendor/README.md). The other librespot crates still come from the commit
+# above, and librespot-connect uses this copy too.
+[patch."https://github.com/librespot-org/librespot"]
+librespot-playback = { path = "vendor/librespot-playback" }
+
 [dependencies]
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }

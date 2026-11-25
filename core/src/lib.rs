@@ -17,6 +17,7 @@ mod stereo;
 
 use std::{
     ffi::{CStr, CString, c_char, c_void},
+    path::PathBuf,
     slice,
     sync::{
         Arc, Mutex, MutexGuard, OnceLock,
@@ -30,7 +31,7 @@ use librespot_connect::{
     Spirc,
 };
 use librespot_core::{
-    Error, SessionConfig, SpotifyUri, authentication::Credentials, config::DeviceType,
+    Error, SessionConfig, SpotifyUri, authentication::Credentials, cache::Cache, config::DeviceType,
     session::Session,
 };
 use librespot_playback::{
@@ -66,6 +67,8 @@ struct Core {
     client_id: CString,
     state: Mutex<State>,
     settings: Mutex<PlaybackSettings>,
+    audio_cache_settings: Mutex<Option<AudioCacheSettings>>,
+    audio_cache: OnceLock<Option<Cache>>,
 }
 
 #[derive(Default)]
@@ -134,8 +137,10 @@ impl Core {
             if let Some(spirc) = old.spirc {
                 let _ = spirc.shutdown(); // tells Spotify the device is gone
             }
-            if let Some(task) = old.spirc_task {
-                let _ = tokio::time::timeout(Duration::from_secs(3), task).await;
+            if let Some(mut task) = old.spirc_task {
+                if tokio::time::timeout(Duration::from_secs(3), &mut task).await.is_err() {
+                    task.abort();
+                }
             }
             if let Some(events) = old.events {
                 events.abort();
@@ -151,12 +156,21 @@ impl Core {
         generation
     }
 
+    /// The audio cache every session shares. Opened by the first login, not at launch
+    /// and not on the main thread: librespot reads each cached file's size and access
+    /// time to rebuild its eviction order.
+    fn audio_cache(&self) -> Option<Cache> {
+        self.audio_cache
+            .get_or_init(|| lock(&self.audio_cache_settings).as_ref().and_then(open_audio_cache))
+            .clone()
+    }
+
     fn connect(&'static self, credentials: Credentials, volume: u16) {
         let settings = *lock(&self.settings);
         let generation = self.teardown();
         self.emit(json!({ "type": "connecting" }));
         self.runtime.spawn(async move {
-            let session = Session::new(SessionConfig::default(), None);
+            let session = Session::new(SessionConfig::default(), self.audio_cache());
             let pcm = self.pcm.clone();
             let player = Player::new(
                 player_config(settings),
@@ -269,6 +283,25 @@ struct PlaybackSettings {
 
 impl Default for PlaybackSettings {
     fn default() -> Self { Self { bitrate: 320, normalization: false, gapless: true } }
+}
+
+struct AudioCacheSettings {
+    directory: PathBuf,
+    limit_bytes: u64,
+}
+
+/// librespot keeps each fully downloaded audio file (still encrypted) here and plays
+/// it from disk the next time, skipping the CDN lookup and the download. Past
+/// `limit_bytes` it deletes the files played longest ago.
+fn open_audio_cache(settings: &AudioCacheSettings) -> Option<Cache> {
+    // The first two slots are librespot's own credentials and volume files; Swift keeps both.
+    match Cache::new(None, None, Some(&settings.directory), Some(settings.limit_bytes)) {
+        Ok(cache) => Some(cache),
+        Err(e) => {
+            warn!("audio cache at {:?} is unavailable, streaming without it: {e}", settings.directory);
+            None
+        }
+    }
 }
 
 fn player_config(settings: PlaybackSettings) -> PlayerConfig {
@@ -438,9 +471,26 @@ pub unsafe extern "C" fn floe_init(callback: EventCallback, context: *mut c_void
             client_id: CString::new(SessionConfig::default().client_id).unwrap_or_default(),
             state: Mutex::default(),
             settings: Mutex::default(),
+            audio_cache_settings: Mutex::default(),
+            audio_cache: OnceLock::new(),
         }
     });
     created
+}
+
+/// Keeps played audio files in `directory`, up to `limit_bytes`, so a song heard
+/// before starts from disk. Call before the first login; later calls change nothing.
+/// Without it (or with a limit of 0) every play downloads the file again.
+///
+/// # Safety
+/// `directory` must be a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn floe_set_audio_cache(directory: *const c_char, limit_bytes: u64) {
+    let (Some(core), Some(directory)) = (CORE.get(), unsafe { str_arg(directory) }) else {
+        return;
+    };
+    *lock(&core.audio_cache_settings) = (limit_bytes > 0 && !directory.is_empty())
+        .then(|| AudioCacheSettings { directory: PathBuf::from(directory), limit_bytes });
 }
 
 /// The OAuth client ID librespot's session login needs (Spotify's own, not the
@@ -759,6 +809,27 @@ mod configuration_tests {
         assert!(!default.normalisation);
         assert!(default.gapless);
         assert!(connect_config(u16::MAX / 2).emit_set_queue_events);
+    }
+
+    #[test]
+    fn audio_cache_keeps_files_and_drops_the_one_played_longest_ago_past_its_limit() {
+        use librespot_core::FileId;
+        let directory = std::env::temp_dir().join(format!("floe-audio-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let cache = open_audio_cache(&AudioCacheSettings { directory: directory.clone(), limit_bytes: 150 }).unwrap();
+        let (first, second) = (FileId::from_raw(&[1; 20]), FileId::from_raw(&[2; 20]));
+        cache.save_file(first, &mut &[0u8; 100][..]).unwrap();
+        assert!(cache.file(first).is_some());
+        // The order is by access time, so the two saves need different ones.
+        std::thread::sleep(Duration::from_millis(20));
+        cache.save_file(second, &mut &[0u8; 100][..]).unwrap();
+        assert!(cache.file(first).is_none(), "200 bytes are over the 150 byte limit");
+        assert!(cache.file(second).is_some());
+
+        // A cache opened on the same directory finds what the last one left.
+        let reopened = open_audio_cache(&AudioCacheSettings { directory: directory.clone(), limit_bytes: 150 }).unwrap();
+        assert!(reopened.file(second).is_some());
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 }
 

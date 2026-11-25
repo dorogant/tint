@@ -339,7 +339,76 @@ import Foundation
         precondition(model.session == .failed("refused by Spotify") && model.hasConnected,
                      "A refused saved login must stop the reconnect loop and ask for a new sign-in")
         print("PASS: a refused saved login stops reconnecting")
-        print("PASS: 28 production playback transport regressions")
+
+        // Spotify Soloist WebSocket protocol decoding & command encoding.
+        var sState = SoloistProtocol.State()
+        let unauth = SoloistProtocol.decode(
+            json: Data(#"{"type":"auth_state","logged_in":false,"is_active":false,"device_name":"Tint"}"#.utf8),
+            state: &sState
+        )
+        guard case .awaitingPairing(deviceName: "Tint")? = unauth.events.first, !unauth.shouldFetchState else {
+            preconditionFailure("Unauthenticated auth_state must emit awaitingPairing")
+        }
+        let authed = SoloistProtocol.decode(
+            json: Data(#"{"type":"auth_state","logged_in":true,"is_active":true,"device_name":"Tint"}"#.utf8),
+            state: &sState
+        )
+        guard case .connected(username: "Tint")? = authed.events.first, authed.shouldFetchState else {
+            preconditionFailure("Authenticated auth_state must emit connected and request state")
+        }
+        let snapshotJSON = Data(#"""
+        {
+          "type": "playback_state",
+          "status": "playing",
+          "item": {
+            "uri": "spotify:track:abc",
+            "entity_type": "track",
+            "decorations": {
+              "identity": { "name": "Starlight" },
+              "visual_identity": { "cover": [
+                { "url": "https://i.scdn.co/small", "size": "small" },
+                { "url": "https://i.scdn.co/xlarge", "size": "xlarge" }
+              ] },
+              "parent": { "entity": { "decorations": { "identity": { "name": "Black Holes" } } } },
+              "creators": [ { "uri": "spotify:artist:muse", "decorations": { "identity": { "name": "Muse" } } } ],
+              "playback": { "duration_ms": 240000, "content_ratings": ["explicit"] }
+            }
+          },
+          "position": { "position_ms": 10000, "timestamp_ms": 1000000, "speed": 1.0 },
+          "volume": 50,
+          "is_active": true,
+          "options": { "shuffle": true, "repeat": "context" }
+        }
+        """#.utf8)
+        let snap = SoloistProtocol.decode(json: snapshotJSON, state: &sState, nowMs: 1000500)
+        precondition(snap.events.contains {
+            if case let .track(t) = $0 {
+                return t.uri == "spotify:track:abc" && t.name == "Starlight" && t.album == "Black Holes"
+                    && t.artistLine == "Muse" && t.explicit && t.coverURL?.absoluteString == "https://i.scdn.co/xlarge"
+            }
+            return false
+        }, "Soloist playback_state must decode full track metadata and highest-res cover")
+        precondition(snap.events.contains {
+            if case let .playing(ms) = $0 { return abs(ms - 10500) < 1 }
+            return false
+        }, "Soloist playback_state must interpolate position from timestamp_ms and speed")
+        precondition(snap.events.contains {
+            if case .shuffle(true) = $0 { return true }; return false
+        } && snap.events.contains {
+            if case .repeatMode(.context) = $0 { return true }; return false
+        }, "Soloist playback_state must decode shuffle and repeat options")
+        let queueEvt = SoloistProtocol.decode(
+            json: Data(#"{"type":"queue_changed","previous":[{"uid":"1"}],"upcoming":[]}"#.utf8),
+            state: &sState
+        )
+        guard case .navigation(uri: "spotify:track:abc", hasPrevious: true)? = queueEvt.events.first else {
+            preconditionFailure("Soloist queue_changed must map previous entries to navigation event")
+        }
+        let repeatCmds = SoloistProtocol.setRepeatCommands(.track)
+        precondition(repeatCmds.count == 2 && repeatCmds[0].contains("set_repeat_context") && repeatCmds[1].contains("set_repeat_track"),
+                     "Soloist repeat mode must coordinate set_repeat_context and set_repeat_track")
+        print("PASS: Spotify Soloist WebSocket protocol decoding and command encoding")
+        print("PASS: 29 production playback transport regressions")
     }
 
     @MainActor private static func playing(_ track: TrackInfo, at position: Double) -> PlayerModel {

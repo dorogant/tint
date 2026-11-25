@@ -19,8 +19,11 @@ struct PlaybackStatusView: View {
         if player.hasConnected && !player.isConnected {
             HStack(spacing: scale(12)) {
                 Image(systemName: "wifi.exclamationmark")
-                if case .failed = player.session {
-                    Text("Spotify didn't accept the saved login. Sign in again to keep playing.").font(.callout)
+                if case let .awaitingPairing(deviceName) = player.session {
+                    Text("Select \"\(deviceName)\" in Spotify's Devices menu to pair playback.").font(.callout)
+                } else if case let .failed(message) = player.session {
+                    Text(message.isEmpty ? L10n.string("Spotify didn't accept the saved login. Sign in again to keep playing.") : message)
+                        .font(.callout)
                 } else {
                     Text("Playback connection lost. Tint will try to reconnect.").font(.callout)
                 }

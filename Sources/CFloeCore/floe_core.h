@@ -60,6 +60,8 @@ void floe_take_stats(FloeStats *out);
 
 /// Optional stereo tap of rendered PCM (before the Swift mixer volume). Disabled by default.
 void floe_set_analysis_enabled(bool enabled);
+/// Real-time safe push into the analysis ring for external playback engines (e.g. Spotify Soloist).
+void floe_push_analysis(const float *left, const float *right, uint32_t frames);
 /// Analysis queue only, never the audio render thread. Returns newest frames.
 /// Arrays must be distinct and hold `capacity` floats each. Generation changes on
 /// track/seek/pause and enable/disable; discard FFT history when it changes.

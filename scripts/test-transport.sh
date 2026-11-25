@@ -7,6 +7,7 @@ trap 'rm -rf "$TEMP"' EXIT
 swiftc -swift-version 6 -O \
     "$ROOT/Sources/Floe/Playback/PlayerModel.swift" \
     "$ROOT/Sources/Floe/Core/CoreEvent.swift" \
+    "$ROOT/Sources/Floe/Core/SoloistProtocol.swift" \
     "$ROOT/Sources/Floe/API/Models.swift" \
     "$ROOT/Sources/Floe/Settings/AppSettings.swift" "$ROOT/Sources/Floe/Support/InterfaceScale.swift" \
     "$ROOT/Tests/PlaybackTransportTestSupport.swift" \

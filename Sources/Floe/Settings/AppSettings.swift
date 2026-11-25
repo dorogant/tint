@@ -6,6 +6,7 @@ import Observation
 final class AppSettings {
     static let glassOpacityRange = 0.2...0.9
 
+    var engine: PlaybackEngine { didSet { defaults.set(engine.rawValue, forKey: "playbackEngine") } }
     var bitrate: Int { didSet { defaults.set(bitrate, forKey: "bitrate") } }
     var normalization: Bool { didSet { defaults.set(normalization, forKey: "normalization") } }
     var gapless: Bool { didSet { defaults.set(gapless, forKey: "gapless") } }
@@ -17,6 +18,7 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        engine = defaults.string(forKey: "playbackEngine").flatMap(PlaybackEngine.init) ?? .soloist
         let playback = PlaybackConfiguration.default
         let quality = defaults.object(forKey: "bitrate") as? Int ?? playback.bitrate
         bitrate = PlaybackConfiguration.supportedBitrates.contains(quality) ? quality : playback.bitrate
@@ -62,4 +64,12 @@ struct PlaybackConfiguration: Equatable, Sendable {
     var bitrate: Int
     var normalization: Bool
     var gapless: Bool
+}
+
+/// Which playback engine handles Spotify Connect & audio output.
+/// Spotify Soloist is Spotify's official headless client (works on all Premium accounts);
+/// librespot is kept as an optional fallback for older accounts that still receive AES keys.
+enum PlaybackEngine: String, CaseIterable, Identifiable, Sendable {
+    case soloist, librespot
+    var id: Self { self }
 }

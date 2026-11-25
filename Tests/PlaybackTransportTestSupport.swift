@@ -20,12 +20,17 @@ struct PlayRequest: Sendable {
 
     static let shared = FloeCore()
     var onEvent: ((CoreEvent) -> Void)?
+    var engine: PlaybackEngine = .librespot
+    var usesLocalAudioOutput: Bool { true }
     private(set) var commands = [Command]()
     private(set) var loads = [PlayRequest]()
     var sessionClientID: String { "synthetic-client" }
 
     func reset() { commands = []; loads = []; onEvent = nil }
     func deliver(_ event: CoreEvent) { onEvent?(event) }
+    func startSoloist(apiKey: String, volume: UInt16) { preconditionFailure("Unexpected soloist start") }
+    func stopSoloist() {}
+    func setSoloistTapRunning(_ running: Bool) {}
     func previous() { commands.append(.previous) }
     func next() { commands.append(.next) }
     func seek(toMs ms: UInt32) { commands.append(.seek(ms)) }
@@ -59,7 +64,7 @@ struct PlayRequest: Sendable {
 }
 
 final class CredentialStore: Sendable {
-    enum Account { case playbackSession }
+    enum Account { case playbackSession, soloistAPIKey }
     static let shared = CredentialStore()
     func read(_ account: Account) -> Data? { preconditionFailure("Unexpected credential read") }
     func write(_ data: Data, account: Account) { preconditionFailure("Unexpected credential write") }

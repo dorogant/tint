@@ -141,41 +141,57 @@ struct SettingsView: View {
     @ViewBuilder private var playbackOptions: some View {
         @Bindable var settings = settings
         SwiftUI.Section {
-            Picker("Streaming quality", selection: $settings.bitrate) {
-                ForEach(PlaybackConfiguration.supportedBitrates, id: \.self) { bitrate in
-                    let title = "\(bitrate) kbps"
-                    Text(LocalizedStringKey(title)).tag(bitrate)
-                }
+            Picker("Playback engine", selection: $settings.engine) {
+                Text("Spotify Soloist (Recommended)").tag(PlaybackEngine.soloist)
+                Text("librespot (Legacy)").tag(PlaybackEngine.librespot)
             }.pickerStyle(.menu)
-            Toggle(isOn: $settings.normalization) {
-                settingLabel("Normalize volume", detail: "Keep loud and quiet tracks at a similar volume.")
-            }
         } header: {
-            Text("Audio")
+            Text("Engine")
         } footer: {
-            note("320 kbps is Tint's highest streaming quality. Lossless is unavailable in this playback engine.")
+            note(settings.engine == .soloist
+                 ? "Spotify Soloist is Spotify's official headless client. It works on every Premium account and manages lossless quality, normalization, gapless playback and crossfade natively."
+                 : "librespot is an unofficial Rust client. Spotify only issues audio keys for older accounts that used it previously.")
         }
-        SwiftUI.Section {
-            Toggle(isOn: $settings.gapless) {
-                settingLabel("Gapless playback", detail: "Let consecutive tracks play without a gap.")
-            }
-            LabeledContent("Crossfade") { Text("Unavailable") }
-        } header: {
-            Text("Transitions")
-        } footer: {
-            note("This playback engine supports gapless playback but does not support crossfade.")
-        }
-        if player.activeConfiguration != settings.playbackConfiguration {
+        if settings.engine == .soloist {
+            SoloistSettingsSection()
+        } else {
             SwiftUI.Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Changes waiting to apply", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.headline).foregroundStyle(palette.highlight)
-                    note("Playback changes apply after reconnecting or restarting Tint.")
-                    Button("Apply and reconnect") { player.reconnectPlayback() }
-                        .buttonStyle(.borderedProminent).disabled(!player.isConnected)
-                }.padding(.vertical, 4)
+                Picker("Streaming quality", selection: $settings.bitrate) {
+                    ForEach(PlaybackConfiguration.supportedBitrates, id: \.self) { bitrate in
+                        let title = "\(bitrate) kbps"
+                        Text(LocalizedStringKey(title)).tag(bitrate)
+                    }
+                }.pickerStyle(.menu)
+                Toggle(isOn: $settings.normalization) {
+                    settingLabel("Normalize volume", detail: "Keep loud and quiet tracks at a similar volume.")
+                }
+            } header: {
+                Text("Audio")
             } footer: {
-                note("Reconnecting keeps the current song and position. Manually queued songs may be reset.")
+                note("320 kbps is librespot's highest streaming quality. Lossless is unavailable in librespot.")
+            }
+            SwiftUI.Section {
+                Toggle(isOn: $settings.gapless) {
+                    settingLabel("Gapless playback", detail: "Let consecutive tracks play without a gap.")
+                }
+                LabeledContent("Crossfade") { Text("Unavailable") }
+            } header: {
+                Text("Transitions")
+            } footer: {
+                note("librespot supports gapless playback but does not support crossfade.")
+            }
+            if player.activeConfiguration != settings.playbackConfiguration {
+                SwiftUI.Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Changes waiting to apply", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.headline).foregroundStyle(palette.highlight)
+                        note("Playback changes apply after reconnecting or restarting Tint.")
+                        Button("Apply and reconnect") { player.reconnectPlayback() }
+                            .buttonStyle(.borderedProminent).disabled(!player.isConnected)
+                    }.padding(.vertical, 4)
+                } footer: {
+                    note("Reconnecting keeps the current song and position. Manually queued songs may be reset.")
+                }
             }
         }
     }
@@ -248,7 +264,8 @@ struct SettingsView: View {
             note("A native Spotify client for macOS. Spotify Premium is required. Not affiliated with Spotify.")
         }
         SwiftUI.Section {
-            Link("Playback engine: librespot", destination: URL(string: "https://github.com/librespot-org/librespot")!)
+            Link("Playback engine: Spotify Soloist", destination: URL(string: "https://developer.spotify.com/documentation/soloist")!)
+            Link("Legacy engine: librespot", destination: URL(string: "https://github.com/librespot-org/librespot")!)
             Link("Lyrics: LRCLIB", destination: URL(string: "https://lrclib.net")!)
         }
     }
@@ -419,5 +436,87 @@ private struct DeveloperAppSettings: View {
     private func switchApp(to id: String?) {
         SpotifyClientID.setCustom(id)
         Task { await library.disconnect() }
+    }
+}
+
+/// Spotify Soloist binary status, Homebrew install/update, and API key management.
+private struct SoloistSettingsSection: View {
+    @Environment(PlayerModel.self) private var player
+    @ViewState private var binaryPath = SoloistBackend.findBinary()?.path
+    @ViewState private var versionText: String?
+    @ViewState private var keyDraft = ""
+    @ViewState private var busy = false
+    @ViewState private var errorMessage: String?
+
+    init() {}
+
+    var body: some View {
+        SwiftUI.Section {
+            LabeledContent("Binary") {
+                if let binaryPath {
+                    Text(verbatim: versionText ?? binaryPath)
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text("Not installed").foregroundStyle(.orange)
+                }
+            }
+            HStack(spacing: 10) {
+                if SoloistBackend.findHomebrew() != nil {
+                    Button(busy ? "Working…" : (binaryPath == nil ? "Install with Homebrew" : "Update with Homebrew")) {
+                        runBrew(upgrade: binaryPath != nil)
+                    }
+                    .disabled(busy)
+                }
+                Link("Spotify Soloist Downloads", destination: SoloistBackend.downloadsURL)
+            }
+            HStack {
+                SecureField("New Soloist API Key", text: $keyDraft)
+                    .font(.system(.callout, design: .monospaced))
+                    .onSubmit(saveKey)
+                Button("Save & Connect", action: saveKey)
+                    .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || binaryPath == nil)
+            }
+            if player.isConnected {
+                Button("Reconnect Soloist") { player.reconnectPlayback() }
+            }
+            if let errorMessage {
+                Text(errorMessage).font(.callout).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Spotify Soloist")
+        } footer: {
+            Text("Soloist builds expire after 90 days; use Update with Homebrew or download a fresh build from Spotify when prompted. Audio visualization uses macOS System Audio Recording permission to tap Soloist's audio.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .task {
+            binaryPath = SoloistBackend.findBinary()?.path
+            versionText = await SoloistBackend.installedVersion()
+        }
+    }
+
+    private func saveKey() {
+        let trimmed = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        keyDraft = ""
+        player.connectSoloist(apiKey: trimmed)
+    }
+
+    private func runBrew(upgrade: Bool) {
+        busy = true
+        errorMessage = nil
+        Task {
+            let result = await SoloistBackend.installViaHomebrew(upgrade: upgrade)
+            busy = false
+            switch result {
+            case let .success(url):
+                binaryPath = url.path
+                versionText = await SoloistBackend.installedVersion()
+                if player.isConnected { player.reconnectPlayback() }
+            case let .failure(error):
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 }

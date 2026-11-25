@@ -722,6 +722,24 @@ pub extern "C" fn floe_set_analysis_enabled(enabled: bool) {
     }
 }
 
+/// Real-time safe push into the stereo analysis ring for external audio taps (Spotify Soloist).
+/// # Safety
+/// `left` and `right` must be readable arrays of at least `frames` floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn floe_push_analysis(left: *const f32, right: *const f32, frames: u32) {
+    if left.is_null() || right.is_null() || frames == 0 {
+        return;
+    }
+    let Some(core) = CORE.get() else {
+        return;
+    };
+    let (left, right) = unsafe {
+        (slice::from_raw_parts(left, frames as usize),
+         slice::from_raw_parts(right, frames as usize))
+    };
+    core.pcm.analysis.capture(left, right);
+}
+
 /// Analysis queue only. Returns newest stereo frames plus a seek/track generation.
 /// # Safety
 /// `left` and `right` must be distinct writable arrays of `capacity` floats;

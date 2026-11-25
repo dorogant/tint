@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The two browser approvals Tint needs before the main window: playback (librespot,
-/// Spotify's own client ID) and library (the Web API, through a developer app).
+/// The two approvals Tint needs before the main window: playback (Spotify Soloist
+/// by default, or optional librespot) and library (the Web API, through a developer app).
 struct OnboardingView: View {
     @Environment(\.coverPalette) private var palette
     enum Step { case playback, library }
@@ -10,14 +10,20 @@ struct OnboardingView: View {
     let step: Step
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @Environment(AppSettings.self) private var settings
     @ReducedMotion private var still
     /// The pasted Client ID; saved when Connect is pressed.
     @ViewState private var clientID = SpotifyClientID.custom ?? ""
     /// A build with its own client ID keeps the how-to folded away.
     @ViewState private var showsDeveloperApp = SpotifyClientID.builtIn == nil || SpotifyClientID.custom != nil
     @ViewState private var connecting: Task<Void, Never>?
+    @ViewState private var soloistKey = ""
+    @ViewState private var soloistInstalled = SoloistBackend.findBinary() != nil
+    @ViewState private var installingSoloist = false
+    @ViewState private var installError: String?
 
     var body: some View {
+        @Bindable var settings = settings
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 12) {
                 Image(systemName: "circle.hexagongrid.fill")
@@ -25,12 +31,24 @@ struct OnboardingView: View {
                     .foregroundStyle(palette.accent)
                 Text("Welcome to Tint").font(.system(size: 26, weight: .heavy))
             }
-            Text("Spotify asks for two approvals, both in your browser. Tint never sees your password.")
+            Text(settings.engine == .soloist
+                 ? "Tint plays audio through Spotify Soloist and reads your library through the Spotify Web API. Tint never sees your password."
+                 : "Spotify asks for two approvals, both in your browser. Tint never sees your password.")
                 .foregroundStyle(Theme.secondary)
 
-            stepRow(number: 1, title: "Playback", detail: "Lets Tint stream music as a Spotify Connect device.",
-                    done: step == .library, busy: player.session == .authorizing || player.session == .connecting,
-                    error: playbackError, action: player.logIn)
+            VStack(alignment: .leading, spacing: 14) {
+                stepRow(number: 1, title: "Playback",
+                        detail: settings.engine == .soloist
+                            ? "Connects via Spotify Soloist (official engine, works on all Premium accounts)."
+                            : "Lets Tint stream music via librespot (older Premium accounts only).",
+                        done: step == .library,
+                        busy: isPlaybackBusy,
+                        error: playbackError,
+                        actionEnabled: canConnectPlayback,
+                        cancel: isAwaitingPairing ? { player.logOut() } : nil,
+                        action: connectPlayback)
+                if step == .playback { playbackSetup }
+            }
             VStack(alignment: .leading, spacing: 14) {
                 stepRow(number: 2, title: "Library",
                         detail: "Lets Tint read your playlists, saved music and history through your developer app.",
@@ -41,11 +59,127 @@ struct OnboardingView: View {
             }
         }
         .padding(30)
-        .frame(width: 520)
+        .frame(width: 540)
         .glassPanel(cornerRadius: 24)
         .floeAnimation(value: showsDeveloperApp)
+        .floeAnimation(value: settings.engine)
+        .floeAnimation(value: soloistInstalled)
         // Step 2's instructions open the card rather than replacing it.
         .floeAnimation(value: step)
+        .onAppear { soloistInstalled = SoloistBackend.findBinary() != nil }
+    }
+
+    private var isAwaitingPairing: Bool {
+        if case .awaitingPairing = player.session { true } else { false }
+    }
+
+    private var isPlaybackBusy: Bool {
+        switch player.session {
+        case .authorizing, .connecting, .awaitingPairing: true
+        default: false
+        }
+    }
+
+    private var trimmedSoloistKey: String { soloistKey.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var canConnectPlayback: Bool {
+        switch settings.engine {
+        case .soloist: soloistInstalled && !trimmedSoloistKey.isEmpty
+        case .librespot: true
+        }
+    }
+
+    private func connectPlayback() {
+        switch settings.engine {
+        case .soloist: player.connectSoloist(apiKey: trimmedSoloistKey)
+        case .librespot: player.logIn()
+        }
+    }
+
+    @ViewBuilder private var playbackSetup: some View {
+        @Bindable var settings = settings
+        VStack(alignment: .leading, spacing: 10) {
+            if settings.engine == .soloist {
+                if case let .awaitingPairing(deviceName) = player.session {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "hifispeaker.fill").foregroundStyle(palette.highlight)
+                        Text("Open Spotify on your phone or computer and select \"\(deviceName)\" under Devices to finish pairing.")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                } else {
+                    if !soloistInstalled {
+                        instruction(1, "Install Spotify Soloist (official macOS playback daemon):")
+                        HStack(spacing: 8) {
+                            if SoloistBackend.findHomebrew() != nil {
+                                Button(installingSoloist ? "Installing…" : "Install with Homebrew") {
+                                    installSoloist()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(palette.accent)
+                                .disabled(installingSoloist)
+                                .controlSize(.small)
+                            }
+                            Text(verbatim: SoloistBackend.homebrewCommand)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .textSelection(.enabled)
+                            CopyButton(text: SoloistBackend.homebrewCommand)
+                        }
+                        .padding(.leading, 16)
+                        HStack(spacing: 12) {
+                            Link("Or download from Spotify", destination: SoloistBackend.downloadsURL)
+                            Button("Check Again") { soloistInstalled = SoloistBackend.findBinary() != nil }
+                                .buttonStyle(.link)
+                        }
+                        .padding(.leading, 16)
+                        if let installError {
+                            Text(installError).font(.system(size: 11.5)).foregroundStyle(.red)
+                                .padding(.leading, 16)
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            Text("Spotify Soloist is installed.")
+                        }
+                    }
+                    instruction(2, "Open [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → Spotify Soloist API Key, generate a key, and paste it here:")
+                    SecureField("Soloist API Key", text: $soloistKey)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { if canConnectPlayback { connectPlayback() } }
+                        .padding(.leading, 16)
+                    Text("Then press Connect and pick \"Tint\" once in Spotify's Devices menu.")
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.leading, 16)
+                }
+            }
+            Picker("Engine", selection: $settings.engine) {
+                Text("Spotify Soloist").tag(PlaybackEngine.soloist)
+                Text("librespot (Legacy)").tag(PlaybackEngine.librespot)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.top, 2)
+        }
+        .font(.system(size: 12.5))
+        .padding(.leading, 42)
+    }
+
+    private func installSoloist() {
+        installingSoloist = true
+        installError = nil
+        Task {
+            let result = await SoloistBackend.installViaHomebrew(upgrade: false)
+            installingSoloist = false
+            switch result {
+            case .success:
+                soloistInstalled = true
+            case let .failure(error):
+                installError = error.localizedDescription
+            }
+        }
     }
 
     private var playbackError: String? {

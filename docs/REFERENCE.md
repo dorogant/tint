@@ -560,7 +560,16 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
 
 ## How it works
 
-- **Audio path.** librespot decodes on its own thread into a custom `Sink`, which writes
+- **Spotify Soloist playback backend (default since 0.4.0).** `SoloistBackend` spawns
+  the user-installed `soloist` binary with `--ws 127.0.0.1:0` and its own private data
+  and cache directories, discovers `ws.addr`/`ws.port`, and speaks Soloist's JSON
+  WebSocket protocol (`SoloistProtocol`) translated directly into `CoreEvent`s.
+  `SoloistAudioTap` uses macOS's Core Audio Process Tap (`CATapDescription` +
+  `AudioHardwareCreateProcessTap`) to tap Soloist's child PID and feed stereo float32
+  PCM into `floe_push_analysis` only while visual effects are active. The Soloist API key
+  is stored in `CredentialStore` (`soloist-api-key`, 0600). `librespot` remains available
+  as an opt-in legacy engine in Onboarding and Settings → Playback.
+- **Audio path (librespot).** librespot decodes on its own thread into a custom `Sink`, which writes
   interleaved f32 PCM into a lock-free ring buffer. An `AVAudioSourceNode` pulls from it
   on the render thread (`floe_render`). Pause closes a gate so audio stops immediately
   rather than after the buffer drains; seek and load flush the buffer. Volume lives

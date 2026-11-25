@@ -11,25 +11,25 @@ https://github.com/user-attachments/assets/d1be912e-72f9-47e6-bd91-8671f65c4938
 https://github.com/user-attachments/assets/71409bcd-6803-4178-b1d2-96befeec9820
 
 Built with SwiftUI, Core Animation and Metal on top of
-[librespot](https://github.com/librespot-org/librespot). Needs Spotify Premium.
+[Spotify Soloist](https://developer.spotify.com/documentation/soloist) (with optional
+[librespot](https://github.com/librespot-org/librespot) fallback). Needs Spotify Premium.
 
 ## Features
 
 - Home, playlists, albums, artists, Liked Songs and search
+- Official **Spotify Soloist** playback engine by default (works on all Spotify Premium accounts, lossless audio, crossfade & local cache), with optional `librespot` fallback
 - A Spotify Connect device: control it from your phone, see the queue, move playback
   between devices
 - Synced lyrics that follow the song; click a line to jump to it
-- Visualizers and live backgrounds (Fluid and Beams) that take their colours from the album cover
-- Local encrypted audio cache (1 GiB) so replayed songs and seeks start from disk without waiting on the network
+- Visualizers and live backgrounds (Fluid and Beams) that take their colours from the album cover and react to audio via macOS Core Audio Process Tap
 - Media keys and the Control Center player
 - English and Ukrainian
 
-## What's new in 0.3.0
+## What's new in 0.4.0
 
-- **Faster playback starts & encrypted audio cache**: songs played to completion stay cached (encrypted, up to 1 GiB) for instant replays and seeks, and uncached tracks request the audio key alongside the file.
-- **Smoother animations & lower GPU/CPU**: Metal live backgrounds use 13–25% less GPU time, synced lyrics layouts are ~41% faster with hover dwell and zero per-frame text redraws, and returning from Now Playing to Library is ~3.5× faster without resizing or rebuilding the underlying views.
-- **True idle gating & bounded memory**: clocks, playhead glides, looping symbols and lyrics timers pause whenever the window is hidden, minimized or covered; artwork decoding skips cancelled scroll requests and long-session caches are bounded.
-- **Refreshed icon**: Tint's scalloped cover shape holding bands of indigo sound on a pale body.
+- **Spotify Soloist as the default playback engine**: replaces `librespot` as the default so Tint works on **every** Spotify Premium account (including newer accounts where Spotify blocks `librespot` audio keys with `error audio key 0 1`), with one-click Homebrew install in onboarding, local WebSocket control, and a Core Audio Process Tap (`CATapDescription`) so the visualizer and live background stay audio-reactive.
+- **Optional `librespot` fallback**: still available in Onboarding and **Settings → Playback** for older accounts.
+- **0.3.0 performance & polish included**: 13–25% faster Metal live backgrounds, ~41% faster synced lyrics layouts with hover dwell, ~3.5× faster `Now Playing → Library` transitions, full idle gating when hidden/minimized, and refreshed sound-disc icon.
 
 <p>
   <img src="docs/screenshots/live-background.jpg" width="49%" alt="The live background, lit in the colours of the cover">
@@ -60,9 +60,10 @@ You need a Mac with Apple Silicon, macOS 26 or later, and Spotify Premium.
 1. [Download Tint](https://github.com/dorogant/tint/releases/latest/download/Tint.zip),
    unzip it and move Tint to Applications.
 2. Open Tint. macOS stops it the first time, because the build isn't notarized: choose
-   **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway**.
-3. Sign in. Tint asks for two approvals in the browser, and for the Client ID of a free
-   Spotify developer app, which the setup screen walks you through creating.
+   **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway**
+   (or run `xattr -dr com.apple.quarantine /Applications/Tint.app` in Terminal).
+3. Set up **Spotify Soloist** (Step 1 in Tint): install `soloist` (`brew install --cask spotify-soloist` or via the button in Tint), paste your free **Spotify Soloist API Key** from [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), press **Connect**, and select **Tint** once in Spotify's Devices menu.
+4. Connect your **Library** (Step 2 in Tint) with the Client ID of a free Spotify developer app, which the setup screen walks you through creating.
 
 To build it yourself instead, with the Xcode Command Line Tools and
 [Rust](https://rustup.rs) installed:
@@ -76,9 +77,11 @@ scripts/build-app.sh --install --open
 ## Good to know
 
 Tint is unofficial. It is not affiliated with, endorsed by or connected to Spotify;
-"Spotify" is a trademark of Spotify AB. It plays music through librespot, an unofficial
-client library, and using one is against Spotify's terms of use. Bans are rare but
-possible, and the risk to your account is yours.
+"Spotify" is a trademark of Spotify AB. By default Tint controls [Spotify Soloist](https://developer.spotify.com/documentation/soloist),
+Spotify's official headless Connect client (which users install directly from Spotify or Homebrew;
+builds expire every 90 days and can be updated via `brew upgrade --cask spotify-soloist`).
+An optional legacy `librespot` engine is also available in Settings for older accounts, though
+Spotify no longer issues `librespot` audio keys to newer accounts.
 
 Tint only streams: no downloads and no offline playback. Lyrics come from
 [LRCLIB](https://lrclib.net) and belong to their rights holders.

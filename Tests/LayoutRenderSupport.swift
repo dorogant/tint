@@ -25,9 +25,14 @@ struct PlayRequest: Sendable {
 @MainActor final class FloeCore {
     static let shared = FloeCore()
     var onEvent: ((CoreEvent) -> Void)?
+    var engine: PlaybackEngine = .librespot
+    var usesLocalAudioOutput: Bool { true }
     var sessionClientID: String { "layout-fixture" }
 
     func deliver(_ event: CoreEvent) { onEvent?(event) }
+    func startSoloist(apiKey: String, volume: UInt16) {}
+    func stopSoloist() {}
+    func setSoloistTapRunning(_ running: Bool) {}
     func previous() {}
     func next() {}
     func seek(toMs ms: UInt32) {}

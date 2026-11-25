@@ -16,6 +16,8 @@ final class CredentialStore: Sendable {
     enum Account: String, Sendable {
         /// Reusable librespot credentials (JSON).
         case playbackSession = "librespot-session"
+        /// Spotify Soloist API key from developer.spotify.com (UTF-8 string).
+        case soloistAPIKey = "soloist-api-key"
         /// Web API tokens for the user's developer app (JSON: access + refresh token, client ID).
         case webAPI = "web-api"
     }

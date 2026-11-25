@@ -11,11 +11,13 @@ final class PlayerModel {
         case loggedOut
         case authorizing
         case connecting
+        case awaitingPairing(deviceName: String)
         case connected(username: String)
         case failed(String)
     }
 
     private(set) var session: Session = .loggedOut
+    private(set) var engine: PlaybackEngine = .soloist
     /// True once a session came up; reconnects after that keep the main UI.
     private(set) var hasConnected = false
     /// False until the saved login has been looked for. Until then nobody knows
@@ -68,6 +70,7 @@ final class PlayerModel {
     @ObservationIgnored private let audio = AudioOutput()
     @ObservationIgnored private lazy var nowPlaying = NowPlayingController(model: self)
     @ObservationIgnored private var storedCredentials: Data?
+    @ObservationIgnored private var soloistAPIKey: String?
     @ObservationIgnored private var reconnectAttempt = 0
     /// False once another device took over, so Play transfers playback back.
     @ObservationIgnored private var isActiveDevice = false
@@ -79,7 +82,10 @@ final class PlayerModel {
     @ObservationIgnored private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "player")
 
     init() {
+        let initialEngine = UserDefaults.standard.string(forKey: "playbackEngine").flatMap(PlaybackEngine.init) ?? .soloist
+        engine = initialEngine
         volume = UserDefaults.standard.object(forKey: "volume") as? Double ?? 0.7
+        core.engine = initialEngine
         audio.volume = Self.amplitude(volume)
         core.onEvent = { [weak self] event in self?.handle(event) }
     }
@@ -97,13 +103,26 @@ final class PlayerModel {
 
     /// Restores the previous session from `CredentialStore`, if there is one.
     func restoreSession() async {
-        let stored = await Self.readStoredSession()
+        let currentEngine = engine
         defer { hasCheckedStoredSession = true }
-        guard let stored, session == .loggedOut else { return }
-        storedCredentials = stored
-        // Now, rather than when the core's first event arrives a moment later.
-        session = .connecting
-        startSession(using: stored)
+        guard session == .loggedOut else { return }
+        switch currentEngine {
+        case .soloist:
+            let keyData = await Self.readStoredSoloistKey()
+            guard let keyData,
+                  let key = String(data: keyData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !key.isEmpty else { return }
+            soloistAPIKey = key
+            session = .connecting
+            core.startSoloist(apiKey: key, volume: spotifyVolume)
+        case .librespot:
+            let stored = await Self.readStoredSession()
+            guard let stored else { return }
+            storedCredentials = stored
+            // Now, rather than when the core's first event arrives a moment later.
+            session = .connecting
+            startSession(using: stored)
+        }
     }
 
     /// File I/O, and once a Keychain migration prompt: never on the main actor.
@@ -111,7 +130,63 @@ final class PlayerModel {
         CredentialStore.shared.read(.playbackSession)
     }
 
+    @concurrent private nonisolated static func readStoredSoloistKey() async -> Data? {
+        CredentialStore.shared.read(.soloistAPIKey)
+    }
+
+    /// Starts Spotify Soloist with `apiKey` (saving the key securely to `CredentialStore`).
+    func connectSoloist(apiKey: String) {
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        previousRestart = nil
+        reconnectTask?.cancel()
+        rememberPlayback()
+        engine = .soloist
+        core.engine = .soloist
+        UserDefaults.standard.set(PlaybackEngine.soloist.rawValue, forKey: "playbackEngine")
+        soloistAPIKey = trimmed
+        let data = Data(trimmed.utf8)
+        Task.detached { CredentialStore.shared.write(data, account: .soloistAPIKey) }
+        session = .connecting
+        core.startSoloist(apiKey: trimmed, volume: spotifyVolume)
+    }
+
+    /// Switches between Spotify Soloist and librespot cleanly.
+    func switchEngine(to target: PlaybackEngine) {
+        guard target != engine else { return }
+        previousRestart = nil
+        navigation = nil
+        reconnectTask?.cancel()
+        pendingPlayback = nil
+        audio.pause()
+        if engine == .soloist {
+            core.stopSoloist()
+        } else {
+            core.logOut()
+        }
+        engine = target
+        core.engine = target
+        UserDefaults.standard.set(target.rawValue, forKey: "playbackEngine")
+        session = .loggedOut
+        hasConnected = false
+        track = nil
+        pendingTrack = nil
+        contextURI = nil
+        isLoading = false
+        setAnchor(0, playing: false)
+        Task { await restoreSession() }
+    }
+
     func logIn() {
+        if engine == .soloist {
+            if let key = soloistAPIKey, !key.isEmpty {
+                connectSoloist(apiKey: key)
+            } else {
+                session = .loggedOut
+                hasConnected = false
+            }
+            return
+        }
         guard session != .authorizing else { return }
         previousRestart = nil
         reconnectTask?.cancel()
@@ -136,8 +211,15 @@ final class PlayerModel {
         reconnectTask?.cancel()
         pendingPlayback = nil
         storedCredentials = nil
+        soloistAPIKey = nil
+        let activeEngine = engine
         core.logOut()
-        Task.detached { CredentialStore.shared.delete(.playbackSession) } // fire-and-forget file I/O, off main
+        Task.detached {
+            switch activeEngine {
+            case .soloist: CredentialStore.shared.delete(.soloistAPIKey)
+            case .librespot: CredentialStore.shared.delete(.playbackSession)
+            }
+        }
     }
 
     // MARK: - Transport
@@ -183,10 +265,12 @@ final class PlayerModel {
         previousRestart = nil
         // Without a session the core drops the command and no event follows.
         guard isConnected else { return }
-        audio.start()
-        // Spirc can ignore a Play too (nothing to take over): give the engine
-        // back unless playback starts. `setAnchor(_:playing: true)` cancels this.
-        scheduleIdle(after: Self.unansweredPlay)
+        if core.usesLocalAudioOutput {
+            audio.start()
+            // Spirc can ignore a Play too (nothing to take over): give the engine
+            // back unless playback starts. `setAnchor(_:playing: true)` cancels this.
+            scheduleIdle(after: Self.unansweredPlay)
+        }
         if isActiveDevice && track != nil {
             core.play()
         } else {
@@ -265,6 +349,17 @@ final class PlayerModel {
     func reconnectPlayback() {
         previousRestart = nil
         navigation = nil
+        if engine == .soloist {
+            guard let key = soloistAPIKey, !key.isEmpty else { logIn(); return }
+            reconnectTask?.cancel()
+            rememberPlayback()
+            core.pause()
+            setAnchor(positionMs(at: Date()), playing: false)
+            isLoading = false
+            session = .connecting
+            core.startSoloist(apiKey: key, volume: spotifyVolume)
+            return
+        }
         guard let credentials = storedCredentials else { logIn(); return }
         reconnectTask?.cancel()
         rememberPlayback()
@@ -303,21 +398,25 @@ final class PlayerModel {
     private func beginLoading(at ms: Double) {
         isLoading = true
         setAnchor(ms, playing: false)
-        audio.start()
-        // A load the engine never answers must not leave the audio engine
-        // rendering silence for good. A slow one only restarts it on `playing`.
-        scheduleIdle(after: Self.unansweredLoad)
+        if core.usesLocalAudioOutput {
+            audio.start()
+            // A load the engine never answers must not leave the audio engine
+            // rendering silence for good. A slow one only restarts it on `playing`.
+            scheduleIdle(after: Self.unansweredLoad)
+        }
     }
 
     private func setAnchor(_ ms: Double, playing: Bool) {
         anchorMs = ms
         anchorDate = Date()
         if isPlaying != playing { isPlaying = playing }
-        if playing {
-            idleTask?.cancel()
-            audio.start()
-        } else {
-            scheduleIdle()
+        if core.usesLocalAudioOutput {
+            if playing {
+                idleTask?.cancel()
+                audio.start()
+            } else {
+                scheduleIdle()
+            }
         }
         nowPlaying.update()
     }
@@ -343,6 +442,8 @@ final class PlayerModel {
         switch event {
         case .connecting:
             if !isConnected { session = .connecting }
+        case let .awaitingPairing(deviceName):
+            session = .awaitingPairing(deviceName: deviceName)
         case let .connected(username):
             reconnectAttempt = 0
             hasConnected = true
@@ -460,6 +561,20 @@ final class PlayerModel {
     /// Back-off: 2, 4, 8, 16, 30, 30… seconds.
     private func scheduleReconnect() {
         reconnectTask?.cancel()
+        if engine == .soloist {
+            guard let key = soloistAPIKey, !key.isEmpty else {
+                session = .loggedOut
+                return
+            }
+            reconnectAttempt += 1
+            let delay = min(pow(2, Double(reconnectAttempt)), 30)
+            reconnectTask = Task {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, session == .connecting else { return }
+                core.startSoloist(apiKey: key, volume: spotifyVolume)
+            }
+            return
+        }
         guard let credentials = storedCredentials else {
             session = .loggedOut
             return

@@ -66,8 +66,12 @@ struct FloeApp: App {
                 .environment(\.interfaceScale, settings.interfaceSize.scale)
                 .environment(\.windowVisible, presence.isVisible || SelfTest.isEnabled)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
-                .onChange(of: needsAnalysis, initial: true) { visualization.setRunning(needsAnalysis) }
+                .onChange(of: needsAnalysis, initial: true) {
+                    visualization.setRunning(needsAnalysis)
+                    FloeCore.shared.setSoloistTapRunning(needsAnalysis)
+                }
                 .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }
+                .onChange(of: settings.engine) { player.switchEngine(to: settings.engine) }
                 .task(id: "\(player.displayTrack?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }

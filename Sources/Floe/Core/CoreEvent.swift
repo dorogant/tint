@@ -45,6 +45,9 @@ enum RepeatMode: Int, Sendable {
 /// `core/src/lib.rs` (session) and `core/src/events.rs` (player).
 enum CoreEvent: Sendable {
     case connecting
+    /// Soloist is running and advertising on Spotify Connect, waiting for the user
+    /// to select `deviceName` in a Spotify app to finish pairing.
+    case awaitingPairing(deviceName: String)
     case connected(username: String)
     /// Reusable librespot credentials (JSON) to keep in `CredentialStore`.
     case credentials(Data)

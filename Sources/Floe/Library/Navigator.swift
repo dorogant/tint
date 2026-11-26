@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// Where the content area is. Sidebar picks replace the stack; links push.
+/// Where the content area is. Links push onto the stack; a sidebar pick starts
+/// a new one and keeps the old for Back.
 enum Route: Hashable {
     case home, search, songs
     case playlist(String), album(String), artist(String)
@@ -13,6 +14,10 @@ final class Navigator {
     enum Surface: String, CaseIterable { case library, nowPlaying, lyrics }
     var surface: Surface = .library
     private(set) var stack: [Route] = [.home]
+    /// The stacks sidebar picks left behind, oldest first. Back used to stop at
+    /// the bottom of the current stack, so after any sidebar pick it was
+    /// disabled; now it goes on to the page you picked from.
+    private(set) var earlier: [[Route]] = []
     /// How the current page was reached. A page opened by a click is new and
     /// makes an entrance; one returned to (Back) or reached from the keyboard
     /// (search) is simply there.
@@ -22,7 +27,8 @@ final class Navigator {
 
     var current: Route { stack[stack.count - 1] }
     var root: Route { stack[0] }
-    var canGoBack: Bool { stack.count > 1 }
+    /// Back leaves Now Playing or Lyrics for the Library, then walks the pages.
+    var canGoBack: Bool { surface != .library || stack.count > 1 || !earlier.isEmpty }
 
     /// What the sidebar highlights. Search opens over the page you were on, so
     /// while its results (or a page opened from them) show, Search is the
@@ -45,11 +51,15 @@ final class Navigator {
             searchFocusRequest += 1
         } else {
             arrival = .fresh
+            guard stack != [route] else { return }
+            earlier.append(stack)
+            if earlier.count > Self.maxEarlier { earlier.removeFirst() }
             stack = [route]
         }
     }
 
     private static let maxStackDepth = 64
+    private static let maxEarlier = 32
 
     func push(_ route: Route) {
         surface = .library
@@ -63,8 +73,14 @@ final class Navigator {
     }
 
     func back() {
+        // Now Playing and Lyrics sit over the Library: Back shows the page under them.
+        guard surface == .library else { surface = .library; return }
         arrival = .instant
-        if canGoBack { stack.removeLast() }
+        if stack.count > 1 {
+            stack.removeLast()
+        } else if let previous = earlier.popLast() {
+            stack = previous
+        }
     }
 
     /// Shows the results over the current page, so Back (or Escape in the
@@ -82,7 +98,7 @@ final class Navigator {
 
     /// Leaves the results for the page underneath, if Search opened over one.
     func closeSearch() {
-        guard current == .search, canGoBack else { return }
+        guard current == .search, stack.count > 1 else { return }
         arrival = .instant
         stack.removeLast()
     }

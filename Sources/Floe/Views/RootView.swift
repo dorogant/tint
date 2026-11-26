@@ -158,7 +158,7 @@ struct MainView: View {
         @Bindable var navigator = navigator
         ToolbarItem(placement: .navigation) {
             Button { navigator.back() } label: { Label("Back", systemImage: "chevron.left") }
-                .disabled(navigator.surface != .library || !navigator.canGoBack)
+                .disabled(!navigator.canGoBack)
                 .help("Back")
         }
         ToolbarItem(placement: .principal) {

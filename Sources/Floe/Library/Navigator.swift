@@ -12,7 +12,21 @@ enum Route: Hashable {
 @Observable
 final class Navigator {
     enum Surface: String, CaseIterable { case library, nowPlaying, lyrics }
-    var surface: Surface = .library
+    var surface: Surface = .library {
+        didSet {
+            guard surface != oldValue else { return }
+            if let index = surfaceTrail.firstIndex(of: surface) {
+                // Returned to a surface already passed through: the way back starts over from it.
+                surfaceTrail.removeSubrange(index...)
+            } else {
+                surfaceTrail.append(oldValue)
+            }
+        }
+    }
+    /// The surfaces passed through to reach this one, the Library first, each
+    /// once: Lyrics opened from Now Playing goes Back to Now Playing, then to
+    /// the Library. Empty on the Library.
+    @ObservationIgnored private var surfaceTrail: [Surface] = []
     private(set) var stack: [Route] = [.home]
     /// The stacks sidebar picks left behind, oldest first. Back used to stop at
     /// the bottom of the current stack, so after any sidebar pick it was
@@ -27,7 +41,7 @@ final class Navigator {
 
     var current: Route { stack[stack.count - 1] }
     var root: Route { stack[0] }
-    /// Back leaves Now Playing or Lyrics for the Library, then walks the pages.
+    /// Back leaves Now Playing or Lyrics the way they were reached, then walks the pages.
     var canGoBack: Bool { surface != .library || stack.count > 1 || !earlier.isEmpty }
 
     /// What the sidebar highlights. Search opens over the page you were on, so
@@ -73,8 +87,7 @@ final class Navigator {
     }
 
     func back() {
-        // Now Playing and Lyrics sit over the Library: Back shows the page under them.
-        guard surface == .library else { surface = .library; return }
+        guard surface == .library else { surface = surfaceTrail.last ?? .library; return }
         arrival = .instant
         if stack.count > 1 {
             stack.removeLast()

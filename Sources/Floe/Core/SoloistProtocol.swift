@@ -211,29 +211,44 @@ enum SoloistProtocol {
         guard let uri = entity["uri"] as? String, !uri.isEmpty else { return nil }
         let decorations = entity["decorations"] as? [String: Any]
         let identity = decorations?["identity"] as? [String: Any]
-        let name = identity?["name"] as? String ?? ""
+        let name = (identity?["name"] as? String) ?? (entity["name"] as? String) ?? ""
         guard !name.isEmpty else { return nil }
 
         let creators = decorations?["creators"] as? [[String: Any]] ?? []
-        let artists: [TrackInfo.Artist] = creators.compactMap { creator in
+        let artists: [TrackInfo.Artist] = creators.compactMap { rawCreator in
+            let creator = (rawCreator["entity"] as? [String: Any]) ?? rawCreator
             let dec = creator["decorations"] as? [String: Any]
             let id = dec?["identity"] as? [String: Any]
-            guard let artistName = id?["name"] as? String, !artistName.isEmpty else { return nil }
-            let artistURI = (creator["uri"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let artistName = (id?["name"] as? String)
+                ?? (creator["name"] as? String)
+                ?? (rawCreator["name"] as? String)
+                ?? ""
+            guard !artistName.isEmpty else { return nil }
+            let artistURI = ((creator["uri"] as? String) ?? (rawCreator["uri"] as? String))
+                .flatMap { $0.isEmpty ? nil : $0 }
             return TrackInfo.Artist(name: artistName, uri: artistURI)
         }
 
-        let parent = (decorations?["parent"] as? [String: Any])?["entity"] as? [String: Any]
+        let parentObj = decorations?["parent"] as? [String: Any]
+        let parent = (parentObj?["entity"] as? [String: Any]) ?? parentObj
         let parentDec = parent?["decorations"] as? [String: Any]
         let album = (parentDec?["identity"] as? [String: Any])?["name"] as? String
+            ?? (parent?["name"] as? String)
 
         let playback = decorations?["playback"] as? [String: Any]
-        let durationMs = (playback?["duration_ms"] as? NSNumber)?.doubleValue ?? 0
-        let ratings = playback?["content_ratings"] as? [String] ?? []
+        let durationMs = (playback?["duration_ms"] as? NSNumber)?.doubleValue
+            ?? (decorations?["duration_ms"] as? NSNumber)?.doubleValue
+            ?? (entity["duration_ms"] as? NSNumber)?.doubleValue
+            ?? 0
+        let ratings = (playback?["content_ratings"] as? [String])
+            ?? (decorations?["content_ratings"] as? [String])
+            ?? []
         let explicit = ratings.contains("explicit")
 
         let visual = decorations?["visual_identity"] as? [String: Any]
-        let covers = visual?["cover"] as? [[String: Any]] ?? []
+        let covers = (visual?["cover"] as? [[String: Any]])
+            ?? (visual?["images"] as? [[String: Any]])
+            ?? []
         let coverURL = bestCoverURL(in: covers)
 
         return TrackInfo(

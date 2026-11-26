@@ -492,7 +492,16 @@ final class PlayerModel {
             setAnchor(0, playing: false)
         case let .track(info):
             previousRestart = nil
-            track = info
+            // Preserve richer row/existing metadata if the engine sends a sparse update for the same URI.
+            let prior = pendingTrack?.uri == info.uri ? pendingTrack : (track?.uri == info.uri ? track : nil)
+            var merged = info
+            if let prior {
+                if merged.artists.isEmpty { merged.artists = prior.artists }
+                if merged.album == nil || merged.album?.isEmpty == true { merged.album = prior.album }
+                if merged.coverURL == nil { merged.coverURL = prior.coverURL }
+                if merged.durationMs <= 0 { merged.durationMs = prior.durationMs }
+            }
+            track = merged
             if pendingTrack?.uri == info.uri { pendingTrack = nil }
             nowPlaying.update()
         case let .loading(ms):

@@ -17,7 +17,8 @@ final class Phase3Tests {
         try await tests.testMissingLyricsAreCached()
         try await tests.testRateLimitBlocksFurtherRequests()
         try await tests.testWrongDurationIsRejected()
-        print("PASS: 12 synthetic Phase 3 tests")
+        try await tests.testSearchFallbackFindsSyncedLyrics()
+        print("PASS: 13 synthetic Phase 3 tests")
     }
 
     func testRepeatedTagsAndLateOffset() {
@@ -109,10 +110,11 @@ final class Phase3Tests {
         let service = fixtureService(status: 404)
         let signature = fixtureSignature()
         let first = try await service.lyrics(for: signature)
+        let countAfterFirst = FixtureProtocol.fixture.requestCount
         let second = try await service.lyrics(for: signature)
         expectEqual(first, .missing)
         expectEqual(second, .missing)
-        expectEqual(FixtureProtocol.fixture.requestCount, 1)
+        expectEqual(FixtureProtocol.fixture.requestCount, countAfterFirst)
     }
 
     func testRateLimitBlocksFurtherRequests() async throws {
@@ -133,6 +135,17 @@ final class Phase3Tests {
             data: Data(#"{"duration":150,"instrumental":false,"syncedLyrics":"[00:02] Synthetic wrong version"}"#.utf8))
         let content = try await service.lyrics(for: fixtureSignature())
         expectEqual(content, .missing)
+    }
+
+    func testSearchFallbackFindsSyncedLyrics() async throws {
+        expectEqual(LyricsService.cleanTitle("Bohemian Rhapsody - Remastered 2011"), "Bohemian Rhapsody")
+        expectEqual(LyricsService.cleanTitle("Song Name (feat. Someone)"), "Song Name")
+        let searchPayload = Data(#"[{"duration":125,"instrumental":false,"syncedLyrics":"[00:02] Found via search","plainLyrics":"Found via search"},{"duration":190,"instrumental":false,"syncedLyrics":"[00:02] Wrong length"}]"#.utf8)
+        let records = try JSONDecoder().decode([LyricsService.Record].self, from: searchPayload)
+        guard case let .synced(lines)? = LyricsService.bestMatch(in: records, for: fixtureSignature()) else {
+            fail("expected synced match within tolerance")
+        }
+        expectEqual(lines.first?.text, "Found via search")
     }
 
     private func fixtureSignature() -> LyricsService.Signature {

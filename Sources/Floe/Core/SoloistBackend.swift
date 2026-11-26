@@ -174,7 +174,7 @@ final class SoloistBackend {
         let proc = Process()
         proc.executableURL = binary
         proc.arguments = [
-            "--device-name", "Tint",
+            "--device-name", Self.deviceName,
             "--api-key", key,
             "--data-dir", dataDir.path,
             "--cache-dir", cacheDir.path,
@@ -249,9 +249,28 @@ final class SoloistBackend {
 
     // MARK: - Commands
 
+    /// The name Tint's device goes by in Spotify Connect.
+    static let deviceName = "Tint"
+
+    /// Logged in, so commands are heard.
+    var isReady: Bool { socket != nil && protocolState.isLoggedIn }
+
+    /// Shuffle and repeat as the request wants them, ahead of whatever starts it.
+    func prepare(for request: PlayRequest) {
+        send(SoloistProtocol.setShuffle(request.shuffle))
+        if let repeatMode = RepeatMode(rawValue: request.repeatMode) {
+            for cmd in SoloistProtocol.setRepeatCommands(repeatMode) { send(cmd) }
+        }
+    }
+
+    /// Soloist's `play` takes one URI: the song to start if the request names
+    /// one, else its context. The songs after it used to be added to the queue
+    /// to stand in for a list, but nothing can take them out again: they stayed
+    /// ahead of every context played later (a search's results cut into Liked
+    /// Songs). A list is `FloeCore`'s to start, through the Web API.
     @discardableResult
     func load(_ request: PlayRequest) -> Bool {
-        guard socket != nil, protocolState.isLoggedIn else { return false }
+        guard isReady else { return false }
         let targetURI: String?
         if let start = request.startURI, !start.isEmpty {
             targetURI = start
@@ -264,17 +283,8 @@ final class SoloistBackend {
             return false
         }
         guard let targetURI else { return false }
-        send(SoloistProtocol.setShuffle(request.shuffle))
-        if let repeatMode = RepeatMode(rawValue: request.repeatMode) {
-            for cmd in SoloistProtocol.setRepeatCommands(repeatMode) { send(cmd) }
-        }
+        prepare(for: request)
         send(SoloistProtocol.play(uri: targetURI))
-        if let tracks = request.tracks, tracks.count > 1,
-           let startIndex = tracks.firstIndex(of: targetURI) {
-            for nextURI in tracks.dropFirst(startIndex + 1).prefix(12) {
-                send(SoloistProtocol.addToQueue(uri: nextURI))
-            }
-        }
         if let pos = request.positionMs, pos > 0 {
             send(SoloistProtocol.seek(positionMs: pos))
         }

@@ -87,6 +87,23 @@ extension [TrackEntry] {
     }
 }
 
+extension PlayRequest {
+    /// Plays `entry`, then the rows after it. A list in its own order plays as
+    /// its context; filtered or sorted it plays as the songs on screen, which
+    /// the context doesn't know: the songs a filter hid came up next. The songs
+    /// go along in both cases, because Spotify Soloist can start an album or a
+    /// playlist at a chosen song but not Liked Songs (`PlaybackStart`).
+    static func rows(_ rows: [TrackEntry], from entry: TrackEntry, context: String, rearranged: Bool) -> PlayRequest {
+        let songs = rows.filter(\.track.isCatalogTrack)
+        guard let index = songs.firstIndex(where: { $0.id == entry.id }) else {
+            return PlayRequest(contextURI: context, startURI: entry.track.uri)
+        }
+        let window = PlaybackStart.window(of: songs.map(\.track.uri), around: index)
+        return PlayRequest(contextURI: rearranged ? nil : context, tracks: window.uris,
+                           startURI: entry.track.uri, startIndex: window.position)
+    }
+}
+
 // MARK: - Playlist
 
 struct PlaylistView: View {
@@ -229,7 +246,9 @@ struct PlaylistView: View {
 
     private func play(_ entry: TrackEntry) {
         guard let playlist else { return }
-        player.play(PlayRequest(contextURI: playlist.uri, startURI: entry.track.uri), selectedTrack: entry.track)
+        let rows = shown.rows(of: entries, revision: revision, filter: filter, sort: sort)
+        player.play(.rows(rows, from: entry, context: playlist.uri, rearranged: sort != .custom || !filter.isEmpty),
+                    selectedTrack: entry.track)
     }
 
     private func playFromStart(shuffled: Bool) {
@@ -470,7 +489,23 @@ struct SongsView: View {
 
     private func play(_ entry: TrackEntry) {
         guard let contextURI else { return }
-        player.play(PlayRequest(contextURI: contextURI, startURI: entry.track.uri), selectedTrack: entry.track)
+        Task {
+            await loadPastEnd(after: entry)
+            let rows = shown.rows(of: entries, revision: revision, filter: filter, sort: sort)
+            player.play(.rows(rows, from: entry, context: contextURI, rearranged: sort != .custom || !filter.isEmpty),
+                        selectedTrack: entry.track)
+        }
+    }
+
+    /// Spotify Soloist plays Liked Songs as the rows loaded so far
+    /// (`PlayRequest.rows`), so a song among the last of them waits for the
+    /// next page: otherwise the music ran out a few songs later.
+    private func loadPastEnd(after entry: TrackEntry) async {
+        guard player.engine == .soloist, let index = entries.firstIndex(where: { $0.id == entry.id }),
+              entries.count - index <= 20 else { return }
+        let loaded = entries.count
+        await loadEveryPage(more: { entries.count == loaded && nextOffset != nil && error == nil },
+                            busy: { loadingPage }, next: loadNextPage)
     }
 
     private func playFromStart(shuffled: Bool) {

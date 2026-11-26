@@ -107,8 +107,21 @@ private actor MockPlayback: PlaybackAPI {
         let payload = "{\"currentlyPlaying\":null,\"queue\":[{\"id\":\"test\",\"uri\":\"spotify:track:test\",\"name\":\"Synthetic\",\"durationMs\":1000,\"artists\":[]}]}"
         return try JSONDecoder().decode(PlaybackQueue.self, from: Data(payload.utf8))
     }
+    private(set) var deviceReads = 0
+    private(set) var started = [(playback: PlaybackStart, device: String)]()
+    private var startStatuses = [Int]()
+    private var tintID = "tint"
+    func failStarts(_ statuses: [Int]) { startStatuses = statuses }
+    func renameDevice(_ id: String) { tintID = id }
+    func startPlayback(_ playback: PlaybackStart, on deviceID: String) throws {
+        started.append((playback, deviceID))
+        if !startStatuses.isEmpty {
+            throw WebAPI.Failure.http(status: startStatuses.removeFirst(), message: "synthetic")
+        }
+    }
     func playbackDevices() -> [ConnectDevice] {
-        [ConnectDevice(id: "tint", name: "Tint", type: "computer", isActive: true, isRestricted: false, volumePercent: 70, supportsVolume: true),
+        deviceReads += 1
+        return [ConnectDevice(id: tintID, name: "Tint", type: "computer", isActive: true, isRestricted: false, volumePercent: 70, supportsVolume: true),
          ConnectDevice(id: "blocked", name: "Restricted", type: "speaker", isActive: false, isRestricted: true, volumePercent: nil, supportsVolume: false),
          ConnectDevice(id: nil, name: "Unknown", type: "speaker", isActive: false, isRestricted: false, volumePercent: nil, supportsVolume: false)]
     }
@@ -196,12 +209,77 @@ struct Phase5Tests {
         PagingStub.reset(total: 333)
         let albums = try await paged.savedAlbums()
         pages = PagingStub.snapshot
-        precondition(albums.count == 100 && pages.offsets == [0, 50], "stops at the cap, got \(pages.offsets)")
+        precondition(albums.map(\.id) == (0..<333).map { "\($0)" } && pages.offsets == [0, 50, 100, 150, 200, 250, 300],
+                     "every saved album, not the first hundred; got \(albums.count)")
+        PagingStub.reset(total: 333)
+        let releases = try await paged.artistAlbums("synthetic")
+        pages = PagingStub.snapshot
+        precondition(releases.count == 30 && pages.offsets == [0, 10, 20], "stops at the cap, got \(pages.offsets)")
         PagingStub.reset(total: 30)
         let short = try await paged.myPlaylists()
         precondition(short.count == 30 && PagingStub.snapshot.offsets == [0], "one page")
         print("PASS: paged lists load their remaining pages together, in order, up to a cap "
               + "(7 pages of 50 ms in \(elapsed.formatted(.units(allowed: [.milliseconds]))))")
+
+        // What the Web API is asked to start, for the requests Spotify Soloist can't express.
+        let list = (0..<500).map { "spotify:track:\($0)" }
+        let fromSong = PlaybackStart(contextURI: "spotify:playlist:p", tracks: list, startURI: "spotify:track:7", startIndex: nil)
+        precondition(fromSong?.contextURI == "spotify:playlist:p" && fromSong?.offset?.uri == "spotify:track:7"
+                     && fromSong?.uris == nil, "a playlist starts at the chosen song as a context")
+        let liked = PlaybackStart(contextURI: "spotify:user:u:collection", tracks: list, startURI: "spotify:track:120", startIndex: nil)
+        precondition(liked?.contextURI == nil && liked?.uris?.count == PlaybackStart.listLimit
+                     && liked?.uris?.first == "spotify:track:70" && liked?.offset?.position == 50,
+                     "Liked Songs takes no offset: the songs around the chosen one play as a list")
+        let nearEnd = PlaybackStart(contextURI: nil, tracks: list, startURI: "spotify:track:499", startIndex: nil)
+        precondition(nearEnd?.uris?.last == "spotify:track:499" && nearEnd?.uris?.count == PlaybackStart.listLimit
+                     && nearEnd?.offset?.position == PlaybackStart.listLimit - 1, "the window stays full at the end")
+        let twice = ["spotify:track:a", "spotify:track:b", "spotify:track:a"]
+        precondition(PlaybackStart(contextURI: nil, tracks: twice, startURI: "spotify:track:a", startIndex: 2)?.offset?.position == 2,
+                     "the second copy of a song starts where it was chosen")
+        precondition(PlaybackStart(contextURI: nil, tracks: twice, startURI: nil, startIndex: nil, positionMs: 9000)
+                        == PlaybackStart(contextURI: nil, tracks: twice, startURI: nil, startIndex: 0, positionMs: 9000))
+        precondition(PlaybackStart(contextURI: "spotify:album:a", tracks: nil, startURI: nil, startIndex: nil) == nil
+                     && PlaybackStart(contextURI: "spotify:user:u:collection", tracks: list, startURI: nil, startIndex: nil) == nil
+                     && PlaybackStart(contextURI: "spotify:artist:a", tracks: nil, startURI: "spotify:track:1", startIndex: nil) == nil
+                     && PlaybackStart(contextURI: nil, tracks: ["spotify:track:1"], startURI: "spotify:track:1", startIndex: nil) == nil
+                     && PlaybackStart(contextURI: nil, tracks: list, startURI: "spotify:track:gone", startIndex: nil) == nil,
+                     "one URI, or a song that isn't in the list, is left to the engine")
+        StubHTTP.reset([204])
+        try await api.startPlayback(PlaybackStart(contextURI: "spotify:album:a", tracks: nil, startURI: "spotify:track:3",
+                                                  startIndex: nil, positionMs: 12000)!, on: "synthetic device")
+        let start = StubHTTP.captured().first!
+        let startBody = try JSONSerialization.jsonObject(with: start.httpBody!) as! [String: Any]
+        precondition(start.httpMethod == "PUT" && start.url!.path.hasSuffix("/v1/me/player/play")
+                     && start.url!.query == "device_id=synthetic%20device")
+        precondition(startBody["context_uri"] as? String == "spotify:album:a" && startBody["position_ms"] as? Int == 12000
+                     && (startBody["offset"] as? [String: Any])?["uri"] as? String == "spotify:track:3"
+                     && startBody["uris"] == nil && (startBody["offset"] as? [String: Any])?.count == 1)
+        print("PASS: Web API playback start: context at a song, windowed lists, request body")
+
+        let remote = MockPlayback(), starter = PlaybackStarter(api: remote)
+        await remote.setPermission(false)
+        do { try await starter.start(fromSong!, onDeviceNamed: "Tint"); preconditionFailure("needs playback permission") }
+        catch PlaybackStarter.Failure.notPermitted {}
+        var remoteReads = await remote.deviceReads
+        precondition(remoteReads == 0, "nothing is asked without permission")
+        await remote.setPermission(true)
+        try await starter.start(fromSong!, onDeviceNamed: "Tint")
+        try await starter.start(liked!, onDeviceNamed: "Tint")
+        remoteReads = await remote.deviceReads
+        var starts = await remote.started
+        precondition(starts.map(\.device) == ["tint", "tint"] && starts[1].playback == liked && remoteReads == 1,
+                     "the device is looked up by name once")
+        await remote.renameDevice("tint-2"); await remote.failStarts([404])
+        try await starter.start(fromSong!, onDeviceNamed: "Tint")
+        starts = await remote.started; remoteReads = await remote.deviceReads
+        precondition(starts.suffix(2).map(\.device) == ["tint", "tint-2"] && remoteReads == 2,
+                     "an ID Spotify no longer knows is looked up again")
+        await remote.failStarts([403])
+        do { try await starter.start(fromSong!, onDeviceNamed: "Tint"); preconditionFailure("a refusal is the caller's to handle") }
+        catch let failure as WebAPI.Failure { precondition(failure.status == 403) }
+        do { try await starter.start(fromSong!, onDeviceNamed: "Restricted"); preconditionFailure("restricted devices take no commands") }
+        catch PlaybackStarter.Failure.deviceNotFound {}
+        print("PASS: playback starts on the named device: permission, cached ID, stale ID, refusal")
 
         let deniedAPI = MockPlayback(); await deniedAPI.setPermission(false)
         let denied = ConnectModel(api: deniedAPI)

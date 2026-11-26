@@ -126,8 +126,10 @@ extension WebAPI {
         try await get("me/tracks", ["limit": "50", "offset": "\(offset)"])
     }
 
+    /// Every saved album. Only the newest hundred used to be asked for, so a
+    /// larger library showed without the rest; an album is ~1 KB here.
     func savedAlbums() async throws -> [AlbumRef] {
-        let saved: [SavedAlbum] = try await all("me/albums", ["limit": "50"], max: 100)
+        let saved: [SavedAlbum] = try await all("me/albums", ["limit": "50"])
         return saved.map(\.album)
     }
 

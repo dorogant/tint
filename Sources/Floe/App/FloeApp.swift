@@ -24,6 +24,8 @@ struct FloeApp: App {
         let api = WebAPI(user: UserTokenProvider())
         _library = ViewState(wrappedValue: LibraryModel(api: api))
         _connect = ViewState(wrappedValue: ConnectModel(api: api))
+        let starter = PlaybackStarter(api: api)
+        FloeCore.shared.startRemotely = { try await starter.start($0, onDeviceNamed: $1) }
         let visualization = VisualizationModel(), visuals = VisualSettings(), genres = ArtistGenres(api: api)
         let autoPreset = AutoPresetController(settings: visuals, genres: { await genres.genres(for: $0) }) {
             UserDefaults.standard.bool(forKey: "reduceMotion") || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

@@ -569,6 +569,15 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
   PCM into `floe_push_analysis` only while visual effects are active. The Soloist API key
   is stored in `CredentialStore` (`soloist-api-key`, 0600). `librespot` remains available
   as an opt-in legacy engine in Onboarding and Settings → Playback.
+- **Starting a list with Soloist.** Soloist's `play` takes one URI and its queue can only
+  be added to, so it can't start a playlist at a chosen song or play a list of songs.
+  Those requests go through the Web API instead (`PUT me/player/play` on Tint's own
+  Connect device, `PlaybackStart` / `PlaybackStarter`): an album or playlist with an
+  offset, anything else (Liked Songs, search results, a filtered or sorted list) as up to
+  200 URIs around the chosen song. This needs the playback permission that Queue and
+  Devices asks for; without it, or if Spotify refuses, Soloist plays the chosen song alone.
+  0.4.0 added the following songs to the queue instead, where they stayed ahead of
+  everything played later (search results cut into Liked Songs).
 - **Audio path (librespot).** librespot decodes on its own thread into a custom `Sink`, which writes
   interleaved f32 PCM into a lock-free ring buffer. An `AVAudioSourceNode` pulls from it
   on the render thread (`floe_render`). Pause closes a gate so audio stops immediately

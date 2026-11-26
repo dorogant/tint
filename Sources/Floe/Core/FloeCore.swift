@@ -1,5 +1,6 @@
 import CFloeCore
 import Foundation
+import os
 
 /// What to play; encoded as the JSON `floe_load` expects (see `LoadSpec` in core/src/lib.rs).
 struct PlayRequest: Encodable, Sendable {
@@ -15,6 +16,13 @@ struct PlayRequest: Encodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case contextURI = "context_uri", tracks, startURI = "start_uri"
         case startIndex = "start_index", shuffle, repeatMode = "repeat", positionMs = "position_ms", startPlaying = "start_playing"
+    }
+}
+
+extension PlaybackStart {
+    init?(_ request: PlayRequest) {
+        self.init(contextURI: request.contextURI, tracks: request.tracks, startURI: request.startURI,
+                  startIndex: request.startIndex, positionMs: request.positionMs.map(Int.init))
     }
 }
 
@@ -35,6 +43,17 @@ final class FloeCore {
     private let soloist = SoloistBackend()
     private let soloistTap = SoloistAudioTap()
     private var tapWanted = false
+
+    /// Starts a request on the Connect device of that name through the Web API
+    /// (`PlaybackStarter`), for what Soloist's one-URI `play` can't say: a
+    /// playlist or album from a chosen song, and a list of songs. The app sets it.
+    var startRemotely: (@Sendable (PlaybackStart, String) async throws -> Void)?
+    private var remoteStart: Task<Void, Never>?
+    /// Bumped by every load, so an answer to an earlier one is dropped.
+    private var loadGeneration = 0
+    /// Pause arrived while the Web API was still starting the song.
+    private var pausedWhileStarting = false
+    private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "core")
 
     /// Room for about a hundred songs at 320 kbps (a four-minute one is ~10 MB). A song
     /// in the cache starts without asking the CDN for its address or downloading
@@ -67,6 +86,9 @@ final class FloeCore {
     }
 
     func stopSoloist() {
+        remoteStart?.cancel()
+        remoteStart = nil
+        loadGeneration += 1
         soloistTap.stop()
         soloist.stop()
     }
@@ -109,23 +131,56 @@ final class FloeCore {
     func load(_ request: PlayRequest) -> Bool {
         switch engine {
         case .soloist:
-            return soloist.load(request)
+            return loadSoloist(request)
         case .librespot:
             guard let json = try? JSONEncoder().encode(request) else { return false }
             return floe_load(String(decoding: json, as: UTF8.self))
         }
     }
 
+    /// Through the Web API when the request needs more than one URI and the
+    /// user allowed playback control; otherwise, and if Spotify refuses,
+    /// Soloist plays the song (or the context) by itself.
+    private func loadSoloist(_ request: PlayRequest) -> Bool {
+        remoteStart?.cancel()
+        remoteStart = nil
+        loadGeneration += 1
+        pausedWhileStarting = false
+        guard soloist.isReady else { return false }
+        guard let startRemotely, let playback = PlaybackStart(request) else { return soloist.load(request) }
+        let generation = loadGeneration
+        soloist.prepare(for: request)
+        remoteStart = Task {
+            do {
+                try await startRemotely(playback, SoloistBackend.deviceName)
+                guard generation == loadGeneration else { return }
+                if !request.startPlaying || pausedWhileStarting { soloist.pause() }
+            } catch {
+                guard generation == loadGeneration, !Task.isCancelled else { return }
+                log.notice("Web API start failed (\(String(describing: error), privacy: .public)); playing the song alone")
+                var alone = request
+                if pausedWhileStarting { alone.startPlaying = false }
+                soloist.load(alone)
+            }
+            remoteStart = nil
+        }
+        return true
+    }
+
     func play() {
         switch engine {
-        case .soloist: soloist.play()
+        case .soloist:
+            pausedWhileStarting = false
+            soloist.play()
         case .librespot: floe_play()
         }
     }
 
     func pause() {
         switch engine {
-        case .soloist: soloist.pause()
+        case .soloist:
+            if remoteStart != nil { pausedWhileStarting = true }
+            soloist.pause()
         case .librespot: floe_pause()
         }
     }

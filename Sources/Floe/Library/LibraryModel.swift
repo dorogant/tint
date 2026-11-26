@@ -105,7 +105,14 @@ final class LibraryModel {
 
     private func loadRecent() async { recent = (try? await api.recentlyPlayed()) ?? [] }
     private func loadTopArtists() async { topArtists = (try? await api.topArtists()) ?? [] }
-    private func loadSavedAlbums() async { savedAlbums = (try? await api.savedAlbums()) ?? [] }
+    /// A refresh that fails keeps the albums already shown.
+    private func loadSavedAlbums() async {
+        do {
+            savedAlbums = try await api.savedAlbums()
+        } catch {
+            log.error("Saved albums failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
     private func loadAccount() async {
         async let me = api.me()

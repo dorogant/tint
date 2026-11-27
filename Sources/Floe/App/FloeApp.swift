@@ -15,6 +15,8 @@ struct FloeApp: App {
     @ViewState private var autoPreset: AutoPresetController
     @ViewState private var presence = WindowPresence()
     @ViewState private var listening = ListeningRecorder()
+    @ViewState private var friends = FriendsModel()
+    @ViewState private var stats = StatsModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -66,6 +68,8 @@ struct FloeApp: App {
                 .environment(settings)
                 .environment(connect)
                 .environment(listening)
+                .environment(friends)
+                .environment(stats)
                 .environment(\.locale, settings.locale)
                 .environment(\.interfaceScale, settings.interfaceSize.scale)
                 .environment(\.windowVisible, presence.isVisible || SelfTest.isEnabled)

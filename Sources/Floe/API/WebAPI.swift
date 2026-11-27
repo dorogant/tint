@@ -144,6 +144,18 @@ extension WebAPI {
         return page.items
     }
 
+    /// The account's top artists over a stretch, as Spotify ranks them (scope `user-top-read`).
+    func topArtists(over range: TopRange, limit: Int = 50) async throws -> [Artist] {
+        let page: Paging<Artist> = try await get("me/top/artists", ["limit": "\(limit)", "time_range": range.rawValue])
+        return page.items
+    }
+
+    /// The account's top songs over a stretch, as Spotify ranks them.
+    func topTracks(over range: TopRange, limit: Int = 50) async throws -> [Track] {
+        let page: Paging<Track> = try await get("me/top/tracks", ["limit": "\(limit)", "time_range": range.rawValue])
+        return page.items
+    }
+
     /// Development Mode caps `limit` at 10.
     func search(_ text: String, offset: Int = 0) async throws -> SearchResults {
         try await get("search", [
@@ -258,6 +270,13 @@ extension WebAPI {
         }
         return items
     }
+}
+
+/// The stretches Spotify ranks an account's top artists and songs over: about
+/// the last four weeks, about the last six months, and about a year.
+enum TopRange: String, CaseIterable, Identifiable, Sendable {
+    case weeks = "short_term", months = "medium_term", year = "long_term"
+    var id: Self { self }
 }
 
 /// An artist's best-known songs, gathered from search a few pages at a time.

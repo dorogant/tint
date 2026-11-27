@@ -15,6 +15,7 @@ struct FloeApp: App {
     @ViewState private var autoPreset: AutoPresetController
     @ViewState private var presence = WindowPresence()
     @ViewState private var listening = ListeningRecorder()
+    @ViewState private var mix: MixModel
     @ViewState private var friends = FriendsModel()
     @ViewState private var stats = StatsModel()
     @Environment(\.scenePhase) private var scenePhase
@@ -26,6 +27,7 @@ struct FloeApp: App {
     init() {
         let api = WebAPI(user: UserTokenProvider())
         _library = ViewState(wrappedValue: LibraryModel(api: api))
+        _mix = ViewState(wrappedValue: MixModel(catalog: ReccoBeats(), library: MixSpotifyLibrary(api: api, history: .shared)))
         _connect = ViewState(wrappedValue: ConnectModel(api: api))
         let starter = PlaybackStarter(api: api)
         FloeCore.shared.startRemotely = { try await starter.start($0, onDeviceNamed: $1) }
@@ -68,6 +70,7 @@ struct FloeApp: App {
                 .environment(settings)
                 .environment(connect)
                 .environment(listening)
+                .environment(mix)
                 .environment(friends)
                 .environment(stats)
                 .environment(\.locale, settings.locale)
@@ -85,6 +88,9 @@ struct FloeApp: App {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
                 .task(id: player.displayTrack.map(LyricsRequest.init)) { await lyrics.load(player.displayTrack) }
+                // A mix follows the player: each change of song, or of playing, is its
+                // cue to hand Spotify the next song, or to let go when something else plays.
+                .onChange(of: "\(player.track?.uri ?? "")#\(player.isPlaying)") { mix.playerChanged(player.mixNowPlaying) }
                 // The listening history: told of every change of song and of playing, and
                 // once more when the song playing has been heard long enough to count.
                 .task(id: "\(player.track?.uri ?? "")#\(player.isPlaying)") {
@@ -103,6 +109,7 @@ struct FloeApp: App {
                     await autoPreset.update(player.displayTrack.map(AutoPresetController.Song.init), enabled: autoPresetActive)
                 }
                 .task {
+                    mix.attach(player)
                     SpaceToPlay.install(player)
                     Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }
                     Snapshot.installTrigger()

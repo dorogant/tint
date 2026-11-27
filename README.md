@@ -26,6 +26,10 @@ Built with SwiftUI, Core Animation and Metal on top of
 - Media keys and the Control Center player
 - English and Ukrainian
 
+## What's new in 0.4.2
+
+- **The visualizer and live background no longer freeze** after switching between apps a few times quickly. Tint could come back believing it wasn't in front, and kept them paused until it was restarted.
+
 ## What's new in 0.4.1
 
 - **Tint updates itself**: a newer version is offered in the sidebar and under **Settings → About**, and installed with one click. Only builds carrying Tint's own signature are accepted.

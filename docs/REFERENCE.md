@@ -631,7 +631,11 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
 - **Web API limits (Development Mode, 2026).** Tint uses only endpoints still open to
   Development Mode apps. Consequences: playlists you don't own show their header and
   Play but no track list; Spotify-made playlists 404 (Play still works); no artist top
-  tracks; search and artist albums return at most 10 per request; `market=from_token`
+  tracks (403), so an artist's **Popular** list is what search ranks first for
+  `artist:"<name>"`: close to Spotify's top songs, not the same list, five at first and
+  up to fifty through Show more; search and artist albums return at most 10 per request
+  (a song search asked for ten answers with about five, and its `next` and `total`
+  say there are no more when there are); `market=from_token`
   needs a scope Tint doesn't request (and isn't needed with a user token).
   PLAN.md's fallback of Web API tokens from the librespot session no longer works
   (tested 2026-10-08): keymaster answers 403, and api.spotify.com throttles login5

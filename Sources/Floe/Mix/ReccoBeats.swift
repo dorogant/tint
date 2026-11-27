@@ -61,7 +61,11 @@ protocol MixCatalog: Sendable {
 
 /// The one edge that touches the network: a request in, the body and the HTTP status out.
 protocol MixTransport: Sendable {
-    func data(for request: URLRequest) async throws -> (Data, Int)
+    /// Not named `data(for:)`: on `URLSession` that would shadow the system's own
+    /// call of that name (which takes a second, defaulted argument), and every
+    /// `session.data(for:)` in the app, Spotify's and the lyrics' included, would
+    /// quietly get this one's status code where it expects a response.
+    func answer(to request: URLRequest) async throws -> (Data, Int)
 }
 
 /// ReccoBeats (https://reccobeats.com): recommendations and audio features by
@@ -129,7 +133,7 @@ struct ReccoBeats: MixCatalog {
     }
 
     private func answer(to request: URLRequest) async throws -> Data {
-        let (data, status) = try await transport.data(for: request)
+        let (data, status) = try await transport.answer(to: request)
         guard (200..<300).contains(status) else { throw Self.failure(status: status, body: data) }
         return data
     }
@@ -244,8 +248,8 @@ struct ReccoBeats: MixCatalog {
 }
 
 extension URLSession: MixTransport {
-    func data(for request: URLRequest) async throws -> (Data, Int) {
-        let (data, response): (Data, URLResponse) = try await data(for: request, delegate: nil)
+    func answer(to request: URLRequest) async throws -> (Data, Int) {
+        let (data, response) = try await data(for: request)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 }

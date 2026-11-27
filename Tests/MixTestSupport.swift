@@ -181,7 +181,7 @@ final class StubTransport: MixTransport, @unchecked Sendable {
     private(set) var requests: [URLRequest] = []
     var answer: @Sendable (URLRequest) -> (Data, Int) = { _ in (Data(), 500) }
 
-    func data(for request: URLRequest) async throws -> (Data, Int) {
+    func answer(to request: URLRequest) async throws -> (Data, Int) {
         lock.withLock {
             requests.append(request)
             return answer(request)

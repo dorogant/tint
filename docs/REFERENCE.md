@@ -207,6 +207,7 @@ To release:
 # raise CFBundleShortVersionString in Support/Info.plist, commit, push
 scripts/release.sh            # build/release/Tint.zip and Tint.zip.sig; publishes nothing
 scripts/release.sh --publish  # the same, then the GitHub release v<version> with both files
+                              # (--notes <file> gives it its text, which "What's New" opens)
 ```
 
 Each release needs a version no release has had: installed copies compare version

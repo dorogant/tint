@@ -3,10 +3,12 @@
 #   build/release/Tint.zip      the public build (scripts/build-app.sh --public)
 #   build/release/Tint.zip.sig  the zip's signature, made with the update key
 #
-# Usage: scripts/release.sh [--publish]
+# Usage: scripts/release.sh [--publish] [--notes <file>]
 #   --publish  also create the GitHub release v<version> with both files. Needs gh,
 #              nothing uncommitted, the commit pushed, and a version no release has:
 #              raise CFBundleShortVersionString in Support/Info.plist first.
+#   --notes    the release's text (Markdown), which "What's New" in Tint opens;
+#              without it GitHub lists the changes since the last release
 #
 # Installed copies only accept a zip signed with the update key, so both files
 # always travel together. The key is the file FLOE_UPDATE_KEY names, else
@@ -17,14 +19,18 @@ OUT="$ROOT/build/release"
 KEY="${FLOE_UPDATE_KEY:-$HOME/.config/tint/update-key}"
 
 PUBLISH=0
-for arg in "$@"; do
-    case "$arg" in
+NOTES=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --publish) PUBLISH=1 ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
+        --notes) NOTES="${2:-}"; shift ;;
+        -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
+    shift
 done
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+[[ -z "$NOTES" || -f "$NOTES" ]] || fail "no release notes at $NOTES."
 sign_tool() { swift "$ROOT/scripts/update-signature.swift" "$@"; }
 
 [[ -f "$KEY" ]] || fail "no update key at $KEY (FLOE_UPDATE_KEY). Without the key the copies already installed were built for, they can't be updated."
@@ -57,8 +63,9 @@ printf '\nRelease %s: %s (%s) and its signature\n' "$VERSION" "$OUT/Tint.zip" "$
 if [[ $PUBLISH == 1 ]]; then
     # With files named, gh publishes the release only after they are uploaded, so
     # "latest" never points at a release an installed copy can't take.
+    if [[ -n "$NOTES" ]]; then TEXT=(--notes-file "$NOTES"); else TEXT=(--generate-notes); fi
     (cd "$ROOT" && gh release create "v$VERSION" "$OUT/Tint.zip" "$OUT/Tint.zip.sig" \
-        --target "$(git rev-parse HEAD)" --title "Tint $VERSION" --generate-notes)
+        --target "$(git rev-parse HEAD)" --title "Tint $VERSION" "${TEXT[@]}")
 else
     echo "Not published. scripts/release.sh --publish creates the GitHub release."
 fi

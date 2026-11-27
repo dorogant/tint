@@ -26,6 +26,13 @@ Built with SwiftUI, Core Animation and Metal on top of
 - Media keys and the Control Center player
 - English and Ukrainian
 
+## What's new in 0.4.1
+
+- **Tint updates itself**: a newer version is offered in the sidebar and under **Settings → About**, and installed with one click. Only builds carrying Tint's own signature are accepted.
+- **A ten-band equalizer** with presets, under **Settings → Playback** (Spotify Soloist).
+- **Beams reworked**: patterns mirror about the centre, six beams rise from the floor, and the strobe keeps to the beat.
+- **Live backgrounds hear more**: the haze follows the song's lead voice or instrument, and snares and hi-hats are found in dense mixes.
+
 ## What's new in 0.4.0
 
 - **Spotify Soloist as the default playback engine**: replaces `librespot` as the default so Tint works on **every** Spotify Premium account (including newer accounts where Spotify blocks `librespot` audio keys with `error audio key 0 1`), with one-click Homebrew install in onboarding, local WebSocket control, and a Core Audio Process Tap (`CATapDescription`) so the visualizer and live background stay audio-reactive.

@@ -31,7 +31,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Tint samples Spotify Soloist's audio output to drive the visualizer and live background. Audio never leaves your Mac.</string>
+	<string>Tint samples Spotify Soloist's audio output to drive the visualizer and live background, and to apply the equalizer. Audio never leaves your Mac.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal project. Not affiliated with Spotify.</string>
 </dict>

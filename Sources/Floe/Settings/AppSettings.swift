@@ -14,6 +14,7 @@ final class AppSettings {
     var glassOpacity: Double { didSet { defaults.set(glassOpacity, forKey: "glassOpacity") } }
     var fixedAccent: String { didSet { defaults.set(fixedAccent, forKey: "fixedAccent") } }
     var interfaceSize: InterfaceSize { didSet { defaults.set(interfaceSize.rawValue, forKey: "interfaceSize") } }
+    var equalizer: Equalizer { didSet { equalizer.save(to: defaults) } }
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -31,6 +32,7 @@ final class AppSettings {
         let accent = defaults.string(forKey: "fixedAccent") ?? "blue"
         fixedAccent = ["green", "blue", "violet", "amber"].contains(accent) ? accent : "blue"
         interfaceSize = defaults.string(forKey: "interfaceSize").flatMap(InterfaceSize.init) ?? .standard
+        equalizer = Equalizer(defaults: defaults)
     }
 
     var playbackConfiguration: PlaybackConfiguration {

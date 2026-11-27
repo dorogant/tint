@@ -21,19 +21,21 @@ struct BackgroundTests {
         guard let device = MTLCreateSystemDefaultDevice() else {
             fail("Metal device is required for the background regression check")
         }
-        rendererChecks(device: device)
-        pausedSwiftUIResize()
-        paletteChecks()
-        settingsChecks()
-        layerChecks()
-        detectorChecks()
-        fluidChecks(device: device)
-        beamChecks(device: device)
-        mappingChecks(device: device)
-        crispnessChecks(device: device)
-        smokeChecks(device: device)
-        presetPreviews(device: device)
-        performanceReport(device: device)
+        // FLOE_BACKGROUND_ONLY=beams,presets runs just those parts, for tuning a look
+        // without waiting for the rest; a pass then says nothing about the others.
+        let only = ProcessInfo.processInfo.environment["FLOE_BACKGROUND_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
+        func part(_ name: String, _ run: () -> Void) { if only?.contains(name) ?? true { run() } }
+        part("renderer") { rendererChecks(device: device); pausedSwiftUIResize() }
+        part("settings") { paletteChecks(); settingsChecks() }
+        part("detectors") { layerChecks(); detectorChecks() }
+        part("fluid") { fluidChecks(device: device) }
+        part("beams") { beamChecks(device: device) }
+        part("mapping") { mappingChecks(device: device) }
+        part("crispness") { crispnessChecks(device: device) }
+        part("smoke") { smokeChecks(device: device) }
+        part("presets") { presetPreviews(device: device) }
+        part("performance") { performanceReport(device: device) }
+        if let only { print("Only: \(only.sorted().joined(separator: ", "))") }
         print("PASS: \(checks) background checks (renderer, palette, settings, layers, beats, Fluid, Beams, mapping, flash rate, crispness)")
         if !Previews.written.isEmpty { print("Previews:\n" + Previews.written.joined(separator: "\n")) }
     }
@@ -323,6 +325,28 @@ struct BackgroundTests {
         check(mean(hats, \.high) > mean(hats, \.bass) + 0.2, "hats must live in the high layer")
         check(mean(vocal, \.mid) > mean(vocal, \.bass) + 0.15 && mean(vocal, \.mid) > mean(vocal, \.high) + 0.15,
               "a vocal must live in the mid layer")
+
+        // The lead layer is the singer, not the band: what's in the centre and
+        // holds. A chord spread to the sides as loud as the voice, and a snare's
+        // crack in the same octaves, fill the mids and leave the lead alone.
+        let guitars = layers([(SyntheticTrack(spread: 0.3), 6)])
+        let sung = layers([(SyntheticTrack(vocal: 0.3, spread: 0.3), 6)])
+        print(String(format: "Layers: lead / mid with a vocal %.2f / %.2f; a chord spread wide %.2f / %.2f; the vocal over it %.2f / %.2f; snares %.2f / %.2f",
+                     mean(vocal, \.lead), mean(vocal, \.mid), mean(guitars, \.lead), mean(guitars, \.mid),
+                     mean(sung, \.lead), mean(sung, \.mid), mean(snares, \.lead), mean(snares, \.mid)))
+        check(mean(vocal, \.lead) > 0.3, "a vocal must fill the lead layer (\(mean(vocal, \.lead)))")
+        check(mean(guitars, \.mid) > 0.3 && mean(guitars, \.lead) < 0.4 * mean(guitars, \.mid),
+              "a chord spread to the sides must sound in the mids and count for only a third of that in the lead (\(mean(guitars, \.mid)), \(mean(guitars, \.lead)))")
+        check(mean(sung, \.lead) > 0.3 && mean(sung, \.lead) > 1.6 * mean(guitars, \.lead),
+              "a vocal must lead through the chord around it (\(mean(sung, \.lead)) against \(mean(guitars, \.lead)))")
+        check(mean(snares, \.lead) < 0.05, "a snare must not read as a lead (\(mean(snares, \.lead)))")
+        // A hit under a loud chord: the chord's partials hold every band's level
+        // where it is, and only the level between them shows the snare.
+        let buried = layers([(SyntheticTrack(snare: 0.25, spread: 0.6), 6)])
+        let buriedHats = layers([(SyntheticTrack(hats: 0.06, spread: 0.6), 6)])
+        print("Layers: under a loud chord, \(hits(buried, \.snare).count) of 6 snares and \(hits(buriedHats, \.hat).count) of 48 hats are found")
+        check((5...7).contains(hits(buried, \.snare).count), "a snare under a loud chord must still be found (\(hits(buried, \.snare).count) of 6)")
+        check(hits(guitars, \.snare).isEmpty && hits(guitars, \.hat).isEmpty && hits(guitars, \.kick).isEmpty, "a held chord must not read as drums")
 
         // The bass envelope pumps with the kicks instead of sitting flat.
         let pump = kicks.dropFirst(60).prefix(30).map(\.bass)
@@ -635,6 +659,7 @@ struct BackgroundTests {
         check(heads.size.z == 4 && heads.heads.4 == .zero, "the beam count must limit the heads drawn")
 
         flashRateChecks(renderer: renderer)
+        strobeChecks()
     }
 
     // MARK: - Beams: what plays what
@@ -643,6 +668,102 @@ struct BackgroundTests {
     static func headValues(_ animator: BackgroundAnimator) -> [SIMD4<Float>] {
         let u = animator.beamUniforms(width: 1600, height: 1000)
         return [u.heads.0, u.heads.1, u.heads.2, u.heads.3, u.heads.4, u.heads.5, u.heads.6, u.heads.7]
+    }
+
+    /// Per-floor-head values from the uniforms: source x, direction, intensity; colour and spread.
+    static func floorValues(_ animator: BackgroundAnimator) -> (heads: [SIMD4<Float>], tints: [SIMD4<Float>]) {
+        let u = animator.beamUniforms(width: 1600, height: 1000)
+        return ([u.floorHeads.0, u.floorHeads.1, u.floorHeads.2, u.floorHeads.3, u.floorHeads.4, u.floorHeads.5],
+                [u.floorTints.0, u.floorTints.1, u.floorTints.2, u.floorTints.3, u.floorTints.4, u.floorTints.5])
+    }
+
+    /// How far the rig is from its own mirror image: every head against its twin
+    /// across the centre line (opposite angle, same light and colour), on the
+    /// truss and on the floor. 0 is a perfect mirror.
+    static func asymmetry(_ animator: BackgroundAnimator, heads count: Int) -> Float {
+        let u = animator.beamUniforms(width: 1600, height: 1000)
+        let heads = [u.heads.0, u.heads.1, u.heads.2, u.heads.3, u.heads.4, u.heads.5, u.heads.6, u.heads.7]
+        let tints = [u.tints.0, u.tints.1, u.tints.2, u.tints.3, u.tints.4, u.tints.5, u.tints.6, u.tints.7]
+        var worst: Float = 0
+        for i in 0..<count {
+            let j = count - 1 - i
+            worst = max(worst, abs(heads[i].x + heads[j].x), abs(heads[i].y - heads[j].y), abs(heads[i].z - heads[j].z),
+                        abs(heads[i].w - heads[j].w), simd_reduce_max(simd_abs(SIMD3(tints[i].x, tints[i].y, tints[i].z) - SIMD3(tints[j].x, tints[j].y, tints[j].z))))
+        }
+        let floor = floorValues(animator)
+        for k in 0..<BeamRig.floorPairs(heads: count) {
+            let l = floor.heads[2 * k], r = floor.heads[2 * k + 1]
+            worst = max(worst, abs(l.x + r.x - 1.6), abs(l.y + r.y), abs(l.z - r.z), abs(l.w - r.w),
+                        simd_reduce_max(simd_abs(floor.tints[2 * k] - floor.tints[2 * k + 1])))
+        }
+        return worst
+    }
+
+    /// The opt-in strobe keeps the beat. Fed straight to the rig: a steady 120 BPM
+    /// where the detector misses every fourth kick and reports a stray one half
+    /// a beat after each miss. The strobe must flash once on every beat all the
+    /// same (on the raw kicks it skipped the misses and fired on the strays),
+    /// take every other beat when each beat would pass three flashes a second,
+    /// and stop when the drums do.
+    static func strobeChecks() {
+        let configuration = BackgroundConfiguration(kind: .beams, strobe: true)
+        /// Display frames (60 Hz) at which the strobe fired, and how far off the beat each was.
+        func run(tempo: Float, seconds: Int, drumsUntil: Int = .max, energy: Float = 0.8) -> (frames: [Int], offBeat: [Float]) {
+            var rig = BeamRig()
+            var pulse = BeatDetector.Pulse()
+            pulse.energy = energy
+            pulse.tempo = tempo
+            pulse.confidence = 0.9
+            var frames: [Int] = [], offBeat: [Float] = []
+            var lastBeat = -1, missed = false, sinceKick = 100
+            for frame in 0..<(30 * seconds) {
+                pulse.beats = Float(frame) * tempo / 60 / 30
+                let beat = Int(pulse.beats)
+                var kick: Float = 0
+                if frame / 30 < drumsUntil {
+                    if beat != lastBeat {
+                        missed = beat % 4 == 3
+                        if !missed { kick = 0.9 }
+                    } else if missed, pulse.beats - Float(beat) >= 0.5, sinceKick > 11 {
+                        kick = 0.8
+                    }
+                }
+                lastBeat = beat
+                sinceKick = kick > 0 ? 0 : sinceKick + 1
+                pulse.kick = kick
+                pulse.beat = kick
+                rig.receive(pulse, configuration: configuration)
+                for half in 0..<2 {
+                    let before = rig.flashes
+                    rig.step(by: 1 / 60, configuration: configuration)
+                    if rig.flashes > before {
+                        frames.append(frame * 2 + half)
+                        let phase = (Float(frame) + Float(half + 1) / 2) * tempo / 60 / 30
+                        offBeat.append(abs(phase - phase.rounded()))
+                    }
+                }
+            }
+            return (frames, offBeat)
+        }
+        func gaps(_ frames: [Int], after start: Int) -> [Int] {
+            let late = frames.filter { $0 >= start * 60 }
+            return zip(late.dropFirst(), late).map { $0 - $1 }
+        }
+        let steady = run(tempo: 120, seconds: 20)
+        let steadyGaps = gaps(steady.frames, after: 4)
+        let late = zip(steady.frames, steady.offBeat).filter { $0.0 >= 4 * 60 }.map(\.1)
+        print("Strobe at 120 BPM with missed and stray kicks: \(steadyGaps.count + 1) flashes in 16 s, \(steadyGaps.min() ?? 0)–\(steadyGaps.max() ?? 0) frames apart, "
+              + String(format: "%.2f beats off the beat at most", late.max() ?? -1))
+        check(steadyGaps.count >= 30 && steadyGaps.allSatisfy { (28...32).contains($0) },
+              "the strobe must flash once on every beat, whatever kicks the detector misses or adds (\(steadyGaps))")
+        check(late.allSatisfy { $0 < 0.15 }, "the strobe must flash on the beat (\(late.max() ?? -1) beats off)")
+        let fast = gaps(run(tempo: 172, seconds: 20).frames, after: 4)
+        check(fast.count >= 20 && fast.allSatisfy { (40...44).contains($0) },
+              "above 165 BPM the strobe must take every other beat, evenly (\(fast))")
+        let stopped = run(tempo: 120, seconds: 12, drumsUntil: 6).frames
+        check(stopped.contains { $0 > 5 * 60 } && !stopped.contains { $0 > 6 * 60 + 80 },
+              "the strobe must stop within about a second of the drums (\(stopped.last ?? -1))")
+        check(run(tempo: 120, seconds: 8, energy: 0.2).frames.isEmpty, "the strobe must stay dark in a quiet passage")
     }
 
     /// The mapping, pinned: kicks move the outer beams, snares the inner ones,
@@ -666,7 +787,7 @@ struct BackgroundTests {
                     result.swing[h] = max(result.swing[h], abs(animator.beams.swing[h].position))
                     result.intensity[h] += heads[h].y
                 }
-                result.haze += animator.beamUniforms(width: 1600, height: 1000).floor.z
+                result.haze += animator.beamUniforms(width: 1600, height: 1000).motion.y
                 result.frames += 1
             }
             result.intensity = result.intensity.map { $0 / Float(result.frames) }
@@ -709,6 +830,11 @@ struct BackgroundTests {
         var previous: [SIMD4<Float>]?
         var largestStep: Float = 0, lastSecondStep: Float = 0
         var onBeat: [Float] = []
+        var lopsided: Float = 0
+        // Each floor pair's light: the most at the start of the first drop and
+        // in the breakdown, and the least once the second drop has settled in.
+        var floorOnDrop = [Float](repeating: 0, count: 3), floorInBreakdown = [Float](repeating: 0, count: 3)
+        var floorHeld = [Float](repeating: .infinity, count: 3)
         var cells: [(frame: RenderedFrame, label: String, mark: CGColor?)] = []
         let sections = ["intro", "build", "drop", "breakdown", "drop", "silence"]
         var sectionStarts: [Int] = []
@@ -722,6 +848,13 @@ struct BackgroundTests {
                 if i >= frames.count - 30 { lastSecondStep = max(lastSecondStep, step) }
             }
             previous = heads
+            lopsided = max(lopsided, asymmetry(animator, heads: 8))
+            let floor = floorValues(animator).heads
+            for k in 0..<3 {
+                if (30 * 8..<30 * 11).contains(i) { floorOnDrop[k] = max(floorOnDrop[k], floor[2 * k].w) }
+                if (30 * 20..<30 * 22).contains(i) { floorInBreakdown[k] = max(floorInBreakdown[k], floor[2 * k].w) }
+                if (30 * 26..<30 * 28).contains(i) { floorHeld[k] = min(floorHeld[k], floor[2 * k].w) }
+            }
             if display % 2 == 0, animator.pulse.kick > 0.3, i > 30 * 10, i < 30 * 18 {
                 onBeat.append(abs(animator.beams.clock - animator.beams.clock.rounded()))
             }
@@ -740,6 +873,35 @@ struct BackgroundTests {
         check(onBeat.count >= 10 && onBeat.filter { $0 < 0.15 }.count >= onBeat.count * 8 / 10,
               "the sweeps must turn on the beat once the tempo locks (\(onBeat))")
         Previews.strip(cells, "beams-song-sections", columns: 4, scale: 0.4)
+
+        // The rig is its own mirror image, in every look and at every head count.
+        var crooked: Float = 0
+        for pattern in BeamRig.Pattern.allCases {
+            for count in 1...BeamRig.maximumHeads {
+                for step in 0..<64 {
+                    let beats = Float(step) * 0.37
+                    for i in 0..<count {
+                        crooked = max(crooked, abs(BeamRig.aim(pattern, head: i, count: count, beats: beats, period: 8, reach: 1)
+                                                   + BeamRig.aim(pattern, head: count - 1 - i, count: count, beats: beats, period: 8, reach: 1)))
+                    }
+                }
+            }
+        }
+        for count in [5, 6] {
+            var odd = BackgroundAnimator()
+            odd.configure(BackgroundConfiguration(kind: .beams, colors: colors, beamCount: count), animated: false)
+            play(&odd, SyntheticTrack.frames([(SyntheticTrack(kick: 0.9, bass: 0.25, pad: 0.2, hats: 0.1, snare: 0.3, vocal: 0.15), 8)])) { animator, _, _ in
+                lopsided = max(lopsided, asymmetry(animator, heads: count))
+            }
+        }
+        print(String(format: "Symmetry: looks are %.5f rad off their mirror image at most; the playing rig %.5f", crooked, lopsided))
+        check(crooked < 0.0005, "every look must be mirrored about the centre (\(crooked) rad off)")
+        check(lopsided < 0.002, "the playing rig must stay mirrored: angles, light and colours, truss and floor (\(lopsided))")
+
+        print("Floor beams, corner pair inward: on the drop \(floorOnDrop), held through it \(floorHeld), in the breakdown \(floorInBreakdown)")
+        check(floorOnDrop.allSatisfy { $0 > 0.3 }, "a drop must light every floor pair (\(floorOnDrop))")
+        check(floorHeld[0] > 0.15, "the corner floor beams must stay lit through a loud passage (\(floorHeld))")
+        check(floorInBreakdown.allSatisfy { $0 < 0.03 }, "a breakdown must put the floor beams out (\(floorInBreakdown))")
 
         mappingStrips(renderer: renderer, colors: colors)
     }
@@ -923,6 +1085,8 @@ struct BackgroundTests {
                     }
                 }
                 guard let shot else { fail("\(preset): no frame") }
+                print(String(format: "Preset %@, %@: mean luma %.3f, %.1f%% of the frame above the text limit", "\(preset)", section,
+                             shot.meanLuma, shot.share(above: legibleLuma) * 100))
                 check(shot.meanLuma < 0.2 && shot.share(above: legibleLuma) < 0.1, "\(preset): must stay dark enough for text (\(shot.meanLuma))")
                 cells.append((shot, "\(preset.title), \(section)", nil))
             }
@@ -1004,6 +1168,13 @@ struct BackgroundTests {
             sizes.append(("\(name), Fluid", BackgroundRenderer.drawableSize(points: points, scale: 2, kind: .fluid), fluid))
         }
         sizes.append(("full Retina 3456x2234, Beams", CGSize(width: 3456, height: 2234), floorOn))
+        // The rows above are a drop, with every floor head lit; these are the two ends of ordinary playing.
+        var quiet = BackgroundAnimator()
+        quiet.configure(beams.configuration, animated: false)
+        play(&quiet, SyntheticTrack.frames([(SyntheticTrack(pad: 0.1, vocal: 0.15), 3)]))
+        let window = BackgroundRenderer.drawableSize(points: windows[1].1, scale: 2, kind: .beams)
+        sizes.append(("\(windows[1].0), Beams in a steady groove", window, beams))
+        sizes.append(("\(windows[1].0), Beams in a quiet passage", window, quiet))
         for (name, size, animator) in sizes {
             guard let renderer = try? OffscreenRenderer(device: device, width: Int(size.width), height: Int(size.height)) else { continue }
             let time = renderer.gpuMilliseconds(animator)

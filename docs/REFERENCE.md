@@ -252,15 +252,39 @@ Both styles support **Bars** and **Wave**. Sensitivity changes only the visual
 response. The optional **Live background** turns the backdrop into a light show
 that plays along in layers. **Beams**: bass lights, widens and punches the outer
 beams on each kick; hi-hats light the middle beams and glint in the haze; snares
-flick the middle pairs across; sustained vocals tint the smoke. Beams move on
-damped springs, turn on the beat, change look every eight bars or on a drop, and
-come to rest in silence. **Fluid** swirls the cover's colours and breathes with the
+flick the middle pairs across; the voice or lead instrument tints the smoke. Uplights stand in
+two wings along the floor: the corner pair shines through a loud passage, the next
+pairs join as the song builds, and a drop lights all of them. The rig is mirrored
+about the centre line, so a beam and its twin on the other side always point
+opposite ways in the same light. Beams move on damped springs, turn on the beat,
+change look every eight bars or on a drop, and come to rest in silence. The opt-in
+strobe follows the song's beat clock, so it flashes evenly on the beat while the
+drums play (every other beat above 165 BPM, never more than three times a second)
+and falls back to the kicks only when no tempo can be found. **Fluid** swirls the cover's colours and breathes with the
 bass. **Bass punch** scales the kick response; black-and-white covers draw clean
 white light. Colours always come from the cover.
 
 Analysis runs at about 30 Hz only while an effect is visible and Tint is active;
 it splits the spectrum into bass, low-mids, mids and highs and detects kicks,
-snares, hats and the tempo. The Metal background draws at about one pixel per point
+snares, hats and the tempo. Two things are taken from the sound beyond its
+spectrum. The **lead** (what fills Beams' haze and Fluid's ink) is the part of the
+mids that both channels share and that holds for a moment: a singer or a solo is
+mixed to the centre, chords and pads are spread to the sides, and a snare's crack
+is gone in a tenth of a second. Sound outside the centre still counts for a third,
+so a record with the singer panned to one side isn't left dark. And snares and
+hats are found by what rises *between* the spectrum's peaks as well as in them,
+because a loud chord's partials hold each band's level where it is and hide a
+drum's noise arriving around them.
+
+`scripts/score-layers.sh` measures both on real instruments: GarageBand's Apple
+Loops come in families recorded to play together, so mixing a family gives a real
+production with its parts known. On 14 of them, with the lead folded to the centre
+as a singer is, the lead layer averages 0.40 with only the lead playing over drums
+and bass, 0.31 with only the backing and 0.11 with neither (the mids layer it
+replaced: 0.45, 0.50, 0.24), and the snares missed in the full mix fall from 28% to
+13%, the hats from 29% to 23%. Kicks are unchanged: a plucked bass note and a kick
+drum can't be told apart in a 46 ms window. Backing parts mixed near the centre
+still pass as leads. The analysis takes 20 µs a frame, up from 11. The Metal background draws at about one pixel per point
 on the display's refresh (Beams 60 Hz, Fluid 30 Hz), with the haze at quarter
 resolution, on a thread of its own so the interface can't hold up its frames. Both clocks stop on pause, when effects are disabled, or with app/system
 Reduce Motion. Hidden visualizers stop analysis unless the live background needs
@@ -277,6 +301,40 @@ The live check measures real PCM, cadence and audio underruns, exercises every
 style/shape, and verifies pause, hiding, disabled effects and Reduce Motion. Add
 `-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` for synthetic-only visual QA.
 The live test restores visual preferences afterward and leaves playback paused.
+
+### Equalizer
+
+**Settings ▸ Playback ▸ Equalizer** has ten bands an octave apart (32 Hz to 16 kHz,
+±12 dB each) and presets; moving a band makes the preset Custom. It is for Spotify
+Soloist, which plays its own sound and has no equalizer. While the equalizer is on
+and a song plays, the Core Audio tap that feeds the visuals also mutes Soloist's
+output (`mutedWhenTapped`: the mute ends with the tap, so Soloist is heard again if
+Tint quits or crashes) and hands every frame to Tint's own `AVAudioEngine`, which
+runs it through `AVAudioUnitEQ` and plays it. That adds about 30 ms: one tap
+delivery plus 1024 frames, the cushion that keeps the two audio threads from running
+each other dry. The visuals still analyse the sound as it left Soloist.
+
+- **Level.** Boosts are paid for in headroom: the whole signal is turned down by the
+  largest gain the bands add up to (Bass boost: 7.1 dB), so a song mastered to full
+  scale doesn't clip. Cuts cost nothing.
+- **When it holds the sound.** From just before Tint tells Soloist to play until three
+  seconds after it pauses, so the engine and the tap rest while nothing plays. A song
+  started from another device is taken over when Soloist reports playing, a moment in.
+- **Never silence.** A tap without the System Audio Recording permission starts
+  normally and delivers silence, and macOS offers no way to ask. So Tint mutes Soloist
+  only after the tap has delivered sound once (remembered across launches), and hands
+  the sound back if the tap goes silent for ten seconds of playing, or if its own output
+  stops asking for sound for two seconds and two fresh starts don't revive it.
+
+```sh
+scripts/test-equalizer.sh
+```
+
+checks the settings and presets, the ring between the two audio threads (every order
+of turns, then two real threads racing), and the production audio graph rendered
+offline at 44.1, 48 and 96 kHz: flat changes nothing, the audio unit measures within
+0.01 dB of the formula the headroom is computed from, and no setting raises any tone
+above the level it came in at. How it sounds through Soloist needs a listen.
 
 ### Design and motion
 

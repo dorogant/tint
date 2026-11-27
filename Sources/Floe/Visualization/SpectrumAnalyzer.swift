@@ -36,6 +36,10 @@ struct MusicLayers: Equatable, Sendable {
     var mid: Float = 0
     /// 4–16 kHz: hats, cymbals, air.
     var high: Float = 0
+    /// The voice or the lead instrument: what in the mids is mixed to the centre
+    /// and holds for a moment. Chords and pads spread to the sides, and a
+    /// snare's crack, which `mid` takes in with the rest, are left out.
+    var lead: Float = 0
     /// How hard a hit landed in the bass on this frame, otherwise 0.
     var kick: Float = 0
     /// A hit across the low-mids and mids (snares, claps, stabs), otherwise 0.
@@ -71,6 +75,9 @@ final class SpectrumAnalyzer {
     private var imaginary = [Float](repeating: 0, count: size / 2)
     private var power = [Float](repeating: 0, count: size / 2)
     private var stereoPower = [Float](repeating: 0, count: size / 2)
+    /// The two channels' sum and difference, which are what gets transformed.
+    private var centre = [Float](repeating: 0, count: size)
+    private var sides = [Float](repeating: 0, count: size)
     private var smoothed = [Float](repeating: 0, count: bandCount)
     private var average = [Float](repeating: 0, count: bandCount)
     private var spread = [Float](repeating: 0, count: bandCount)
@@ -79,6 +86,13 @@ final class SpectrumAnalyzer {
     private var level: Float = 0
     /// Each band's unsmoothed level this frame, for onsets.
     private var raw = [Float](repeating: 0, count: bandCount)
+    /// The mids' power band by band, 1 being full scale: all of it, and the
+    /// part the two channels share.
+    private var midPower = [Float](repeating: 0, count: MusicLayers.midBands.count)
+    private var sharedPower = [Float](repeating: 0, count: MusicLayers.midBands.count)
+    /// Each band's level between its peaks, in the mids and highs (see `process`).
+    private var rawFloor = [Float](repeating: 0, count: bandCount - MusicLayers.midBands.lowerBound)
+    private var sorted = [Float](repeating: 0, count: size / 2)
     private var layerAnalyzer = LayerAnalyzer()
     private let ranges: [Range<Int>]
 
@@ -117,7 +131,10 @@ final class SpectrumAnalyzer {
             level *= 0.78
             adapt()
             for i in raw.indices { raw[i] *= 0.78 }
-            return SpectrumFrame(bands: smoothed, levels: levels, rms: level, layers: layerAnalyzer.update(raw, rms: 0))
+            for i in midPower.indices { midPower[i] *= 0.3; sharedPower[i] *= 0.3 }
+            for i in rawFloor.indices { rawFloor[i] *= 0.78 }
+            return SpectrumFrame(bands: smoothed, levels: levels, rms: level,
+                                 layers: layerAnalyzer.update(raw, mids: midPower, shared: sharedPower, floor: rawFloor, rms: 0))
         }
         append(inputLeft, count: count, to: &left)
         append(inputRight, count: count, to: &right)
@@ -126,21 +143,52 @@ final class SpectrumAnalyzer {
         vDSP_measqv(right, 1, &rightMean, vDSP_Length(Self.size))
         let rms = sqrtf((leftMean + rightMean) * 0.5)
         level += (rms - level) * (rms > level ? 0.8 : 0.18)
-        // Each channel's power into its own buffer: sharing one between them
-        // copied it on every frame.
-        transform(left, into: &stereoPower)
-        transform(right, into: &power)
-        let scale = powf(2 / Float(Self.size), 2) * 0.5
-        for i in power.indices { stereoPower[i] = (stereoPower[i] + power[i]) * scale }
+        // The channels' half sum and half difference are transformed in place of
+        // the channels: the two powers add up to the same total (L² + R² is
+        // 2(M² + S²)), for the same two transforms, and their difference is the
+        // power the channels share. A part mixed dead centre has all its power
+        // there; one panned hard to a side, or spread wide, has none.
+        var half: Float = 0.5
+        vDSP_vasm(left, 1, right, 1, &half, &centre, 1, vDSP_Length(Self.size))
+        vDSP_vsbsm(left, 1, right, 1, &half, &sides, 1, vDSP_Length(Self.size))
+        transform(centre, into: &stereoPower)
+        transform(sides, into: &power)
+        let scale = powf(2 / Float(Self.size), 2)
+        let firstMid = MusicLayers.midBands.lowerBound
         for (i, range) in ranges.enumerated() {
-            let maximum = range.reduce(Float(0)) { max($0, stereoPower[$1]) }
-            let db = 10 * log10f(max(maximum, 1e-12))
+            var maximum: Float = 0
+            for bin in range { maximum = max(maximum, stereoPower[bin] + power[bin]) }
+            let db = 10 * log10f(max(maximum * scale, 1e-12))
             let target = min(1, max(0, (db + 65) / 65))
             raw[i] = target
             smoothed[i] += (target - smoothed[i]) * (target > smoothed[i] ? 0.82 : 0.18)
+            guard MusicLayers.midBands.contains(i) else { continue }
+            // The band's power, and how much of it the channels have in common.
+            // Summed over the band before the difference is taken: bin by bin,
+            // two unrelated channels differ by chance, and the largest of those
+            // chances read as a centre part only 3 dB down.
+            var middle: Float = 0, side: Float = 0
+            for bin in range { middle += stereoPower[bin]; side += power[bin] }
+            midPower[i - firstMid] = (middle + side) * scale
+            sharedPower[i - firstMid] = max(0, middle - side) * scale
+        }
+        // Each band's level between its peaks, from the mids up: the bin three
+        // tenths of the way up the band's bins in order of power. A band's
+        // level is its loudest bin, so a held note's partial decides it and a
+        // drum's noise arriving in the twenty bins around that partial changes
+        // nothing. Between the peaks it changes everything: this level jumps
+        // with a hit and sits still through a note.
+        for i in firstMid..<Self.bandCount {
+            let range = ranges[i]
+            let count = range.count
+            for k in 0..<count { sorted[k] = stereoPower[range.lowerBound + k] + power[range.lowerBound + k] }
+            sorted.withUnsafeMutableBufferPointer { vDSP_vsort($0.baseAddress!, vDSP_Length(count), 1) }
+            let db = 10 * log10f(max(sorted[(count - 1) * 3 / 10] * scale, 1e-12))
+            rawFloor[i - firstMid] = min(1, max(0, (db + 65) / 65))
         }
         adapt()
-        return SpectrumFrame(bands: smoothed, levels: levels, rms: level, layers: layerAnalyzer.update(raw, rms: rms))
+        return SpectrumFrame(bands: smoothed, levels: levels, rms: level,
+                             layers: layerAnalyzer.update(raw, mids: midPower, shared: sharedPower, floor: rawFloor, rms: rms))
     }
 
     /// Shows each band against its own last couple of seconds: hits stand out
@@ -211,13 +259,27 @@ struct LayerAnalyzer {
     private var spread = SIMD4<Float>.zero
     private var frames: Float = 0
     private var loudness = SIMD2<Float>.zero
+    /// The mids' power over the last frames, all of it and the shared part,
+    /// band by band with the newest frame at `leadWrite - 1`.
+    private var midHistory = [Float](repeating: 0, count: MusicLayers.midBands.count * LayerAnalyzer.held)
+    private var sharedHistory = [Float](repeating: 0, count: MusicLayers.midBands.count * LayerAnalyzer.held)
+    private var leadWrite = 0
+    private var leadPeak: Float = -65
+    private var leadEnvelope: Float = 0
+    /// Frames a sound has to last, more than half of these, to count as held:
+    /// seven frames are 233 ms, so a snare's crack and its ring (three frames,
+    /// four at most) fall out and a sung note is in after 133 ms.
+    private static let held = 7
+    private var previousFloor = [Float](repeating: 0, count: SpectrumAnalyzer.bandCount - MusicLayers.midBands.lowerBound)
     private var kick = OnsetFollower(refractory: 4)
     private var snare = OnsetFollower(refractory: 3)
     private var hat = OnsetFollower(refractory: 2)
     private var tempo = TempoTracker()
 
-    /// `raw` is each band's unsmoothed level, 0…1 across 65 dB; `rms` the window's.
-    mutating func update(_ raw: [Float], rms: Float) -> MusicLayers {
+    /// `raw` is each band's unsmoothed level, 0…1 across 65 dB; `mids` and
+    /// `shared` the mid bands' power and the part of it both channels have;
+    /// `floor` the level between the peaks from the mids up; `rms` the window's.
+    mutating func update(_ raw: [Float], mids: [Float], shared: [Float], floor: [Float], rms: Float) -> MusicLayers {
         frames += 1
         // A kick is the loudest thing in most mixes, so a jump in overall
         // loudness confirms one even over a bassline that's already loud.
@@ -246,6 +308,22 @@ struct LayerAnalyzer {
         }
         for i in MusicLayers.bassBands where i < count { older[i] = previous[i] }
         for i in 0..<count { previous[i] = raw[i] }
+        // What rose between the peaks, in the mids and the highs: drums, and
+        // nothing a held note does. Added to the rise of the peaks, so a hit
+        // that a loud chord hides from the one still shows in the other. On
+        // real drum loops mixed with their songs' other parts
+        // (`scripts/score-layers.sh`, 14 songs), the snares missed fell from
+        // 191 of 678 to 89 of 704 and the hats from 308 of 1063 to 256 of 1094.
+        let firstMid = MusicLayers.midBands.lowerBound
+        if floor.count == previousFloor.count {
+            var percussive = SIMD4<Float>.zero
+            for i in floor.indices {
+                percussive[i + firstMid < MusicLayers.highBands.lowerBound ? 2 : 3] += max(0, floor[i] - previousFloor[i])
+                previousFloor[i] = floor[i]
+            }
+            flux[2] += percussive[2] / Float(MusicLayers.midBands.count)
+            flux[3] += percussive[3] / Float(MusicLayers.highBands.count)
+        }
         // Like `levels`: each layer against its own last few seconds, so a mix's
         // tilt doesn't decide which layer leads, gated by its absolute level.
         let learn = max(1 / Float(90), 1 / frames)
@@ -272,9 +350,74 @@ struct LayerAnalyzer {
         let h = hat.update(flux: flux[3], present: loudest[3] > max(0.1, top - 0.5))
         // Kicks carry the pulse; snares and hats sharpen it.
         tempo.update(k.novelty + 0.5 * s.novelty + 0.25 * h.novelty)
-        return MusicLayers(bass: envelope[0], lowMid: envelope[1], mid: envelope[2], high: envelope[3],
+        // The lead is the mids as far as they're centred and held. What isn't
+        // still counts for a third: on a record with the singer panned to one
+        // side (early stereo), or with none at all, the layer follows the mids
+        // faintly rather than going dead.
+        let led = envelope[2] * max(centred(shared, of: mids), 0.35)
+        return MusicLayers(bass: envelope[0], lowMid: envelope[1], mid: envelope[2], high: envelope[3], lead: led,
                            kick: k.onset, snare: s.onset, hat: h.onset,
                            beats: tempo.beats, tempo: tempo.tempo, confidence: tempo.confidence)
+    }
+}
+
+extension LayerAnalyzer {
+    /// How much of what holds in the mids is in the centre, 0…1. Each band's
+    /// median over the last `held` frames keeps what holds and drops what only
+    /// flashes by; of that, the shared power against all of it. A voice alone
+    /// is all shared, and with a band spread around it it's still within a few
+    /// dB of the whole; what a chord spread wide leaves in the centre is 10 dB
+    /// or more down, and counts for nothing.
+    ///
+    /// Measured on real parts (`scripts/score-layers.sh`: 14 songs from
+    /// GarageBand's loops, the lead folded to the centre as a singer is): with
+    /// only the lead playing over drums and bass the layer averages 0.40, with
+    /// only the backing 0.31, with neither 0.11. The mids layer, which fed the
+    /// haze before, gave 0.45, 0.50 and 0.24: it couldn't tell them apart.
+    /// Backings that are themselves mixed near the centre still pass as leads.
+    fileprivate mutating func centred(_ shared: [Float], of mids: [Float]) -> Float {
+        let bands = MusicLayers.midBands.count
+        guard shared.count == bands, mids.count == bands else { return 0 }
+        for i in 0..<bands {
+            midHistory[leadWrite * bands + i] = mids[i]
+            sharedHistory[leadWrite * bands + i] = shared[i]
+        }
+        leadWrite = (leadWrite + 1) % Self.held
+        var all: Float = 0, centre: Float = 0
+        for i in 0..<bands {
+            all += Self.median(of: midHistory, band: i, bands: bands)
+            centre += Self.median(of: sharedHistory, band: i, bands: bands)
+        }
+        // It also has to be about as loud as the mids have lately been at
+        // their loudest: what drums and a bass leave held in the centre of the
+        // mids (a ring, an overtone) is all shared too, but 20 dB under a
+        // singer. The mark it's held to falls 1 dB a second, so a quiet verse
+        // after a loud chorus finds its own level.
+        let centreLevel = 10 * log10f(max(centre, 1e-12)), allLevel = 10 * log10f(max(all, 1e-12))
+        leadPeak = max(leadPeak - 1.0 / 30, allLevel, -65)
+        let presence = min(1, max(0, (centreLevel - leadPeak + 22) / 12)) * (centreLevel > -57 ? 1 : 0)
+        // From 10 dB under the whole (nothing) to 3 dB under (all of it).
+        let near = min(1, max(0, (centreLevel - allLevel + 10) / 7))
+        let target = near * near * (3 - 2 * near) * presence
+        leadEnvelope += (target - leadEnvelope) * (target > leadEnvelope ? 0.35 : 0.16)
+        return leadEnvelope
+    }
+
+    /// One band's median over the `held` frames kept in `history`.
+    private static func median(of history: [Float], band i: Int, bands: Int) -> Float {
+        // Seven values: an insertion sort in registers is all a median takes.
+        var v = (history[i], history[bands + i], history[2 * bands + i], history[3 * bands + i],
+                 history[4 * bands + i], history[5 * bands + i], history[6 * bands + i])
+        withUnsafeMutableBytes(of: &v) { bytes in
+            let values = bytes.bindMemory(to: Float.self)
+            for a in 1..<held {
+                let x = values[a]
+                var b = a - 1
+                while b >= 0, values[b] > x { values[b + 1] = values[b]; b -= 1 }
+                values[b + 1] = x
+            }
+        }
+        return v.3
     }
 }
 

@@ -160,6 +160,7 @@ struct SettingsView: View {
                  : "librespot is an unofficial Rust client. Spotify only issues audio keys for older accounts that used it previously.")
         }
         if settings.engine == .soloist {
+            EqualizerSection()
             SoloistSettingsSection()
         } else {
             SwiftUI.Section {

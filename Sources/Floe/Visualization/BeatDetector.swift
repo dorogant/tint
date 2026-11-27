@@ -21,6 +21,7 @@ struct BeatDetector {
         var lowMid: Float = 0
         var mid: Float = 0
         var high: Float = 0
+        var lead: Float = 0
         /// The song's beat clock (beats; the fraction is the phase), its tempo in
         /// BPM (0 until locked) and how steady the pulse is.
         var beats: Float = 0
@@ -63,6 +64,7 @@ struct BeatDetector {
         pulse.bass = layers.bass
         pulse.lowMid = layers.lowMid
         pulse.mid = layers.mid
+        pulse.lead = layers.lead
         pulse.high = layers.high
         pulse.beats = layers.beats
         pulse.tempo = layers.tempo

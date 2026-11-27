@@ -282,3 +282,13 @@
 "Rays" = "Rays";
 "The card keeps its visualizer below it." = "The card keeps its visualizer below it.";
 "How Now Playing shows the album cover. The card keeps its visualizer below it." = "How Now Playing shows the album cover. The card keeps its visualizer below it.";
+"Equalizer" = "Equalizer";
+"Flat" = "Flat";
+"Bass boost" = "Bass boost";
+"Bass reducer" = "Bass reducer";
+"Treble boost" = "Treble boost";
+"Vocal" = "Vocal";
+"Electronic" = "Electronic";
+"Small speakers" = "Small speakers";
+"While the equalizer is on, Tint plays Soloist's sound itself, about 30 ms later. Boosts lower the overall level so loud songs don't distort; turn the volume up to match." = "While the equalizer is on, Tint plays Soloist's sound itself, about 30 ms later. Boosts lower the overall level so loud songs don't distort; turn the volume up to match.";
+"Waiting to hear Soloist. If the sound stays unchanged while music plays, allow Tint to record system audio in System Settings → Privacy & Security." = "Waiting to hear Soloist. If the sound stays unchanged while music plays, allow Tint to record system audio in System Settings → Privacy & Security.";

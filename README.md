@@ -22,6 +22,7 @@ Built with SwiftUI, Core Animation and Metal on top of
   between devices
 - Synced lyrics that follow the song; click a line to jump to it
 - Visualizers and live backgrounds (Fluid and Beams) that take their colours from the album cover and react to audio via macOS Core Audio Process Tap
+- A ten-band equalizer with presets
 - Media keys and the Control Center player
 - English and Ukrainian
 

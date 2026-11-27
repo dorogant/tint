@@ -168,6 +168,32 @@ extension WebAPI {
         try await get("artists/\(id)")
     }
 
+    /// An artist's songs as search ranks them, which is roughly by popularity:
+    /// the nearest thing to the top tracks Development Mode refuses (403).
+    /// Asked for ten, search answers with about five of them, and its `next`
+    /// and `total` claim there's nothing further when there is (checked
+    /// 2026-11-27), so `PopularSongs` pages by offset until nothing new comes.
+    /// Songs by namesakes are dropped.
+    func songs(by artist: Artist, offset: Int) async throws -> [Track] {
+        let name = artist.name.replacingOccurrences(of: "\"", with: " ")
+        let found: SearchResults = try await get("search", [
+            "q": "artist:\"\(name)\"", "type": "track",
+            "limit": "\(PopularSongs.pageSize)", "offset": "\(offset)",
+        ])
+        return (found.tracks?.items ?? []).filter { track in
+            track.artists.contains { $0.id == artist.id || ($0.id == nil && $0.name == artist.name) }
+        }
+    }
+
+    /// The next songs for an artist's Popular list: two pages asked for together.
+    func extending(_ songs: PopularSongs, by artist: Artist) async throws -> PopularSongs {
+        async let first = self.songs(by: artist, offset: songs.nextOffset)
+        async let second = self.songs(by: artist, offset: songs.nextOffset + PopularSongs.pageSize)
+        var songs = songs
+        songs.add(try await first + second, pages: 2)
+        return songs
+    }
+
     func artistAlbums(_ id: String) async throws -> [AlbumRef] {
         try await all("artists/\(id)/albums",
                       ["include_groups": "album,single", "limit": "10"], max: 30) // Dev Mode max is 10
@@ -231,6 +257,31 @@ extension WebAPI {
             items += page.items
         }
         return items
+    }
+}
+
+/// An artist's best-known songs, gathered from search a few pages at a time.
+struct PopularSongs: Sendable {
+    /// Development Mode's largest search page.
+    static let pageSize = 10
+    /// The list stops here: further down, search's ranking is mostly noise.
+    static let most = 50
+
+    private(set) var tracks: [Track] = []
+    private(set) var nextOffset = 0
+    /// False once a load brought nothing new, or the list is full.
+    private(set) var hasMore = true
+    private var names: Set<String> = []
+
+    /// Appends what's new. The same song from an album and from its deluxe
+    /// edition has two URIs, so a name counts once.
+    mutating func add(_ found: [Track], pages: Int) {
+        let before = tracks.count
+        for track in found where tracks.count < Self.most && names.insert(track.name.lowercased()).inserted {
+            tracks.append(track)
+        }
+        nextOffset += pages * Self.pageSize
+        hasMore = tracks.count > before && tracks.count < Self.most
     }
 }
 

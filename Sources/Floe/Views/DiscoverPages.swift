@@ -334,14 +334,19 @@ struct ArtistView: View {
     @Environment(Navigator.self) private var navigator
     @ViewState private var artist: Artist?
     @ViewState private var albums: [AlbumRef] = []
+    @ViewState private var popular = PopularSongs()
+    /// Five at first, as on Spotify, so the albums stay on the first screen.
+    @ViewState private var shown = ArtistView.firstSongs
+    @ViewState private var loadingMore = false
     @ViewState private var error: String?
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
         VStack(alignment: .leading, spacing: scale.sectionGap) {
             if let artist {
-                // No "Popular" list: Development Mode removed top tracks. Playing the
-                // artist context still starts with them (Spirc resolves it).
+                // Development Mode refuses an artist's top tracks, so Popular is
+                // what search ranks first for the artist (`WebAPI.songs(by:offset:)`).
+                // Play still hands Spotify the artist, which starts with the real ones.
                 PageHeader(badge: "Artist", title: artist.name,
                            detail: (artist.genres ?? []).prefix(3).map(\.localizedCapitalized).joined(separator: " · ")) {
                     ArtworkView(images: artist.images, size: scale(200), circle: true).coverGlow(artist.images)
@@ -349,6 +354,23 @@ struct ArtistView: View {
                     PlayPill { player.play(PlayRequest(contextURI: artist.uri)) }
                 }
                 .reveal("header")
+                if !popular.tracks.isEmpty {
+                    VStack(alignment: .leading, spacing: scale.headerGap) {
+                        SectionHeader(title: "Popular") {
+                            if shown < popular.tracks.count || popular.hasMore {
+                                ShowMoreButton(busy: loadingMore) { Task { await showMoreSongs(by: artist) } }
+                            }
+                        }
+                        let entries = popular.tracks.prefix(shown).enumerated().map { TrackEntry(id: $0, track: $1) }
+                        TrackListView(entries: entries) { entry in
+                            // Play the list from this song, so next and previous move through
+                            // it, on into the songs loaded but not shown yet.
+                            player.play(PlayRequest(tracks: popular.tracks.map(\.uri), startURI: entry.track.uri),
+                                        selectedTrack: entry.track)
+                        }
+                    }
+                    .reveal("popular", order: 1)
+                }
                 Shelf(title: "Discography", items: albums) { album in
                     Card(images: album.images, title: album.name,
                          subtitle: [album.year, album.albumType?.capitalized].compactMap { $0 }.joined(separator: " · ")) {
@@ -357,7 +379,7 @@ struct ArtistView: View {
                         player.play(PlayRequest(contextURI: album.uri))
                     }
                 }
-                .reveal("discography", order: 1)
+                .reveal("discography", order: 2)
             } else if let error {
                 MessageView(systemImage: "exclamationmark.triangle", message: error, tint: .orange,
                             actionTitle: "Try Again") { Task { await load() } }
@@ -369,16 +391,38 @@ struct ArtistView: View {
         .task(id: id) { await load() }
     }
 
+    /// The page shows once its songs are in too (one more round trip), so
+    /// Discography doesn't appear and then move down to make room for them.
+    /// Without them, the page is as it was: header and albums.
     private func load() async {
         artist = nil
         error = nil
+        popular = PopularSongs()
+        shown = Self.firstSongs
         async let discography = library.api.artistAlbums(id)
         do {
             let loaded = try await library.api.artist(id)
+            let songs = try? await library.api.extending(PopularSongs(), by: loaded)
             albums = (try? await discography) ?? []
+            guard !Task.isCancelled else { return }
+            popular = songs ?? PopularSongs()
             artist = loaded
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private static let firstSongs = 5
+
+    /// The first press shows the songs that came with the page; later ones ask for more.
+    private func showMoreSongs(by artist: Artist) async {
+        guard !loadingMore else { return }
+        if shown >= popular.tracks.count, popular.hasMore {
+            loadingMore = true
+            defer { loadingMore = false }
+            guard let more = try? await library.api.extending(popular, by: artist), self.artist?.id == artist.id else { return }
+            popular = more
+        }
+        shown = popular.tracks.count
     }
 }

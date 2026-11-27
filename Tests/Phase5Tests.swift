@@ -221,6 +221,30 @@ struct Phase5Tests {
         print("PASS: paged lists load their remaining pages together, in order, up to a cap "
               + "(7 pages of 50 ms in \(elapsed.formatted(.units(allowed: [.milliseconds]))))")
 
+        // An artist's Popular list: what search is asked, and how its pages add up.
+        let kanye = Artist(id: "a1", uri: "spotify:artist:a1", name: "Ye \"Kanye\" West", images: nil, genres: nil)
+        StubHTTP.reset([])
+        _ = try await api.songs(by: kanye, offset: 20)
+        let asked = URLComponents(url: StubHTTP.captured()[0].url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let item = { (name: String) in asked.first { $0.name == name }?.value }
+        precondition(item("q") == "artist:\"Ye  Kanye  West\"" && item("type") == "track"
+                     && item("limit") == "10" && item("offset") == "20", "search query, got \(asked)")
+        func popularSong(_ id: Int, _ name: String) -> Track {
+            Track(id: "\(id)", uri: "spotify:track:\(id)", name: name, durationMs: 1, explicit: nil,
+                  artists: [ArtistRef(id: "a1", uri: nil, name: "x")], album: nil, trackNumber: nil,
+                  discNumber: nil, isLocal: nil, isPlayable: nil)
+        }
+        var popular = PopularSongs()
+        popular.add([popularSong(1, "Runaway"), popularSong(2, "Stronger"), popularSong(3, "RUNAWAY")], pages: 2)
+        precondition(popular.tracks.map(\.id) == ["1", "2"] && popular.nextOffset == 20 && popular.hasMore,
+                     "a name counts once; the offset moves by the pages asked")
+        popular.add([popularSong(4, "Stronger")], pages: 2)
+        precondition(popular.tracks.count == 2 && popular.nextOffset == 40 && !popular.hasMore, "nothing new ends the list")
+        var full = PopularSongs()
+        full.add((0..<80).map { popularSong($0, "Song \($0)") }, pages: 2)
+        precondition(full.tracks.count == PopularSongs.most && !full.hasMore, "stops at the cap")
+        print("PASS: an artist's Popular list: search query, one entry per song name, end and cap")
+
         // What the Web API is asked to start, for the requests Spotify Soloist can't express.
         let list = (0..<500).map { "spotify:track:\($0)" }
         let fromSong = PlaybackStart(contextURI: "spotify:playlist:p", tracks: list, startURI: "spotify:track:7", startIndex: nil)

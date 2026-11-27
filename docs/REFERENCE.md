@@ -322,8 +322,10 @@ progress bar, transport, volume and the panel's tint go, the cover grows, and th
 cover, the song's name, the lyrics and the background are all that's left. Moving
 the pointer shows a **Show controls** button and the window's buttons for 2.5 s;
 once it rests they go again, and the pointer with them. Escape, ⇧⌘H or any other
-surface brings the controls back. The star beside the song's name saves it to
-Liked Songs.
+surface brings the controls back. Lyrics has the same button at its top right;
+there the bottom bar goes with the toolbar. In full screen the strip the system
+keeps for the toolbar goes too. The star beside the song's name on Now Playing
+saves it to Liked Songs.
 
 On Now Playing the cover is a plain disc with a pale hairline rim in the cover's
 colour; it doesn't move. Visuals ▸ Cover swaps it for a **Card**: a rounded
@@ -638,7 +640,11 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.sw
 - **Web API limits (Development Mode, 2026).** Tint uses only endpoints still open to
   Development Mode apps. Consequences: playlists you don't own show their header and
   Play but no track list; Spotify-made playlists 404 (Play still works); no artist top
-  tracks; search and artist albums return at most 10 per request; `market=from_token`
+  tracks (403), so an artist's **Popular** list is what search ranks first for
+  `artist:"<name>"`: close to Spotify's top songs, not the same list, five at first and
+  up to fifty through Show more; search and artist albums return at most 10 per request
+  (a song search asked for ten answers with about five, and its `next` and `total`
+  say there are no more when there are); `market=from_token`
   needs a scope Tint doesn't request (and isn't needed with a user token).
   PLAN.md's fallback of Web API tokens from the librespot session no longer works
   (tested 2026-10-08): keymaster answers 403, and api.spotify.com throttles login5

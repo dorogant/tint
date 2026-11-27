@@ -427,3 +427,7 @@
 "Tint can't change the folder it's in. Move Tint to the Applications folder, or download the new version from its page." = "Tint can't change the folder it's in. Move Tint to the Applications folder, or download the new version from its page.";
 "macOS stopped Tint from replacing itself. Allow Tint in System Settings → Privacy & Security → App Management, then try again." = "macOS stopped Tint from replacing itself. Allow Tint in System Settings → Privacy & Security → App Management, then try again.";
 "Download Page" = "Download Page";
+"Show all" = "Show all";
+"No saved albums yet" = "No saved albums yet";
+"Albums you save in Spotify show here." = "Albums you save in Spotify show here.";
+"Your albums couldn't be loaded." = "Your albums couldn't be loaded.";

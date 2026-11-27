@@ -20,6 +20,9 @@ final class LibraryModel {
     /// artist from its ranking, so this only filters Tint's shelf.
     private(set) var hiddenArtists: [HiddenArtist]
     private(set) var savedAlbums: [AlbumRef] = []
+    /// Whether the list above is the answer yet, so an empty one isn't taken for "none saved".
+    enum SavedAlbumsState { case loading, loaded, failed }
+    private(set) var savedAlbumsState = SavedAlbumsState.loading
     private(set) var loadError: String?
     /// Bumped when Liked Songs changes, so its page reloads.
     private(set) var likedRevision = 0
@@ -81,6 +84,7 @@ final class LibraryModel {
         recent = []
         topArtists = []
         savedAlbums = []
+        savedAlbumsState = .loading
         likedFlush?.cancel()
         likedFlush = nil
         likedQueue = []
@@ -109,8 +113,11 @@ final class LibraryModel {
     private func loadSavedAlbums() async {
         do {
             savedAlbums = try await api.savedAlbums()
+            savedAlbumsState = .loaded
         } catch {
             log.error("Saved albums failed: \(error.localizedDescription, privacy: .public)")
+            // With albums from an earlier load on screen there is nothing to report.
+            if savedAlbums.isEmpty { savedAlbumsState = .failed }
         }
     }
 

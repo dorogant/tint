@@ -66,7 +66,8 @@ struct HomeView: View {
             .floeAnimation(value: library.hiddenArtists)
             .reveal("artists", order: 3)
             if !library.savedAlbums.isEmpty {
-                Shelf(title: "Saved albums", items: library.savedAlbums.filter { !shown.contains($0.uri) }) { album in
+                Shelf(title: "Saved albums", items: library.savedAlbums.filter { !shown.contains($0.uri) },
+                      showAll: { navigator.select(.albums) }) { album in
                     Card(images: album.images, title: album.name,
                          subtitle: album.artists?.map(\.name).joined(separator: ", ") ?? "") {
                         navigator.push(.album(album.id))

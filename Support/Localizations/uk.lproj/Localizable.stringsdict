@@ -22,5 +22,25 @@
 			<string>%lld пісні</string>
 		</dict>
 	</dict>
+	<key>%lld albums</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@albums@</string>
+		<key>albums</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>few</key>
+			<string>%lld альбоми</string>
+			<key>many</key>
+			<string>%lld альбомів</string>
+			<key>one</key>
+			<string>%lld альбом</string>
+			<key>other</key>
+			<string>%lld альбома</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

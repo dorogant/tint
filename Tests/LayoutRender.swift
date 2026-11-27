@@ -213,6 +213,7 @@ struct LayoutRender {
             ("artist", { navigator.select(.artist("tame-impala")) }),
             ("album", { navigator.select(.album("currents")) }),
             ("songs", { navigator.select(.songs) }),
+            ("albums", { navigator.select(.albums) }),
             ("status-banner", {
                 navigator.select(.home)
                 FloeCore.shared.deliver(.unavailable(uri: nowPlaying.uri))

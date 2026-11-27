@@ -427,3 +427,7 @@
 "Tint can't change the folder it's in. Move Tint to the Applications folder, or download the new version from its page." = "Tint не може змінювати папку, в якій лежить. Перемістіть Tint до папки «Програми» або завантажте нову версію зі сторінки випуску.";
 "macOS stopped Tint from replacing itself. Allow Tint in System Settings → Privacy & Security → App Management, then try again." = "macOS не дозволила Tint замінити себе. Дозвольте Tint у Системних параметрах → Приватність і безпека → Керування програмами, а тоді спробуйте ще раз.";
 "Download Page" = "Сторінка завантаження";
+"Show all" = "Показати всі";
+"No saved albums yet" = "Ще немає збережених альбомів";
+"Albums you save in Spotify show here." = "Тут з'являються альбоми, які ви зберегли в Spotify.";
+"Your albums couldn't be loaded." = "Не вдалося завантажити ваші альбоми.";

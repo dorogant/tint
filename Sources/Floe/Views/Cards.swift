@@ -173,6 +173,8 @@ struct CardPressStyle: ButtonStyle {
 struct Shelf<Item: Identifiable, Content: View>: View {
     let title: LocalizedStringKey
     let items: [Item]
+    /// Opens the page that holds every item, for a shelf that has one.
+    var showAll: (() -> Void)? = nil
     @ViewBuilder let content: (Item) -> Content
     @Environment(\.interfaceScale) private var scale
     @ReducedMotion private var reduceMotion
@@ -189,17 +191,20 @@ struct Shelf<Item: Identifiable, Content: View>: View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: scale.headerGap - scale.plate) {
                 SectionHeader(title: title) {
-                    if edges.back || edges.forward {
-                        HStack(spacing: scale(4)) {
-                            IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1) }
-                                .disabled(!edges.back)
-                            IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1) }
-                                .disabled(!edges.forward)
+                    HStack(spacing: scale(10)) {
+                        if let showAll { ShowAllButton(action: showAll).centeredOnSectionTitle() }
+                        if edges.back || edges.forward {
+                            HStack(spacing: scale(4)) {
+                                IconButton(systemImage: "chevron.left", size: 12, help: "Scroll back") { page(-1) }
+                                    .disabled(!edges.back)
+                                IconButton(systemImage: "chevron.right", size: 12, help: "Scroll forward") { page(1) }
+                                    .disabled(!edges.forward)
+                            }
+                            .centeredOnSectionTitle()
+                            // The glyphs, not their hover wells, end on the gutter.
+                            .padding(.trailing, -scale.plate)
+                            .transition(.opacity)
                         }
-                        .centeredOnSectionTitle()
-                        // The glyphs, not their hover wells, end on the gutter.
-                        .padding(.trailing, -scale.plate)
-                        .transition(.opacity)
                     }
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -249,6 +254,31 @@ struct Shelf<Item: Identifiable, Content: View>: View {
         withAnimation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0)) {
             position.scrollTo(x: x)
         }
+    }
+}
+
+/// "Show all" beside a shelf's arrows: the shelf is a strip of the first few,
+/// and nothing else on it says there are more than fit.
+private struct ShowAllButton: View {
+    let action: () -> Void
+    @Environment(\.interfaceScale) private var scale
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            // Dimmed by opacity, not colour: an animating colour redraws the text each frame.
+            Text("Show all")
+                .floeFont(size: 12, weight: .semibold)
+                .foregroundStyle(.white)
+                .opacity(hovering ? 1 : 0.62)
+                .padding(.horizontal, scale(10))
+                .padding(.vertical, scale(5))
+                .background(.white.opacity(hovering ? 0.12 : 0.07), in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.floe)
+        .onHover { hovering = $0 }
+        .floeHover(hovering)
     }
 }
 

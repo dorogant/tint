@@ -4,7 +4,7 @@ import Observation
 /// Where the content area is. Links push onto the stack; a sidebar pick starts
 /// a new one and keeps the old for Back.
 enum Route: Hashable {
-    case home, search, songs
+    case home, search, songs, albums
     /// A mix made to order and your own numbers.
     case mix, stats
     case playlist(String), album(String), artist(String)

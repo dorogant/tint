@@ -220,6 +220,7 @@ struct MainView: View {
         case .home: HomeView()
         case .search: SearchView()
         case .songs: SongsView()
+        case .albums: AlbumsView()
         case .mix: MixView()
         case .stats: StatsView()
         case let .playlist(id): PlaylistView(id: id)

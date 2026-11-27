@@ -7,10 +7,11 @@ struct CoverOptions: View {
     var body: some View {
         @Bindable var settings = settings
         Picker("Cover", selection: $settings.cover) {
-            Text("Flower").tag(VisualSettings.Cover.flower)
+            Text("Disc").tag(VisualSettings.Cover.disc)
             Text("Card").tag(VisualSettings.Cover.card)
         }.pickerStyle(.segmented)
-        Toggle("Cover motion", isOn: $settings.coverMotion)
+        // Only the card moves.
+        Toggle("Cover motion", isOn: $settings.coverMotion).disabled(settings.cover != .card)
     }
 }
 

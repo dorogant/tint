@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 /// The cover as a card standing in perspective over its own reflection, swaying
-/// slowly while the song plays. Core Animation turns it, as it crawls the
-/// flower's petals (see `CrawlingCover`), so playback costs no per-frame work
+/// slowly while the song plays. Core Animation turns it: driving continuous
+/// motion from SwiftUI re-rendered the whole window on every frame (~10% CPU
+/// for the cover that used to crawl here). So playback costs no per-frame work,
 /// and SwiftUI updates only when the image, size or running state changes.
 struct FloatingCover: NSViewRepresentable {
     /// The reflection's room under the card, as a share of the cover's width:

@@ -38,7 +38,7 @@ struct LayoutRender {
         let search = SearchModel()
         let appearance = CoverAppearance()
         let visuals = VisualSettings(defaults: TestDefaults.make())
-        // FLOE_LAYOUT_COVER=card draws Now Playing's cover as the card (default: the flower).
+        // FLOE_LAYOUT_COVER=card draws Now Playing's cover as the card (default: the disc).
         if let cover = environment["FLOE_LAYOUT_COVER"].flatMap(VisualSettings.Cover.init(rawValue:)) { visuals.cover = cover }
         let settings = AppSettings(defaults: TestDefaults.make())
 

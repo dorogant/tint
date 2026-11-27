@@ -282,10 +282,9 @@ private struct LyricsToggle: View {
     }
 }
 
-/// The cover in the shape chosen in Visuals. As a flower, the petals crawl
-/// around an upright cover and the edge breathes; as a card, it sways in
-/// perspective over its reflection. Core Animation runs both (see
-/// `CrawlingCover` and `FloatingCover`), so playback costs no per-frame work here.
+/// The cover in the shape chosen in Visuals: a still disc, or a card that sways
+/// in perspective over its reflection. Core Animation draws both (see `DiscCover`
+/// and `FloatingCover`), so playback costs no per-frame work here.
 private struct CoverView: View {
     let size: CGFloat
     let card: Bool
@@ -300,8 +299,9 @@ private struct CoverView: View {
     private var running: Bool { player.isPlaying && !still && scenePhase == .active && windowVisible }
 
     var body: some View {
-        // A tinted rim, like a bottle cap's edge, separates the cover from the ring.
-        let rim = palette.highlight.mix(with: .black, by: 0.45).opacity(0.9)
+        // A pale hairline in the cover's colour keeps a dark cover's edge off the backdrop.
+        let rim = palette.highlight.mix(with: .white, by: 0.55).opacity(0.45)
+        let rimWidth = max(1, size * 0.007)
         // One container for both shapes, so the hero flight always has a single
         // cover to move; flexible inside, so it can draw at the mini player's size.
         ZStack {
@@ -310,9 +310,7 @@ private struct CoverView: View {
                     // The clock keeps running with the sway off, for the crossfade to a new cover.
                     FloatingCover(image: image, running: running, sways: settings.coverMotion && !still, fade: !still)
                 } else {
-                    // The petals are animations on the clock, so stopping them stops the clock.
-                    CrawlingCover(image: image, rim: NSColor(rim), rimWidth: max(2, size * 0.014),
-                                  running: running && settings.coverMotion, fade: !still)
+                    DiscCover(image: image, rim: NSColor(rim), rimWidth: rimWidth, fade: !still)
                 }
             } else if card {
                 RoundedRectangle(cornerRadius: size * FloatingCover.inset * 0.085, style: .continuous)
@@ -322,9 +320,9 @@ private struct CoverView: View {
                     .scaleEffect(FloatingCover.inset)
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
-                BlobShape(phase: 0).fill(.white.opacity(0.06))
+                Circle().fill(.white.opacity(0.06))
                     .overlay(Image(systemName: "music.note").floeFont(size: 60).foregroundStyle(Theme.tertiary))
-                    .overlay(BlobShape(phase: 0).stroke(rim, lineWidth: max(2, size * 0.014)))
+                    .overlay(Circle().strokeBorder(rim, lineWidth: rimWidth))
             }
         }
         // A new cover dips and springs back as it arrives.

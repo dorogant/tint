@@ -325,13 +325,12 @@ once it rests they go again, and the pointer with them. Escape, ⇧⌘H or any o
 surface brings the controls back. The star beside the song's name saves it to
 Liked Songs.
 
-On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
-cover stays upright; only the scalloped edge crawls around it and slowly breathes,
-and both stop on pause. Visuals ▸ Cover swaps the flower for a **Card**: a rounded
+On Now Playing the cover is a plain disc with a pale hairline rim in the cover's
+colour; it doesn't move. Visuals ▸ Cover swaps it for a **Card**: a rounded
 square standing in perspective over its reflection, swaying 19° to each side every
-11 seconds. Core Animation runs both, and **Cover motion** turns either off (the
-card then holds a 12° turn). Nothing can ring the card, so its visualizer is always
-the strip along the bottom. The circular visualizer scales with
+11 seconds and stopping on pause. Core Animation runs the sway, and **Cover motion**
+turns it off (the card then holds a 12° turn). Nothing can ring the card, so its
+visualizer is always the strip along the bottom. The circular visualizer scales with
 the cover. **Rays**, the default, are 168 hairlines that brighten as they grow, so a
 quiet passage leaves a faint rim; **Bars** are mirrored radial bars with bass at the
 top; **Wave** is a filled halo whose lobes follow the spectrum. Along the bottom,
@@ -370,7 +369,7 @@ one matches (useful with `sample`). It restores every preference afterwards.
 Window snapshots can't show Core Animation masks or motion, so `scripts/test-layers.sh`
 renders the real cover, visualizer and progress-track layers offscreen with
 `CARenderer`, inside a top-down parent as SwiftUI hosts them. It checks pixels: the
-cover is upright and shows a new image even while paused, bass sits at the top of the
+disc is upright and round under its rim and shows a new image at once without a fade, bass sits at the top of the
 ring, bottom bars stand on the floor, the halo is pale on top, and the progress fill covers only
 the elapsed part. Additional checks cover height-only progress resizing, the track
 thickening with a thumb only under the pointer (and with Reduce Motion), the playhead

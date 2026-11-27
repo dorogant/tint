@@ -10,7 +10,7 @@ import QuartzCore
 struct LayerTests {
     static func main() {
         _ = NSApplication.shared
-        coverIsUprightAndSwapsWhilePaused()
+        discIsUprightRoundAndSwapsAtOnce()
         cardStandsOverItsReflection()
         visualizerIsUpright()
         raysBrightenAsTheyGrow()
@@ -22,24 +22,27 @@ struct LayerTests {
         progressThickensAndShowsThumbOnlyUnderPointer()
         progressGlidesOnlyWhilePlaying()
         visualizerCost()
-        print("PASS: 13 layer checks (cover orientation, paused swap, card and reflection, ring and bar orientation, ray brightness, halo bass layer, frame delivery, bead overlap, progress fill, resize, hover and glide)")
+        print("PASS: 13 layer checks (disc orientation, shape and swap, card and reflection, ring and bar orientation, ray brightness, halo bass layer, frame delivery, bead overlap, progress fill, resize, hover and glide)")
     }
 
     // MARK: - Checks
 
-    static func coverIsUprightAndSwapsWhilePaused() {
-        let view = CrawlingCoverView()
+    static func discIsUprightRoundAndSwapsAtOnce() {
+        let view = DiscCoverView()
         let image = render(view, size: CGSize(width: 200, height: 200)) {
-            view.update(image: halves(top: .red, bottom: .blue), rim: .white, rimWidth: 3, running: false, fade: false)
+            view.update(image: halves(top: .red, bottom: .blue), rim: .white, rimWidth: 3, fade: false)
         }
-        check(image.color(at: 100, 50).isRed && image.color(at: 100, 150).isBlue, "cover must be upright")
+        save(image, "disc")
+        check(image.color(at: 100, 50).isRed && image.color(at: 100, 150).isBlue, "the disc must be upright")
+        check(image.color(at: 12, 12).brightness < 0.05 && image.color(at: 187, 187).brightness < 0.05,
+              "the disc must leave the corners empty")
+        check(image.color(at: 100, 1).paleness > 0.6 && image.color(at: 100, 8).isRed, "the rim must be a hairline on the disc's edge")
 
+        // With Reduce Motion nothing fades: the new cover is simply there.
         let swapped = render(view, size: CGSize(width: 200, height: 200)) {
-            view.update(image: halves(top: .red, bottom: .blue), rim: .white, rimWidth: 3, running: true, fade: true)
-            CATransaction.flush()
-            view.update(image: halves(top: .green, bottom: .green), rim: .white, rimWidth: 3, running: false, fade: true)
+            view.update(image: halves(top: .green, bottom: .green), rim: .white, rimWidth: 3, fade: false)
         }
-        check(swapped.color(at: 100, 100).isGreen, "a cover changed while paused must show at once")
+        check(swapped.color(at: 100, 100).isGreen, "a cover changed without a fade must show at once")
     }
 
     /// The card is upright and turned in perspective, its reflection hangs

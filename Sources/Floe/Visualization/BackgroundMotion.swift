@@ -257,7 +257,7 @@ struct FluidMotion {
     private(set) var glow: Float = 0
     /// The bass breath: 0 at rest, about 1 on a full kick.
     private(set) var breath = Spring()
-    /// The mids, filling the ink.
+    /// The voice or lead, filling the ink.
     private(set) var body: Float = 0
     /// The highs, sharpening the strands.
     private(set) var detail: Float = 0
@@ -278,7 +278,7 @@ struct FluidMotion {
         breath.step(toward: min(1.5, depth), frequency: 1.3, damping: 1, dt: dt)
         let target = configuration.glow * min(1.4, react * (0.3 * pulse.energy + 0.45 * swell + 0.15 * pulse.bass))
         glow += (target - glow) * BeatDetector.rate(dt, target > glow ? 0.08 : 0.4)
-        body += (min(1, pulse.mid * react) - body) * BeatDetector.rate(dt, 0.4)
+        body += (min(1, pulse.lead * react) - body) * BeatDetector.rate(dt, 0.4)
         detail += (min(1, pulse.high * react) - detail) * BeatDetector.rate(dt, 0.3)
     }
 }

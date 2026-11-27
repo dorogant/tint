@@ -13,7 +13,7 @@ import simd
 /// | Snare, clap (hits in the mids)       | the inner beams flick across each other, alternating sides    |
 /// | Highs envelope (hats, cymbals, air)  | the inner beams' brightness                                   |
 /// | Hat                                  | motes drifting down the inner beams catch the light          |
-/// | Mids envelope (vocals, leads)        | the haze fills with the cover's colour                        |
+/// | The lead (a voice, a solo: centred and held) | the haze fills with the cover's colour                |
 /// | Loudness                             | the floor beams: the corner pair in a loud passage, the next pairs as it builds |
 /// | Loudness against the last seconds    | overall level and sweep size: a breakdown dims and calms, a drop lights the whole floor |
 /// | Tempo and beat phase                 | sweeps turn on the beat; the look changes every eight bars; the opt-in strobe flashes on the beat |
@@ -183,7 +183,7 @@ struct BeamRig {
         follow(&energy, latest.energy, attack: 0.15, release: 0.4)
         // Slow to rise, quick to fall: a held vocal or lead fills the haze, while
         // the brief click of a kick in the mids barely registers.
-        follow(&hazeFill, latest.mid * (0.6 + 0.4 * latest.energy), attack: 0.7, release: 0.25)
+        follow(&hazeFill, latest.lead * (0.6 + 0.4 * latest.energy), attack: 0.7, release: 0.25)
         kickGlow *= expf(-dt / 0.16)
         sparkle *= expf(-dt / 0.07)
         if flashHeld { flashHeld = false } else { flash *= expf(-dt / 0.045) }

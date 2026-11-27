@@ -48,7 +48,8 @@ struct DrumNoise {
 
 /// Synthetic music at 44.1 kHz, so the detectors see real analyzer frames:
 /// pitch-swept kicks on every beat, a sine bassline, a soft chord, hats on the
-/// sixteenths, a snare on two and four and a sung vowel with vibrato.
+/// sixteenths, a snare on two and four and a sung vowel with vibrato, all in
+/// the centre as a mix has them, and a chord spread wide to the sides.
 struct SyntheticTrack {
     var kicksPerSecond: Float = 2
     var kick: Float = 0
@@ -57,6 +58,11 @@ struct SyntheticTrack {
     var hats: Float = 0
     var snare: Float = 0
     var vocal: Float = 0
+    /// A held chord spread wide, as a chorused pad or a stack of guitars is: the
+    /// same notes on each side, the right 3% sharp of the left, so the channels
+    /// drift through every phase many times a second and share nothing for
+    /// long. Loud in the mids, where a voice is.
+    var spread: Float = 0
     /// Seconds before the first kick (and the grid the other drums follow).
     var kickOffset: Float = 0.25
     /// Master gain, and whether the master then clips softly like a loud mastered track.
@@ -99,6 +105,21 @@ struct SyntheticTrack {
         return clip ? tanhf(value * gain) : value * gain
     }
 
+    /// Both channels: everything above in the centre, the chord to the sides.
+    func stereo(at t: Float, noise: inout DrumNoise) -> (left: Float, right: Float) {
+        let centre = sample(at: t, noise: &noise)
+        guard spread > 0 else { return (centre, centre) }
+        func side(_ tuning: Float) -> Float {
+            var value: Float = 0
+            // C major from C5, with four overtones a note.
+            for note: Float in [523.3, 659.3, 784] {
+                for overtone in 1...4 { value += sinf(2 * .pi * note * tuning * Float(overtone) * t) / Float(overtone) }
+            }
+            return value / 6
+        }
+        return (centre + spread * gain * side(0.985), centre + spread * gain * side(1.015))
+    }
+
     /// One analysis frame per 30 Hz tick, as Floe's worker produces them.
     static func frames(_ sections: [(SyntheticTrack, Float)], analyzer: SpectrumAnalyzer = SpectrumAnalyzer()!) -> [SpectrumFrame] {
         let block = Int(SpectrumAnalyzer.sampleRate / 30)
@@ -108,8 +129,9 @@ struct SyntheticTrack {
         for (track, seconds) in sections {
             let count = Int(seconds * 30)
             for _ in 0..<count {
-                let samples = (0..<block).map { track.sample(at: Float(start + $0) / SpectrumAnalyzer.sampleRate, noise: &noise) }
-                frames.append(analyzer.process(left: samples, right: samples, count: block))
+                var left = [Float](repeating: 0, count: block), right = [Float](repeating: 0, count: block)
+                for i in 0..<block { (left[i], right[i]) = track.stereo(at: Float(start + i) / SpectrumAnalyzer.sampleRate, noise: &noise) }
+                frames.append(analyzer.process(left: left, right: right, count: block))
                 start += block
             }
         }

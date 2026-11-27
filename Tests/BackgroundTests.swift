@@ -326,6 +326,28 @@ struct BackgroundTests {
         check(mean(vocal, \.mid) > mean(vocal, \.bass) + 0.15 && mean(vocal, \.mid) > mean(vocal, \.high) + 0.15,
               "a vocal must live in the mid layer")
 
+        // The lead layer is the singer, not the band: what's in the centre and
+        // holds. A chord spread to the sides as loud as the voice, and a snare's
+        // crack in the same octaves, fill the mids and leave the lead alone.
+        let guitars = layers([(SyntheticTrack(spread: 0.3), 6)])
+        let sung = layers([(SyntheticTrack(vocal: 0.3, spread: 0.3), 6)])
+        print(String(format: "Layers: lead / mid with a vocal %.2f / %.2f; a chord spread wide %.2f / %.2f; the vocal over it %.2f / %.2f; snares %.2f / %.2f",
+                     mean(vocal, \.lead), mean(vocal, \.mid), mean(guitars, \.lead), mean(guitars, \.mid),
+                     mean(sung, \.lead), mean(sung, \.mid), mean(snares, \.lead), mean(snares, \.mid)))
+        check(mean(vocal, \.lead) > 0.3, "a vocal must fill the lead layer (\(mean(vocal, \.lead)))")
+        check(mean(guitars, \.mid) > 0.3 && mean(guitars, \.lead) < 0.4 * mean(guitars, \.mid),
+              "a chord spread to the sides must sound in the mids and count for only a third of that in the lead (\(mean(guitars, \.mid)), \(mean(guitars, \.lead)))")
+        check(mean(sung, \.lead) > 0.3 && mean(sung, \.lead) > 1.6 * mean(guitars, \.lead),
+              "a vocal must lead through the chord around it (\(mean(sung, \.lead)) against \(mean(guitars, \.lead)))")
+        check(mean(snares, \.lead) < 0.05, "a snare must not read as a lead (\(mean(snares, \.lead)))")
+        // A hit under a loud chord: the chord's partials hold every band's level
+        // where it is, and only the level between them shows the snare.
+        let buried = layers([(SyntheticTrack(snare: 0.25, spread: 0.6), 6)])
+        let buriedHats = layers([(SyntheticTrack(hats: 0.06, spread: 0.6), 6)])
+        print("Layers: under a loud chord, \(hits(buried, \.snare).count) of 6 snares and \(hits(buriedHats, \.hat).count) of 48 hats are found")
+        check((5...7).contains(hits(buried, \.snare).count), "a snare under a loud chord must still be found (\(hits(buried, \.snare).count) of 6)")
+        check(hits(guitars, \.snare).isEmpty && hits(guitars, \.hat).isEmpty && hits(guitars, \.kick).isEmpty, "a held chord must not read as drums")
+
         // The bass envelope pumps with the kicks instead of sitting flat.
         let pump = kicks.dropFirst(60).prefix(30).map(\.bass)
         check(pump.max()! - pump.min()! > 0.4, "the bass envelope must pump with the kicks (\(pump.min()!)…\(pump.max()!))")

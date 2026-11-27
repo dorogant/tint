@@ -309,9 +309,13 @@ private final class PointerRest {
 /// Hiding the view that holds its items changes no layout at all, so nothing
 /// moves when the controls go, and the buttons keep their place.
 ///
-/// In full screen the titlebar moves to a window of its own, which paints a
-/// grey strip across the top of the screen whether or not it has items. That
-/// window is made invisible while the controls are away.
+/// In full screen the titlebar moves to a window of its own, and there the
+/// system gives it an opaque grey background, although the window's titlebar
+/// is transparent: a strip across the top of the screen with the toolbar on
+/// it, and the backdrop cut off beneath. That background is hidden for as
+/// long as full screen lasts, so the toolbar floats on the backdrop as it
+/// does in a window; while the controls are away the whole titlebar window
+/// is invisible.
 private struct WindowChrome: NSViewRepresentable {
     let toolbarHidden: Bool
     let buttonsHidden: Bool
@@ -342,6 +346,7 @@ private struct WindowChrome: NSViewRepresentable {
         /// The full-screen titlebar window made invisible here, to put back.
         private weak var hiddenStrip: NSWindow?
         private weak var hiddenTitlebar: NSView?
+        private weak var hiddenBackground: NSView?
         private var watchers: [Task<Void, Never>] = []
 
         /// Entering full screen makes the titlebar's window anew, and leaving
@@ -393,7 +398,23 @@ private struct WindowChrome: NSViewRepresentable {
             if !fullScreen {
                 for button in buttons { button.animator().alphaValue = buttonsHidden ? 0 : 1 }
             }
-            // Full screen's titlebar window, strip and all. Never this window,
+            // Full screen's grey strip: the titlebar's background view, and
+            // the colour of the window that holds it.
+            if let detached {
+                let background = titlebar.superview?.subviews.first { "\(type(of: $0))".contains("TitlebarBackground") }
+                if let background, !background.isHidden || background.alphaValue != 0 {
+                    background.isHidden = true
+                    background.alphaValue = 0
+                    hiddenBackground = background
+                }
+                if detached.isOpaque { detached.isOpaque = false }
+                if detached.backgroundColor != .clear { detached.backgroundColor = .clear }
+            } else if let background = hiddenBackground {
+                hiddenBackground = nil
+                background.alphaValue = 1
+                background.isHidden = false
+            }
+            // Full screen's titlebar window, toolbar and all. Never this window,
             // and nothing is put back that wasn't hidden here.
             if toolbarHidden, let detached {
                 titlebar.superview?.isHidden = true

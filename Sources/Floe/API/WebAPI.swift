@@ -144,6 +144,18 @@ extension WebAPI {
         return page.items
     }
 
+    /// The account's top artists over a stretch, as Spotify ranks them (scope `user-top-read`).
+    func topArtists(over range: TopRange, limit: Int = 50) async throws -> [Artist] {
+        let page: Paging<Artist> = try await get("me/top/artists", ["limit": "\(limit)", "time_range": range.rawValue])
+        return page.items
+    }
+
+    /// The account's top songs over a stretch, as Spotify ranks them.
+    func topTracks(over range: TopRange, limit: Int = 50) async throws -> [Track] {
+        let page: Paging<Track> = try await get("me/top/tracks", ["limit": "\(limit)", "time_range": range.rawValue])
+        return page.items
+    }
+
     /// Development Mode caps `limit` at 10.
     func search(_ text: String, offset: Int = 0) async throws -> SearchResults {
         try await get("search", [
@@ -166,6 +178,32 @@ extension WebAPI {
 
     func artist(_ id: String) async throws -> Artist {
         try await get("artists/\(id)")
+    }
+
+    /// An artist's songs as search ranks them, which is roughly by popularity:
+    /// the nearest thing to the top tracks Development Mode refuses (403).
+    /// Asked for ten, search answers with about five of them, and its `next`
+    /// and `total` claim there's nothing further when there is (checked
+    /// 2026-11-27), so `PopularSongs` pages by offset until nothing new comes.
+    /// Songs by namesakes are dropped.
+    func songs(by artist: Artist, offset: Int) async throws -> [Track] {
+        let name = artist.name.replacingOccurrences(of: "\"", with: " ")
+        let found: SearchResults = try await get("search", [
+            "q": "artist:\"\(name)\"", "type": "track",
+            "limit": "\(PopularSongs.pageSize)", "offset": "\(offset)",
+        ])
+        return (found.tracks?.items ?? []).filter { track in
+            track.artists.contains { $0.id == artist.id || ($0.id == nil && $0.name == artist.name) }
+        }
+    }
+
+    /// The next songs for an artist's Popular list: two pages asked for together.
+    func extending(_ songs: PopularSongs, by artist: Artist) async throws -> PopularSongs {
+        async let first = self.songs(by: artist, offset: songs.nextOffset)
+        async let second = self.songs(by: artist, offset: songs.nextOffset + PopularSongs.pageSize)
+        var songs = songs
+        songs.add(try await first + second, pages: 2)
+        return songs
     }
 
     func artistAlbums(_ id: String) async throws -> [AlbumRef] {
@@ -231,6 +269,38 @@ extension WebAPI {
             items += page.items
         }
         return items
+    }
+}
+
+/// The stretches Spotify ranks an account's top artists and songs over: about
+/// the last four weeks, about the last six months, and about a year.
+enum TopRange: String, CaseIterable, Identifiable, Sendable {
+    case weeks = "short_term", months = "medium_term", year = "long_term"
+    var id: Self { self }
+}
+
+/// An artist's best-known songs, gathered from search a few pages at a time.
+struct PopularSongs: Sendable {
+    /// Development Mode's largest search page.
+    static let pageSize = 10
+    /// The list stops here: further down, search's ranking is mostly noise.
+    static let most = 50
+
+    private(set) var tracks: [Track] = []
+    private(set) var nextOffset = 0
+    /// False once a load brought nothing new, or the list is full.
+    private(set) var hasMore = true
+    private var names: Set<String> = []
+
+    /// Appends what's new. The same song from an album and from its deluxe
+    /// edition has two URIs, so a name counts once.
+    mutating func add(_ found: [Track], pages: Int) {
+        let before = tracks.count
+        for track in found where tracks.count < Self.most && names.insert(track.name.lowercased()).inserted {
+            tracks.append(track)
+        }
+        nextOffset += pages * Self.pageSize
+        hasMore = tracks.count > before && tracks.count < Self.most
     }
 }
 

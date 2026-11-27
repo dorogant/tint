@@ -10,8 +10,10 @@ import QuartzCore
 struct LayerTests {
     static func main() {
         _ = NSApplication.shared
-        coverIsUprightAndSwapsWhilePaused()
+        discIsUprightRoundAndSwapsAtOnce()
+        cardStandsOverItsReflection()
         visualizerIsUpright()
+        raysBrightenAsTheyGrow()
         haloBackLayerFollowsBass()
         visualizerDrawsPublishedFramesOnlyWhileRunning()
         beadEchoDoesNotTintTheFront()
@@ -20,24 +22,59 @@ struct LayerTests {
         progressThickensAndShowsThumbOnlyUnderPointer()
         progressGlidesOnlyWhilePlaying()
         visualizerCost()
-        print("PASS: 11 layer checks (cover orientation, paused swap, ring and bar orientation, halo bass layer, frame delivery, bead overlap, progress fill, resize, hover and glide)")
+        print("PASS: 13 layer checks (disc orientation, shape and swap, card and reflection, ring and bar orientation, ray brightness, halo bass layer, frame delivery, bead overlap, progress fill, resize, hover and glide)")
     }
 
     // MARK: - Checks
 
-    static func coverIsUprightAndSwapsWhilePaused() {
-        let view = CrawlingCoverView()
+    static func discIsUprightRoundAndSwapsAtOnce() {
+        let view = DiscCoverView()
         let image = render(view, size: CGSize(width: 200, height: 200)) {
-            view.update(image: halves(top: .red, bottom: .blue), rim: .white, rimWidth: 3, running: false, fade: false)
+            view.update(image: halves(top: .red, bottom: .blue), rim: .white, rimWidth: 3, fade: false)
         }
-        check(image.color(at: 100, 50).isRed && image.color(at: 100, 150).isBlue, "cover must be upright")
+        save(image, "disc")
+        check(image.color(at: 100, 50).isRed && image.color(at: 100, 150).isBlue, "the disc must be upright")
+        check(image.color(at: 12, 12).brightness < 0.05 && image.color(at: 187, 187).brightness < 0.05,
+              "the disc must leave the corners empty")
+        check(image.color(at: 100, 1).paleness > 0.6 && image.color(at: 100, 8).isRed, "the rim must be a hairline on the disc's edge")
 
+        // With Reduce Motion nothing fades: the new cover is simply there.
         let swapped = render(view, size: CGSize(width: 200, height: 200)) {
-            view.update(image: halves(top: .red, bottom: .blue), rim: .white, rimWidth: 3, running: true, fade: true)
-            CATransaction.flush()
-            view.update(image: halves(top: .green, bottom: .green), rim: .white, rimWidth: 3, running: false, fade: true)
+            view.update(image: halves(top: .green, bottom: .green), rim: .white, rimWidth: 3, fade: false)
         }
-        check(swapped.color(at: 100, 100).isGreen, "a cover changed while paused must show at once")
+        check(swapped.color(at: 100, 100).isGreen, "a cover changed without a fade must show at once")
+    }
+
+    /// The card is upright and turned in perspective, its reflection hangs
+    /// upside down beneath it and fades out, and a sway starts where a still
+    /// card stands.
+    static func cardStandsOverItsReflection() {
+        let size = CGSize(width: 200, height: 200 * (1 + FloatingCover.foot))
+        func shot(sways: Bool, name: String) -> Image {
+            let view = FloatingCoverView()
+            let image = render(view, size: size) {
+                view.update(image: halves(top: .red, bottom: .blue), running: false, sways: sways, fade: false)
+            }
+            save(image, name)
+            return image
+        }
+        let still = shot(sways: false, name: "card-still")
+        check(still.color(at: 100, 50).isRed && still.color(at: 100, 150).isBlue, "the card must be upright")
+        // The card's foot is at 190 of 232 rows; its reflection shows the bottom half first.
+        let near = still.color(at: 100, 197), far = still.color(at: 100, 229)
+        check(near.b > 0.12 && near.b < 0.5 && near.b > near.r + 0.08, "the reflection must be a dim copy of the card's foot (\(near))")
+        check(far.brightness < 0.06, "the reflection must fade out by the view's foot (\(far))")
+        // In perspective the near side is taller, so the top edge slopes.
+        func topEdge(_ image: Image, _ x: Int) -> Int { (0..<100).first { image.color(at: x, $0).brightness > 0.3 } ?? 100 }
+        let slope = topEdge(still, 160) - topEdge(still, 40)
+        check(abs(slope) >= 3, "the card must stand in perspective (top edge slopes \(slope) px)")
+        let paused = shot(sways: true, name: "card-paused")
+        check(topEdge(paused, 40) == topEdge(still, 40) && topEdge(paused, 160) == topEdge(still, 160),
+              "a paused sway must stand where a still card does")
+        let turns = FloatingCoverView.swayTurns
+        check(abs(turns[0] - FloatingCoverView.rest) < 1e-9 && abs(turns[turns.count - 1] - turns[0]) < 1e-9
+              && abs(turns.max()! - FloatingCoverView.swing) < 0.01 && abs(turns.min()! + FloatingCoverView.swing) < 0.01,
+              "the sway must loop from the resting turn through both ends of the swing")
     }
 
     static func visualizerIsUpright() {
@@ -67,6 +104,42 @@ struct LayerTests {
         let ceiling = (0...20).contains { bars.color(at: $0, 4).isLit }
         check(floor && !ceiling, "bars must stand on the bottom")
 
+    }
+
+    /// Rays keep the bars' layout (bass at the top of the ring and in the middle
+    /// of the strip), and a short ray is fainter than a long one where both
+    /// leave the cover, so a quiet ring is a faint one.
+    static func raysBrightenAsTheyGrow() {
+        let model = VisualizationModel()
+        // Strong bass, weak treble.
+        let levels = (0..<48).map { max(0.05, 0.95 - Float($0) * 0.019) }
+        model.frame = SpectrumFrame(bands: levels, levels: levels, rms: 0.3)
+        let blue = NSColor(red: 0.2, green: 0.5, blue: 1, alpha: 1)
+
+        let ring = VisualizerLayerView(model: model)
+        let radial = render(ring, size: CGSize(width: 300, height: 300)) {
+            ring.configure(style: .radialRays, sensitivity: 1, color: blue, pale: .white, running: false)
+        }
+        save(radial, "rays-ring")
+        // The brightest pixel in a band of columns, since rays are thinner than the gaps between them.
+        func brightest(_ image: Image, _ columns: ClosedRange<Int>, _ y: Int) -> Double {
+            columns.map { image.color(at: $0, y).brightness }.max() ?? 0
+        }
+        let top = (0..<150).first { brightest(radial, 140...160, $0) > 0.1 } ?? 150
+        let bottom = (0..<150).first { brightest(radial, 140...160, 299 - $0) > 0.1 } ?? 150
+        check(top + 10 < bottom, "bass rays must sit at the top of the ring (\(top), \(bottom))")
+        // The cover's radius is 100; every ray has left it by 110.
+        let loud = brightest(radial, 140...160, 40), quiet = brightest(radial, 140...160, 260)
+        check(quiet > 0.08 && loud > quiet + 0.25, "a short ray must be fainter than a long one (\(loud), \(quiet))")
+
+        let strip = VisualizerLayerView(model: model)
+        let rays = render(strip, size: CGSize(width: 600, height: 80)) {
+            strip.configure(style: .rays, sensitivity: 1, color: blue, pale: .white, running: false)
+        }
+        save(rays, "rays-strip")
+        let middle = brightest(rays, 290...310, 8) > 0.3 && brightest(rays, 290...310, 72) > 0.3
+        let ends = brightest(rays, 0...20, 8) < 0.05 && brightest(rays, 0...20, 72) < 0.05 && brightest(rays, 0...20, 40) > 0.08
+        check(middle && ends, "strip rays must grow both ways from the middle line, bass in the centre")
     }
 
     /// The halo's back layer follows the bass: a bass hit reaches far past the
@@ -259,7 +332,9 @@ struct LayerTests {
         let styles: [(VisualizerLayerView.Style, CGSize)] = [(.radialBars, CGSize(width: 480, height: 480)),
                                                               (.halo, CGSize(width: 480, height: 480)),
                                                               (.bars, CGSize(width: 640, height: 84)),
-                                                              (.beads, CGSize(width: 640, height: 84))]
+                                                              (.beads, CGSize(width: 640, height: 84)),
+                                                              (.radialRays, CGSize(width: 480, height: 480)),
+                                                              (.rays, CGSize(width: 640, height: 84))]
         for (style, size) in styles {
             let view = VisualizerLayerView(model: model)
             let count = 600
@@ -295,6 +370,7 @@ struct LayerTests {
 
     struct Pixel {
         let r: Double, g: Double, b: Double
+        var brightness: Double { max(r, g, b) }
         var isLit: Bool { max(r, g, b) > 0.35 }
         /// The faint track on black, or anything brighter.
         var isTrack: Bool { max(r, g, b) > 0.08 }
@@ -375,6 +451,23 @@ struct LayerTests {
         // Put the layer back so a later render of the same view can reuse it.
         layer.removeFromSuperlayer()
         return Image(width: texture.width, height: texture.height, bytes: bytes)
+    }
+
+    /// Writes a render to `$FLOE_LAYER_PREVIEWS`, when that is set, to look at.
+    static func save(_ image: Image, _ name: String) {
+        guard let directory = ProcessInfo.processInfo.environment["FLOE_LAYER_PREVIEWS"] else { return }
+        var rows = [UInt8]()
+        rows.reserveCapacity(image.bytes.count)
+        // The texture's first row is the layer's bottom; a bitmap's is its top.
+        for row in (0..<image.height).reversed() { rows += image.bytes[(row * image.width * 4)..<((row + 1) * image.width * 4)] }
+        let made = rows.withUnsafeMutableBytes { buffer in
+            CGContext(data: buffer.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8,
+                      bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)?.makeImage()
+        }
+        guard let made, let png = NSBitmapImageRep(cgImage: made).representation(using: .png, properties: [:]) else { return }
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try? png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
     }
 
     static func halves(top: NSColor, bottom: NSColor) -> CGImage {

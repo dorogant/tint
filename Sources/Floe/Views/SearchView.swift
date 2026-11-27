@@ -136,8 +136,9 @@ struct ToolbarSearch: ViewModifier {
     }
 }
 
-/// A quiet capsule beside the Songs header; dims while the next page loads.
-private struct ShowMoreButton: View {
+/// A quiet capsule beside a song list's header (Search, an artist's Popular);
+/// dims while the next page loads.
+struct ShowMoreButton: View {
     let busy: Bool
     let action: () -> Void
     @Environment(\.interfaceScale) private var scale

@@ -23,8 +23,18 @@ Built with SwiftUI, Core Animation and Metal on top of
 - Synced lyrics that follow the song; click a line to jump to it
 - Visualizers and live backgrounds (Fluid and Beams) that take their colours from the album cover and react to audio via macOS Core Audio Process Tap
 - A ten-band equalizer with presets
+- Mixes made to order (mood, energy, no liked or already-heard songs) that you steer while they play
+- Your own listening stats
 - Media keys and the Control Center player
 - English and Ukrainian
+
+## What's new in 0.4.3
+
+- **Mix**: a mix made to order. Say what it should start from (today, this week or your liked songs), its mood, energy and length, and whether to leave out liked or already-heard songs; then steer it while it plays. Suggestions come from [ReccoBeats](https://reccobeats.com), which is sent Spotify track IDs and nothing else.
+- **Stats**: your listening in numbers, from a history Tint now keeps on your Mac, beside Spotify's own top artists and songs.
+- **Now Playing**: a button that puts the controls away, a like star beside the song's name, and the cover as a plain disc or a swaying card. Rays is the default visualizer.
+- **Artist pages** show the artist's popular songs above the discography.
+- **Full screen**: the toolbar strip hides with the controls.
 
 ## What's new in 0.4.2
 

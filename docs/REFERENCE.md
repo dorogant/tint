@@ -386,6 +386,69 @@ offline at 44.1, 48 and 96 kHz: flat changes nothing, the audio unit measures wi
 0.01 dB of the formula the headroom is computed from, and no setting raises any tone
 above the level it came in at. How it sounds through Soloist needs a listen.
 
+### Listening history
+
+Tint keeps its own record of what it plays, in
+`~/Library/Application Support/Floe/History/plays.jsonl`, on this Mac only: Spotify's
+history holds fifty songs and doesn't say how long each was listened to, and a mix can
+only leave out what you've heard if something remembers it. A song counts once thirty
+seconds of it have played (half of it, if it's under a minute), so skipping through a
+list leaves no trace; time paused isn't counted. One JSON line per play, appended as
+songs play and written again when a play goes on (the later line wins); the newest
+20,000 are kept. Nothing in it leaves the Mac except the Spotify IDs a mix starts from
+(below). `scripts/test-history.sh` checks what counts and what survives a restart.
+
+### Mix
+
+The **Mix** page makes a mix to order and steers it while it plays. Spotify gives
+Development Mode apps no recommendations and no measure of mood, so the songs come from
+[ReccoBeats](https://reccobeats.com), an independent service that needs no key: given up
+to five Spotify track IDs it answers with a hundred neighbours, and for any track it
+knows, how cheerful (valence) and how driving (energy) it is. Tint talks to it only
+after the button that creates or steers a mix is pressed, and sends only track IDs: the
+songs the mix starts from and the candidates it asks about. Nothing about the account.
+
+- **The questionnaire**: where to start from (today's listening, this week's, liked
+  songs; a history too thin falls back to Spotify's recently played, then to liked
+  songs, and the page says which was used), whether liked songs may appear (leave out,
+  allow, only liked), whether songs already heard in Tint may, the mood (Sad, Mellow,
+  Any, Bright, Happy), the energy (Calm, Any, Energetic) and the length (30 minutes,
+  1 hour, 2 hours, keep going). Answers are remembered.
+- **Choosing**: a batch is a hundred candidates and their valence and energy. Seeds,
+  songs already in the mix, liked songs and heard songs are left out as asked; the rest
+  are ranked by distance from the mood and energy. Sad and Happy also refuse songs on
+  the wrong side (valence above 0.40, below 0.60); the stops between only rank. No more
+  than two songs by one artist per batch, never two in a row. Each batch starts from a
+  different subset of the seeds, and another is fetched when fewer than ten chosen
+  songs remain. "Only liked" takes the liked songs themselves and picks among them.
+- **Steering**: Spotify's queue can be added to but not cleared, so Tint hands it only
+  the song playing and the next two. Everything further ahead lives in the mix, and
+  Sadder, Happier, Calmer, More energy and the two switches choose it again at once. A
+  change is therefore heard after two songs at most. Songs still the mix's own can be
+  taken out one by one.
+- **Letting go**: the mix follows the player's song changes and runs no timer. When a
+  song plays that it didn't hand out, the user has chosen something else: it stops
+  adding and returns to the questionnaire. It never takes playback back.
+
+`scripts/test-mix.sh` checks the answers' parsing against captured ones, the seeds and
+their rotation, every filter, the ranking, refills, the length, steering and letting go,
+with a stand-in service and player. What the mix sounds like, and whether ReccoBeats'
+neighbours suit a given taste, needs listening.
+
+### Stats
+
+**Stats** shows listening in numbers from two sources kept apart. *In Tint* comes from
+the listening history: for today, 7 days, 30 days and all time, the time listened,
+plays, different songs and artists, top artists by time and top songs by plays, and a
+bar chart of listening by hour, day, week or month. It starts counting the day the
+history starts and says so. *On Spotify* is Spotify's own ranking of the account's top
+artists and songs over about four weeks, six months and a year (`me/top`), which covers
+every device and goes back further. `scripts/test-stats.sh` checks every number against
+hand-made histories, at local day boundaries.
+
+`scripts/render-pages.sh` draws the Mix and Stats pages offscreen in their states, in English
+and Ukrainian.
+
 ### Design and motion
 
 Tint follows macOS conventions where they fit. The window has a standard unified
@@ -425,12 +488,30 @@ run the sign-in card stays up through both steps.
 The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics; the
 cover and visualizer slide to the centre and grow.
 
-On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
-cover stays upright; only the scalloped edge crawls around it and slowly breathes,
-and both stop on pause. The circular visualizer scales with
-the cover. **Bars** are mirrored radial bars with bass at the top; **Wave** is a
-filled halo whose lobes follow the spectrum. Along the bottom, **Bars** are mirrored
-around the middle (bass at the centre). **Wave** is a twisted ribbon of round beads
+The screen button beside it (**⇧⌘H**) puts the controls away: the toolbar, the
+progress bar, transport, volume and the panel's tint go, the cover grows, and the
+cover, the song's name, the lyrics and the background are all that's left. Moving
+the pointer shows a **Show controls** button and the window's buttons for 2.5 s;
+once it rests they go again, and the pointer with them. Escape, ⇧⌘H or any other
+surface brings the controls back. Lyrics has the same button at its top right;
+there the bottom bar goes with the toolbar. The star beside the song's name on
+Now Playing saves it to Liked Songs.
+
+In full screen macOS moves the toolbar into a window of its own and gives it an
+opaque grey background. Tint hides that background, so the toolbar sits on the
+backdrop as it does in a window.
+
+On Now Playing the cover is a plain disc with a pale hairline rim in the cover's
+colour; it doesn't move. Visuals ▸ Cover swaps it for a **Card**: a rounded
+square standing in perspective over its reflection, swaying 19° to each side every
+11 seconds and stopping on pause. Core Animation runs the sway, and **Cover motion**
+turns it off (the card then holds a 12° turn). Nothing can ring the card, so its
+visualizer is always the strip along the bottom. The circular visualizer scales with
+the cover. **Rays**, the default, are 168 hairlines that brighten as they grow, so a
+quiet passage leaves a faint rim; **Bars** are mirrored radial bars with bass at the
+top; **Wave** is a filled halo whose lobes follow the spectrum. Along the bottom,
+**Rays** grow both ways from the middle line and **Bars** stand on the floor, both
+mirrored around the middle (bass at the centre). **Wave** is a twisted ribbon of round beads
 that drifts sideways; each bead swells with the part of the spectrum it passes.
 Colors run from pale at the top to the cover accent at the bottom, and all motion
 freezes with the analysis on pause.
@@ -464,11 +545,13 @@ one matches (useful with `sample`). It restores every preference afterwards.
 Window snapshots can't show Core Animation masks or motion, so `scripts/test-layers.sh`
 renders the real cover, visualizer and progress-track layers offscreen with
 `CARenderer`, inside a top-down parent as SwiftUI hosts them. It checks pixels: the
-cover is upright and shows a new image even while paused, bass sits at the top of the
+disc is upright and round under its rim and shows a new image at once without a fade, bass sits at the top of the
 ring, bottom bars stand on the floor, the halo is pale on top, and the progress fill covers only
 the elapsed part. Additional checks cover height-only progress resizing, the track
 thickening with a thumb only under the pointer (and with Reduce Motion), the playhead
-gliding only while playing, and the bead ribbon's overlap. Its dim rear ribbon is now clipped by Core Animation rather
+gliding only while playing, and the bead ribbon's overlap. The card must be upright
+and in perspective over a reflection that fades out, and a short ray must be fainter
+than a long one (`FLOE_LAYER_PREVIEWS=<dir>` writes both as PNGs). Its dim rear ribbon is now clipped by Core Animation rather
 than a polygon subtraction on every frame. Synthetic path-generation time fell
 from 0.411–0.433 ms to 0.051 ms/frame (~88%); this excludes compositor/GPU work and
 is not a new whole-app CPU measurement.
@@ -732,7 +815,11 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, release.sh, 
 - **Web API limits (Development Mode, 2026).** Tint uses only endpoints still open to
   Development Mode apps. Consequences: playlists you don't own show their header and
   Play but no track list; Spotify-made playlists 404 (Play still works); no artist top
-  tracks; search and artist albums return at most 10 per request; `market=from_token`
+  tracks (403), so an artist's **Popular** list is what search ranks first for
+  `artist:"<name>"`: close to Spotify's top songs, not the same list, five at first and
+  up to fifty through Show more; search and artist albums return at most 10 per request
+  (a song search asked for ten answers with about five, and its `next` and `total`
+  say there are no more when there are); `market=from_token`
   needs a scope Tint doesn't request (and isn't needed with a user token).
   PLAN.md's fallback of Web API tokens from the librespot session no longer works
   (tested 2026-10-08): keymaster answers 403, and api.spotify.com throttles login5

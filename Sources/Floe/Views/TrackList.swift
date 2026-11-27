@@ -403,6 +403,8 @@ struct LikeButton: View {
     let uri: String
     /// The symbol's size in Compact points; the button scales it.
     var size: CGFloat = 13
+    /// The side of the square that takes the click, in Compact points.
+    var side: CGFloat = 22
     /// Track rows keep an empty star out of sight until hovered; a filled one
     /// always shows. Their menus carry the same action for keyboard and VoiceOver.
     var revealed = true
@@ -429,7 +431,7 @@ struct LikeButton: View {
                 .contentTransition(listMotion?.isMoving == true ? .identity : .symbolEffect(.replace))
                 .symbolEffect(.bounce, value: reduceMotion ? 0 : presses)
                 .foregroundStyle(liked ? palette.highlight : Theme.tertiary)
-                .frame(width: scale(22), height: scale(22))
+                .frame(width: scale(side), height: scale(side))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

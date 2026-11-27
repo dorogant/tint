@@ -50,6 +50,9 @@ jobs:
           scripts/test-transport.sh
           scripts/test-autopreset.sh
           scripts/test-equalizer.sh
+          scripts/test-history.sh
+          scripts/test-mix.sh
+          scripts/test-stats.sh
           scripts/test-updates.sh
           scripts/test-presence.sh
 

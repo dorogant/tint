@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Onboarding until both logins exist, then the main window.
@@ -83,21 +84,35 @@ struct MainView: View {
                             .accessibilityHidden(navigator.surface != .library)
                             .environment(\.isOnstage, navigator.surface == .library && windowVisible)
                         if navigator.surface == .lyrics {
-                            LyricsView().frame(maxWidth: scale(780)).frame(maxWidth: .infinity).glassPanel()
+                            LyricsView().frame(maxWidth: scale(780)).frame(maxWidth: .infinity)
+                                .glassPanel(clear: navigator.controlsHidden)
+                                .overlay(alignment: .topTrailing) {
+                                    // Stays mounted while the controls are away, so ⇧⌘H brings them back.
+                                    ControlsToggle(hidden: false, shortcut: ControlsToggle.shortcut) {
+                                        navigator.controlsHidden.toggle()
+                                    }
+                                    .padding(2 * scale.margin)
+                                    .opacity(navigator.controlsHidden ? 0 : 1)
+                                    .allowsHitTesting(!navigator.controlsHidden)
+                                    .accessibilityHidden(navigator.controlsHidden)
+                                }
                                 .environment(\.isOnstage, windowVisible)
                                 .transition(SurfaceTransition(still: still))
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Away under Now Playing, and with the controls on Lyrics. It keeps
+                    // its room there, so the lyric list isn't resized under a line's glide.
+                    let barAway = navigator.surface == .nowPlaying || navigator.controlsHidden
                     MiniPlayerView().frame(height: scale(MiniPlayerView.height)).glassPanel()
-                        .opacity(navigator.surface == .nowPlaying ? 0 : 1)
-                        .offset(y: navigator.surface == .nowPlaying && !still ? scale(MiniPlayerView.height) : 0)
-                        .allowsHitTesting(navigator.surface != .nowPlaying)
-                        .accessibilityHidden(navigator.surface == .nowPlaying)
-                        .environment(\.isOnstage, navigator.surface != .nowPlaying && windowVisible)
+                        .opacity(barAway ? 0 : 1)
+                        .offset(y: barAway && !still ? scale(MiniPlayerView.height) : 0)
+                        .allowsHitTesting(!barAway)
+                        .accessibilityHidden(barAway)
+                        .environment(\.isOnstage, !barAway && windowVisible)
                 }
                 if navigator.surface == .nowPlaying {
-                    NowPlayingView().glassPanel()
+                    NowPlayingView().glassPanel(clear: navigator.controlsHidden)
                         .environment(\.isOnstage, windowVisible)
                         .transition(.asymmetric(
                             insertion: AnyTransition(SurfaceTransition(still: still)),
@@ -111,12 +126,14 @@ struct MainView: View {
         .padding([.horizontal, .bottom], scale.margin)
         .environment(\.heroNamespace, hero)
         .animation(still ? FloeMotion.fade : FloeMotion.surface, value: navigator.surface)
+        .animation(still ? FloeMotion.fade : FloeMotion.enter, value: navigator.controlsHidden)
         // A status banner's room opens on the same spring it drops in on.
         .animation(still ? nil : FloeMotion.enter, value: PlaybackStatusView.key(player))
         .toolbar { toolbarContent }
         // The one search field: the toolbar's own, trailing, so it's there on every surface.
         .modifier(ToolbarSearch())
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .modifier(HiddenControlsChrome())
     }
 
     private var libraryPanel: some View {
@@ -203,9 +220,215 @@ struct MainView: View {
         case .home: HomeView()
         case .search: SearchView()
         case .songs: SongsView()
+        case .mix: MixView()
+        case .stats: StatsView()
         case let .playlist(id): PlaylistView(id: id)
         case let .album(id): AlbumView(id: id)
         case let .artist(id): ArtistView(id: id)
+        }
+    }
+}
+
+/// What the window shows while Now Playing's controls are away: nothing,
+/// until the pointer moves. Then the button that brings them back and the
+/// window's own buttons show, and go again once the pointer has rested, with
+/// the pointer itself. Escape brings the controls back at any time.
+private struct HiddenControlsChrome: ViewModifier {
+    @Environment(Navigator.self) private var navigator
+    @Environment(\.interfaceScale) private var scale
+    @ViewState private var awake = false
+    @ViewState private var rest = PointerRest()
+
+    /// How long the pointer rests before the buttons go.
+    private static let patience: Duration = .seconds(2.5)
+
+    func body(content: Content) -> some View {
+        let hidden = navigator.controlsHidden
+        content
+            .overlay(alignment: .topTrailing) {
+                if hidden {
+                    ControlsToggle(hidden: true, shortcut: .cancelAction) { navigator.controlsHidden = false }
+                        .padding(3 * scale.margin)
+                        .opacity(awake ? 1 : 0)
+                        .allowsHitTesting(awake)
+                        .transition(.opacity)
+                }
+            }
+            .background(WindowChrome(toolbarHidden: hidden, buttonsHidden: hidden && !awake))
+            .onContinuousHover { phase in
+                guard navigator.controlsHidden else { return }
+                switch phase {
+                case .active: rest.inside = true; wake()
+                case .ended: rest.inside = false
+                }
+            }
+            .onChange(of: hidden) {
+                if hidden {
+                    // The pointer is on the button that was just pressed.
+                    rest.inside = true
+                    wake()
+                } else {
+                    rest.wait?.cancel()
+                    rest.wait = nil
+                    awake = false
+                }
+            }
+            .animation(FloeMotion.fade, value: awake)
+    }
+
+    /// One task waits out the rest; each move only pushes its deadline on.
+    private func wake() {
+        rest.deadline = .now + Self.patience
+        if !awake { awake = true }
+        guard rest.wait == nil else { return }
+        rest.wait = Task {
+            while !Task.isCancelled, ContinuousClock.now < rest.deadline {
+                try? await Task.sleep(until: rest.deadline)
+            }
+            guard !Task.isCancelled else { return }
+            rest.wait = nil
+            awake = false
+            if rest.inside && NSApp.isActive { NSCursor.setHiddenUntilMouseMoves(true) }
+        }
+    }
+}
+
+/// When the pointer last moved and the task waiting for it to rest. A plain
+/// class: moving the pointer redraws nothing.
+@MainActor
+private final class PointerRest {
+    var deadline = ContinuousClock.now
+    var inside = false
+    var wait: Task<Void, Never>?
+}
+
+/// Hides the toolbar's items and fades the window's close, minimise and zoom
+/// buttons. It stays mounted with the main view, so they always come back.
+///
+/// The toolbar itself stays (`NSToolbar.isVisible`, or SwiftUI's
+/// `toolbarVisibility`, would take its room away too): when it returned, Back
+/// was laid out on top of the window's buttons (seen in the layout renders).
+/// Hiding the view that holds its items changes no layout at all, so nothing
+/// moves when the controls go, and the buttons keep their place.
+///
+/// In full screen the titlebar moves to a window of its own, and there the
+/// system gives it an opaque grey background, although the window's titlebar
+/// is transparent: a strip across the top of the screen with the toolbar on
+/// it, and the backdrop cut off beneath. That background is hidden for as
+/// long as full screen lasts, so the toolbar floats on the backdrop as it
+/// does in a window; while the controls are away the whole titlebar window
+/// is invisible.
+private struct WindowChrome: NSViewRepresentable {
+    let toolbarHidden: Bool
+    let buttonsHidden: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.view = view
+        context.coordinator.watchFullScreen()
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.toolbarHidden = toolbarHidden
+        context.coordinator.buttonsHidden = buttonsHidden
+        // The first update comes before the view has joined its window.
+        DispatchQueue.main.async { [coordinator = context.coordinator] in coordinator.apply() }
+    }
+
+    @MainActor
+    final class Coordinator {
+        weak var view: NSView?
+        var toolbarHidden = false
+        var buttonsHidden = false
+        /// From the moment full screen is asked for until it's reached.
+        private var entering = false
+        /// The full-screen titlebar window made invisible here, to put back.
+        private weak var hiddenStrip: NSWindow?
+        private weak var hiddenTitlebar: NSView?
+        private weak var hiddenBackground: NSView?
+        private var watchers: [Task<Void, Never>] = []
+
+        /// Entering full screen makes the titlebar's window anew, and leaving
+        /// it brings the titlebar home, so both set things up again.
+        func watchFullScreen() {
+            let events: [(Notification.Name, @MainActor (Coordinator) -> Void)] = [
+                (NSWindow.willEnterFullScreenNotification, { $0.handBackButtons() }),
+                (NSWindow.didEnterFullScreenNotification, { $0.entering = false; $0.apply() }),
+                (NSWindow.didExitFullScreenNotification, { $0.entering = false; $0.apply() }),
+            ]
+            watchers = events.map { name, react in
+                Task { [weak self] in
+                    for await _ in NotificationCenter.default.notifications(named: name).map({ _ in () }) {
+                        guard let self else { return }
+                        react(self)
+                    }
+                }
+            }
+        }
+
+        deinit { for watcher in watchers { watcher.cancel() } }
+
+        private var buttons: [NSButton] {
+            [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+                .compactMap { view?.window?.standardWindowButton($0) }
+        }
+
+        /// Full screen fades the window's buttons itself: out, so the
+        /// toolbar's first item (Back) takes their place, and in with the
+        /// menu bar. They go into it as the system expects them, opaque.
+        private func handBackButtons() {
+            entering = true
+            for button in buttons { button.alphaValue = 1 }
+        }
+
+        func apply() {
+            guard let window = view?.window else { return }
+            let buttons = buttons
+            // Found from a button, not from the window: in full screen the
+            // titlebar isn't in this window.
+            guard let titlebar = buttons.first?.superview else { return }
+            let items = titlebar.subviews.first { "\(type(of: $0))".contains("ToolbarView") }
+            if let items, items.isHidden != toolbarHidden { items.isHidden = toolbarHidden }
+            let detached = titlebar.window.flatMap { $0 === window ? nil : $0 }
+            let fullScreen = detached != nil || entering || window.styleMask.contains(.fullScreen)
+            // Faded, not hidden, so the titlebar lays nothing out again. Only
+            // in a window: in full screen their opacity is the system's, and
+            // making them opaque there put the Close button over Back.
+            if !fullScreen {
+                for button in buttons { button.animator().alphaValue = buttonsHidden ? 0 : 1 }
+            }
+            // Full screen's grey strip: the titlebar's background view, and
+            // the colour of the window that holds it.
+            if let detached {
+                let background = titlebar.superview?.subviews.first { "\(type(of: $0))".contains("TitlebarBackground") }
+                if let background, !background.isHidden || background.alphaValue != 0 {
+                    background.isHidden = true
+                    background.alphaValue = 0
+                    hiddenBackground = background
+                }
+                if detached.isOpaque { detached.isOpaque = false }
+                if detached.backgroundColor != .clear { detached.backgroundColor = .clear }
+            } else if let background = hiddenBackground {
+                hiddenBackground = nil
+                background.alphaValue = 1
+                background.isHidden = false
+            }
+            // Full screen's titlebar window, toolbar and all. Never this window,
+            // and nothing is put back that wasn't hidden here.
+            if toolbarHidden, let detached {
+                titlebar.superview?.isHidden = true
+                detached.alphaValue = 0
+                detached.ignoresMouseEvents = true
+                (hiddenStrip, hiddenTitlebar) = (detached, titlebar.superview)
+            } else {
+                hiddenStrip?.alphaValue = 1
+                hiddenStrip?.ignoresMouseEvents = false
+                hiddenTitlebar?.isHidden = false
+                (hiddenStrip, hiddenTitlebar) = (nil, nil)
+            }
         }
     }
 }

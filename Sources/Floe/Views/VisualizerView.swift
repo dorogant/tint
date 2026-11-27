@@ -4,10 +4,11 @@ import SwiftUI
 /// The visualizer, drawn by Core Animation: GPU shape layers carry a gradient
 /// fill, a soft glow and a rim, and each analysis frame reaches them directly
 /// from the model as it arrives. Driving a SwiftUI Canvas instead put the whole
-/// window through a SwiftUI update every frame (~15% CPU). The strokes and
+/// window through a SwiftUI update every frame (~15% CPU). The bars and
 /// ribbons share one look: rounded, pale at the top and saturated at the
 /// bottom, with a faint glow beneath. The halo is three translucent layers
-/// instead, one each for bass, mids and treble.
+/// instead, one each for bass, mids and treble; the rays are hairlines that
+/// brighten as they grow, so silence leaves a faint rim.
 struct VisualizerView: NSViewRepresentable {
     var circular = false
     @Environment(VisualizationModel.self) private var visualization
@@ -22,9 +23,12 @@ struct VisualizerView: NSViewRepresentable {
     func updateNSView(_ view: VisualizerLayerView, context: Context) {
         // Only settings and colours come through SwiftUI; frames never do.
         let tints = Self.tints(palette.highlight)
-        view.configure(style: circular ? (settings.shape == .wave ? .halo : .radialBars)
-                                       : (settings.shape == .wave ? .beads : .bars),
-                       sensitivity: Float(settings.sensitivity), color: tints.color, pale: tints.pale,
+        let style: VisualizerLayerView.Style = switch settings.shape {
+        case .rays: circular ? .radialRays : .rays
+        case .bars: circular ? .radialBars : .bars
+        case .wave: circular ? .halo : .beads
+        }
+        view.configure(style: style, sensitivity: Float(settings.sensitivity), color: tints.color, pale: tints.pale,
                        running: visualization.isRunning)
     }
 
@@ -40,7 +44,7 @@ struct VisualizerView: NSViewRepresentable {
 }
 
 final class VisualizerLayerView: NSView {
-    enum Style { case radialBars, halo, bars, beads }
+    enum Style { case radialRays, radialBars, halo, rays, bars, beads }
 
     private weak var model: VisualizationModel?
     private let container = CALayer()
@@ -54,6 +58,12 @@ final class VisualizerLayerView: NSView {
     private let rim = CAShapeLayer()
     /// The halo's layers, back to front: bass, mids, treble.
     private let tiers = [CAShapeLayer(), CAShapeLayer(), CAShapeLayer()]
+    /// The rays' mask: one stroked layer per brightness step, faintest first.
+    /// A shape layer has one opacity, so rays of a kind share a layer.
+    private let rayMask = CALayer()
+    private let rayShades = (0..<VisualizerGeometry.rayShades).map { _ in CAShapeLayer() }
+    /// This frame's rays, one path per step; the array is reused.
+    private var rayPaths = (0..<VisualizerGeometry.rayShades).map { _ in CGMutablePath() }
     private var style = Style.radialBars
     private var sensitivity: Float = 1
     private var running = false
@@ -66,7 +76,9 @@ final class VisualizerLayerView: NSView {
     private var levels: [CGFloat] = []
 
     /// Every layer that fills the view.
-    private var sublayers: [CALayer] { [glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim] + tiers }
+    private var sublayers: [CALayer] {
+        [glow, echoClip, echoExclusion, echo, echoMask, fill, fillMask, rim, rayMask] + tiers + rayShades
+    }
 
     init(model: VisualizationModel) {
         self.model = model
@@ -88,6 +100,12 @@ final class VisualizerLayerView: NSView {
         }
         glow.fillColor = nil
         rim.fillColor = nil
+        for (step, shade) in rayShades.enumerated() {
+            shade.lineCap = .round
+            shade.fillColor = nil
+            shade.strokeColor = NSColor.black.withAlphaComponent(VisualizerGeometry.rayOpacity(step: step)).cgColor
+            rayMask.addSublayer(shade)
+        }
     }
 
     @available(*, unavailable)
@@ -108,17 +126,32 @@ final class VisualizerLayerView: NSView {
         self.style = style
         self.sensitivity = sensitivity
         let beads = style == .beads
+        let rays = style == .rays || style == .radialRays
         // The pale end stays nearly opaque: a translucent pale over the dark
         // backdrop read as khaki on yellows and dusty pink on reds.
         let top = pale.withAlphaComponent(0.9).cgColor, bottom = color.withAlphaComponent(0.95).cgColor
-        let gradient = beads ? [bottom, pale.withAlphaComponent(0.88).cgColor, bottom] : [top, bottom]
+        // Strips that grow both ways from the middle are pale there and saturated at their tips.
+        let gradient = beads || style == .rays ? [bottom, pale.withAlphaComponent(0.88).cgColor, bottom] : [top, bottom]
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for layer in [fill, echo] {
             layer.colors = gradient
+            layer.type = .axial
+            layer.locations = nil
             layer.startPoint = CGPoint(x: 0.5, y: 0)
             layer.endPoint = CGPoint(x: 0.5, y: 1)
         }
+        if style == .radialRays {
+            // Saturated where the rays leave the cover, pale at their tips, all the way round.
+            fill.type = .radial
+            fill.colors = [bottom, top]
+            fill.locations = [NSNumber(value: 1 / Double(VisualizerView.ringScale)), 1]
+            fill.startPoint = CGPoint(x: 0.5, y: 0.5)
+            fill.endPoint = CGPoint(x: 1, y: 1)
+        }
+        fill.mask = rays ? rayMask : fillMask
+        // Hairlines stay crisp: a glow under each would turn the ring to haze.
+        glow.isHidden = rays
         echoClip.isHidden = !beads
         let halo = style == .halo
         fill.isHidden = halo
@@ -136,10 +169,11 @@ final class VisualizerLayerView: NSView {
         case .radialBars: 0.14
         case .bars: 0.1
         case .halo, .beads: 0.12
+        case .radialRays, .rays: 0 // hidden above
         }
         glow.strokeColor = color.withAlphaComponent(glowAlpha).cgColor
         if halo { glow.lineWidth = 10 } else if beads { glow.lineWidth = 6 }
-        rim.isHidden = style == .bars || style == .radialBars || halo
+        rim.isHidden = !beads
         // A crisp edge in the base colour; darkening it toward black turned
         // yellows olive and oranges brown.
         rim.strokeColor = color.withAlphaComponent(beads ? 0.85 : 0.45).cgColor
@@ -198,6 +232,10 @@ final class VisualizerLayerView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         switch style {
+        case .radialRays:
+            shade(width: VisualizerGeometry.radialRays(size: size, levels: levels, into: &rayPaths))
+        case .rays:
+            shade(width: VisualizerGeometry.rays(size: size, levels: levels, into: &rayPaths))
         case .radialBars:
             let (path, width) = VisualizerGeometry.radialBars(size: size, levels: levels)
             stroke(path, width: width, glowWidth: width * 2.2)
@@ -231,12 +269,79 @@ final class VisualizerLayerView: NSView {
         fillMask.path = path
         fillMask.lineWidth = width
     }
+
+    private func shade(width: CGFloat) {
+        for step in rayShades.indices {
+            rayShades[step].path = rayPaths[step]
+            rayShades[step].lineWidth = width
+        }
+    }
 }
 
 /// Outlines for each style, top-down in the view's size. Levels are 0…1, one per
 /// analyser band, already adapted to the song. Scratch work stays in temporary
 /// buffers, so a frame's only allocations are its paths.
 enum VisualizerGeometry {
+    /// Rays are sorted by level into this many brightness steps. Six keeps a
+    /// step under an eighth of full brightness, too small to see a ray change layer.
+    static let rayShades = 6
+    /// Rays around the cover and along the strip: more than the 96 mirrored
+    /// bands, so each takes its level from between two of them.
+    static let radialRayCount = 168, stripRayCount = 120
+
+    /// How bright the rays of a step are: about a third at rest, full when loud.
+    static func rayOpacity(step: Int) -> CGFloat { 0.28 + 0.72 * (CGFloat(step) + 0.5) / CGFloat(rayShades) }
+
+    /// Hairlines around the cover, bass at the top and treble at the bottom,
+    /// mirrored. Each ray goes into the path of its brightness step; the result
+    /// is the line width. The rays keep their proportions at every size.
+    static func radialRays(size: CGSize, levels: [CGFloat], into shades: inout [CGMutablePath]) -> CGFloat {
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let outer = min(size.width, size.height) / 2
+        let cover = outer / VisualizerView.ringScale
+        let gap = max(3, cover * 0.07)
+        let count = radialRayCount
+        let width = max(1, 2 * .pi * (cover + gap) / CGFloat(count) * 0.38)
+        let start = cover + gap + width / 2
+        let room = outer - start - width / 2
+        for step in shades.indices { shades[step] = CGMutablePath() }
+        for i in 0..<count {
+            let turn = (Double(i) + 0.5) / Double(count)
+            let level = sample(levels, at: turn < 0.5 ? 2 * turn : 2 * (1 - turn))
+            let angle = turn * 2 * .pi - .pi / 2
+            let path = shades[min(shades.count - 1, Int(level * CGFloat(shades.count)))]
+            path.move(to: point(center, angle, start))
+            path.addLine(to: point(center, angle, start + room * (0.04 + 0.96 * level)))
+        }
+        return width
+    }
+
+    /// The rays unrolled: they grow both ways from the middle line, bass in the
+    /// centre and treble at both ends.
+    static func rays(size: CGSize, levels: [CGFloat], into shades: inout [CGMutablePath]) -> CGFloat {
+        let count = stripRayCount
+        let width = max(1.2, size.width / CGFloat(count) * 0.38)
+        let mid = size.height / 2
+        let reach = mid - width / 2 - 1
+        for step in shades.indices { shades[step] = CGMutablePath() }
+        for i in 0..<count {
+            let across = (Double(i) + 0.5) / Double(count)
+            let level = sample(levels, at: abs(2 * across - 1))
+            let x = CGFloat(across) * size.width, half = reach * (0.03 + 0.97 * level)
+            let path = shades[min(shades.count - 1, Int(level * CGFloat(shades.count)))]
+            path.move(to: CGPoint(x: x, y: mid - half))
+            path.addLine(to: CGPoint(x: x, y: mid + half))
+        }
+        return width
+    }
+
+    /// The level at a share of the way from the lowest band (0) to the highest (1).
+    private static func sample(_ levels: [CGFloat], at share: Double) -> CGFloat {
+        let position = min(max(share, 0), 1) * Double(levels.count - 1)
+        let index = Int(position), blend = CGFloat(position - Double(index))
+        return levels[index] * (1 - blend) + levels[min(index + 1, levels.count - 1)] * blend
+    }
+
     /// Mirrored radial bars around the cover: bass at the top, treble at the bottom.
     static func radialBars(size: CGSize, levels: [CGFloat]) -> (CGPath, CGFloat) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)

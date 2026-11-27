@@ -5,8 +5,10 @@
 #   3. Bundle         Info.plist, icon, executable -> build/Tint.app
 #   4. Sign           Developer ID, a local certificate, or ad-hoc (see docs/REFERENCE.md: Signing)
 #
-# Usage: scripts/build-app.sh [--debug] [--zip] [--install] [--open]
+# Usage: scripts/build-app.sh [--debug] [--public] [--zip] [--install] [--open]
 #   --debug   Swift debug build (the Rust core is always release)
+#   --public  the copy handed to others: no Spotify client ID built in, signed ad-hoc
+#             (or with FLOE_DEVELOPER_ID), and it updates itself from GitHub's releases
 #   --zip     also pack build/Tint-<version>.zip to share (scripts/package-app.sh)
 #   --install update ~/Applications/Tint.app (scripts/install-app.sh)
 #   --open    launch the app when done
@@ -35,13 +37,15 @@ CONFIG=release
 OPEN=0
 INSTALL=0
 ZIP=0
+PUBLIC=0
 for arg in "$@"; do
     case "$arg" in
         --debug) CONFIG=debug ;;
         --open) OPEN=1 ;;
         --install) INSTALL=1 ;;
         --zip) ZIP=1 ;;
-        -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --public) PUBLIC=1 ;;
+        -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -82,6 +86,11 @@ if [[ -n "$CLIENT_ID" && ! "$CLIENT_ID" =~ ^[0-9a-f]{32}$ ]]; then
 fi
 
 SIGN_IDENTITY="$(setting FLOE_SIGN_IDENTITY .signing-identity)"
+if [[ $PUBLIC == 1 ]]; then
+    # This Mac's own client ID and certificate stay out of a copy made for others.
+    CLIENT_ID=""
+    SIGN_IDENTITY=""
+fi
 # Self-signed certificates count too, though macOS calls them untrusted (no -v).
 has_identity() { security find-identity -p codesigning 2>/dev/null | grep -qF -e "\"$1\"" -e " $1 "; }
 if [[ -n "${FLOE_DEVELOPER_ID:-}" ]] && ! has_identity "$FLOE_DEVELOPER_ID"; then
@@ -124,6 +133,12 @@ plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$PLIST"
 if [[ -n "${FLOE_BUNDLE_ID:-}" ]]; then
     # Another bundle ID starts with fresh settings; saved logins are shared (see docs/REFERENCE.md).
     plutil -replace CFBundleIdentifier -string "$FLOE_BUNDLE_ID" "$PLIST"
+fi
+if [[ $PUBLIC == 1 ]]; then
+    # Only these copies update themselves: one built for this Mac would be replaced
+    # by the public build, without its client ID and with another signature.
+    plutil -replace FloeUpdates -bool YES "$PLIST"
+    echo "Updates: on (from GitHub's releases)"
 fi
 if [[ -n "$CLIENT_ID" ]]; then
     plutil -replace FloeSpotifyClientID -string "$CLIENT_ID" "$PLIST"

@@ -4,6 +4,8 @@ struct SidebarView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(LibraryModel.self) private var library
     @Environment(\.interfaceScale) private var scale
+    /// Optional: the offscreen harnesses draw the sidebar without one.
+    @Environment(UpdateModel.self) private var updates: UpdateModel?
     /// One selection indicator, shared by every row, so it glides between them.
     @Namespace private var selection
 
@@ -41,6 +43,11 @@ struct SidebarView: View {
             .floeGlide(value: navigator.section)
             // A pin makes room for its row instead of the list jumping.
             .floeGlide(value: library.pinnedIDs)
+            if let updates, updates.isEnabled, let release = updates.release {
+                UpdateRow(version: release.version)
+                    .padding(.horizontal, metrics.inset)
+                    .padding(.bottom, metrics.inset)
+            }
             Rectangle().fill(Theme.panelStroke).frame(height: 1)
             AccountRow()
                 .padding(.horizontal, metrics.inset + metrics.padding)
@@ -168,6 +175,44 @@ private struct NavRow: View {
         .onHover { hovering = $0 }
         .floeHover(hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Shown above the account while a newer Tint is out; opens Settings where it's installed.
+private struct UpdateRow: View {
+    let version: AppVersion
+    @Environment(\.coverPalette) private var palette
+    @Environment(\.interfaceScale) private var scale
+    @Environment(\.openSettings) private var openSettings
+    @ViewState private var hovering = false
+
+    var body: some View {
+        let metrics = SidebarMetrics(scale)
+        Button { UpdateSection.show(openSettings) } label: {
+            HStack(spacing: metrics.spacing) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .floeFont(size: 13, weight: .medium)
+                    .foregroundStyle(palette.highlight)
+                    .frame(width: metrics.column)
+                Text("Update to \(version.description)")
+                    .floeFont(size: 12.5, weight: .medium)
+                    .foregroundStyle(.white)
+                    .opacity(hovering ? 1 : 0.8)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, metrics.padding)
+            .frame(height: scale(32))
+            .background {
+                RoundedRectangle(cornerRadius: metrics.radius, style: .continuous)
+                    .fill(Theme.hover)
+                    .opacity(hovering ? 1 : 0.6)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.floeRow)
+        .onHover { hovering = $0 }
+        .floeHover(hovering)
     }
 }
 

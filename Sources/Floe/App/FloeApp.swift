@@ -14,6 +14,7 @@ struct FloeApp: App {
     @ViewState private var visuals: VisualSettings
     @ViewState private var autoPreset: AutoPresetController
     @ViewState private var presence = WindowPresence()
+    @ViewState private var updates = UpdateModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -64,6 +65,7 @@ struct FloeApp: App {
                 .environment(visuals)
                 .environment(settings)
                 .environment(connect)
+                .environment(updates)
                 .environment(\.locale, settings.locale)
                 .environment(\.interfaceScale, settings.interfaceSize.scale)
                 .environment(\.windowVisible, presence.isVisible || SelfTest.isEnabled)
@@ -75,6 +77,10 @@ struct FloeApp: App {
                 .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }
                 .onChange(of: settings.engine) { player.switchEngine(to: settings.engine) }
                 .onChange(of: settings.equalizer, initial: true) { FloeCore.shared.equalizer = settings.equalizer }
+                // The daily update check rides on coming to the front, so no timer runs for it.
+                .onChange(of: scenePhase, initial: true) {
+                    if scenePhase == .active, !SelfTest.isEnabled { updates.checkIfDue() }
+                }
                 .task(id: "\(player.displayTrack?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
@@ -89,6 +95,10 @@ struct FloeApp: App {
                     await autoPreset.update(player.displayTrack.map(AutoPresetController.Song.init), enabled: autoPresetActive)
                 }
                 .task {
+                    updates.reopen = { installed in
+                        UpdateInstaller.relaunch(after: ProcessInfo.processInfo.processIdentifier, staging: installed.staging, app: Bundle.main.bundleURL)
+                        NSApp.terminate(nil)
+                    }
                     SpaceToPlay.install(player)
                     Snapshot.canCapture = { navigator.surface == .library || lyrics.isSynthetic }
                     Snapshot.installTrigger()
@@ -103,6 +113,7 @@ struct FloeApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1220, height: 800)
         .commands {
+            CommandGroup(after: .appInfo) { CheckForUpdatesCommand(updates: updates) }
             CommandGroup(after: .sidebar) {
                 Button("Back") { navigator.back() }
                     .keyboardShortcut("[", modifiers: .command)
@@ -134,6 +145,7 @@ struct FloeApp: App {
                 .environment(player)
                 .environment(library)
                 .environment(visualization)
+                .environment(updates)
                 .environment(\.locale, settings.locale)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
         }

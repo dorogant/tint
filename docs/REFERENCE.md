@@ -151,7 +151,8 @@ the app and packs the zip again.
 ### Sharing a build
 
 `scripts/build-app.sh --zip` packs `build/Tint-<version>.zip` (`scripts/package-app.sh`
-does it for an already-built app). Send that file. The other person needs an Apple
+does it for an already-built app). Send that file. (The public release is made with
+`scripts/release.sh` instead; see Updates and releasing.) The other person needs an Apple
 Silicon Mac with macOS 26 and Spotify Premium.
 
 For anyone you don't know personally, share a build **without** a Client ID built in
@@ -175,6 +176,53 @@ That's needed once per copy. Control-click → Open no longer skips the check on
 and later. As a last resort, `xattr -dr com.apple.quarantine /Applications/Tint.app` in
 Terminal removes the download mark.
 
+### Updates and releasing
+
+A copy made for others (`scripts/build-app.sh --public`) updates itself; one built
+from source for this Mac doesn't, since the public build would replace it without its
+client ID and under another signature. **Settings → About** says which kind a copy is.
+
+- **Checking.** Once a day, when Tint comes to the front, it asks GitHub for the
+  repository's latest release (`api.github.com/repos/dorogant/tint/releases/latest`).
+  The request names Tint and its version and nothing else. No timer runs for it; a
+  failed check is tried again an hour later at the earliest. **Check Now** and the app
+  menu's **Check for Updates…** ask at once, and the daily check can be switched off.
+- **Offering.** A release with a higher version shows in Settings and as a row above
+  the account in the sidebar. Nothing is downloaded until **Install and Reopen**.
+- **Installing.** Tint downloads `Tint.zip` and `Tint.zip.sig` from the release and
+  installs only if the signature fits the update key built into it
+  (`UpdateInstaller.publicKey`, Ed25519), the unpacked bundle is Tint, is newer than the
+  running copy and passes `codesign --verify`. Then the old copy is renamed aside, the
+  new one takes its place, and a shell waits for Tint to quit, removes the old copy and
+  opens the new one. Any failure leaves the installed copy as it was and says why.
+  A release without a signature (0.4.0 and earlier) is offered with a link only.
+- **Where it can't.** A copy opened straight from Downloads runs from a hidden
+  read-only folder (App Translocation) and asks to be moved to Applications first. A
+  folder the user can't change, or macOS refusing the swap (**Privacy & Security → App
+  Management**), is reported in the same place.
+
+To release:
+
+```sh
+# raise CFBundleShortVersionString in Support/Info.plist, commit, push
+scripts/release.sh            # build/release/Tint.zip and Tint.zip.sig; publishes nothing
+scripts/release.sh --publish  # the same, then the GitHub release v<version> with both files
+```
+
+Each release needs a version no release has had: installed copies compare version
+numbers, so replacing the zip of an existing release reaches nobody. The update key's
+private half is the file `FLOE_UPDATE_KEY` names, else `~/.config/tint/update-key`
+(`swift scripts/update-signature.swift generate <file>` makes one). It is not in the
+repository and must not be: whoever holds it can publish what installed copies will
+run. Keep a copy somewhere safe; with the key lost, a new one has to be built into Tint
+and everyone has to download that build by hand once.
+
+`scripts/test-updates.sh` covers versions, GitHub's answers, signatures and the whole
+install on stand-in app bundles in a temporary folder: every way an archive can be
+wrong must leave the installed copy untouched. Not covered, because it needs a real
+installed copy and two real releases: macOS letting an ad-hoc-signed Tint replace
+itself (App Management), and the new copy opening without a Gatekeeper prompt.
+
 ### Build settings
 
 All optional. Each is an environment variable; the first two can also live in a
@@ -187,6 +235,7 @@ git-ignored one-line file at the repo root.
 | `FLOE_DEVELOPER_ID` | | Developer ID identity; signs with the hardened runtime |
 | `FLOE_NOTARY_PROFILE` | | `notarytool` keychain profile; notarizes with `--zip` |
 | `FLOE_BUNDLE_ID` | | bundle ID, default `com.antonchurchyn.floe` |
+| `FLOE_UPDATE_KEY` | | the update key's file for `scripts/release.sh`, default `~/.config/tint/update-key` |
 
 The default bundle ID is the original one, so existing settings carry over. With
 another bundle ID Tint starts with fresh settings; saved logins in
@@ -609,10 +658,11 @@ Sources/Floe/         SwiftUI app
   Lyrics/             LRCLIB service, memory cache, LRC parser and view state
   Visualization/      vDSP FFT, bounded PCM sampling, visual preferences, Metal shader
   Settings/           persisted playback/appearance preferences and native settings window
+  Updates/            the release feed, the signed install and the daily check
   Views/              UI
 Support/Localizations/ English/Ukrainian interface strings and plural rules
 Support/Info.plist    bundle metadata
-scripts/              build-app.sh, package-app.sh, install-app.sh, make-icon.swift, test-*.sh
+scripts/              build-app.sh, package-app.sh, install-app.sh, release.sh, make-icon.swift, test-*.sh
 .github/workflows/    CI: build and offline tests
 ```
 

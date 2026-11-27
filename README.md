@@ -66,6 +66,9 @@ You need a Mac with Apple Silicon, macOS 26 or later, and Spotify Premium.
 3. Set up **Spotify Soloist** (Step 1 in Tint): install `soloist` (`brew install --cask spotify-soloist` or via the button in Tint), paste your free **Spotify Soloist API Key** from [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), press **Connect**, and select **Tint** once in Spotify's Devices menu.
 4. Connect your **Library** (Step 2 in Tint) with the Client ID of a free Spotify developer app, which the setup screen walks you through creating.
 
+From then on Tint updates itself: it offers a newer version in the sidebar and under
+**Settings → About**, and installs it when you ask.
+
 To build it yourself instead, with the Xcode Command Line Tools and
 [Rust](https://rustup.rs) installed:
 

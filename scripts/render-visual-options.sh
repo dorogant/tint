@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Offscreen renders of the Visuals popover's controls (live-background presets
-# included) and of Settings' equalizer, in English and Ukrainian. No login,
+# included), of Settings' equalizer and of its updates, in English and Ukrainian. No login,
 # network, audio or visible window.
 # PNGs go to $FLOE_OPTIONS_DIR (default /tmp/tint-visual-options).
 # Needs the Rust core built (core/target/release), since the module links it.

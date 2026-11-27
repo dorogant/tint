@@ -337,15 +337,26 @@ private struct WindowChrome: NSViewRepresentable {
         weak var view: NSView?
         var toolbarHidden = false
         var buttonsHidden = false
+        /// From the moment full screen is asked for until it's reached.
+        private var entering = false
+        /// The full-screen titlebar window made invisible here, to put back.
+        private weak var hiddenStrip: NSWindow?
+        private weak var hiddenTitlebar: NSView?
         private var watchers: [Task<Void, Never>] = []
 
         /// Entering full screen makes the titlebar's window anew, and leaving
         /// it brings the titlebar home, so both set things up again.
         func watchFullScreen() {
-            watchers = [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification].map { name in
+            let events: [(Notification.Name, @MainActor (Coordinator) -> Void)] = [
+                (NSWindow.willEnterFullScreenNotification, { $0.handBackButtons() }),
+                (NSWindow.didEnterFullScreenNotification, { $0.entering = false; $0.apply() }),
+                (NSWindow.didExitFullScreenNotification, { $0.entering = false; $0.apply() }),
+            ]
+            watchers = events.map { name, react in
                 Task { [weak self] in
                     for await _ in NotificationCenter.default.notifications(named: name).map({ _ in () }) {
-                        self?.apply()
+                        guard let self else { return }
+                        react(self)
                     }
                 }
             }
@@ -353,22 +364,48 @@ private struct WindowChrome: NSViewRepresentable {
 
         deinit { for watcher in watchers { watcher.cancel() } }
 
+        private var buttons: [NSButton] {
+            [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+                .compactMap { view?.window?.standardWindowButton($0) }
+        }
+
+        /// Full screen fades the window's buttons itself: out, so the
+        /// toolbar's first item (Back) takes their place, and in with the
+        /// menu bar. They go into it as the system expects them, opaque.
+        private func handBackButtons() {
+            entering = true
+            for button in buttons { button.alphaValue = 1 }
+        }
+
         func apply() {
             guard let window = view?.window else { return }
-            let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
-                .compactMap { window.standardWindowButton($0) }
+            let buttons = buttons
             // Found from a button, not from the window: in full screen the
             // titlebar isn't in this window.
             guard let titlebar = buttons.first?.superview else { return }
             let items = titlebar.subviews.first { "\(type(of: $0))".contains("ToolbarView") }
             if let items, items.isHidden != toolbarHidden { items.isHidden = toolbarHidden }
-            // Faded, not hidden, so the titlebar lays nothing out again.
-            for button in buttons { button.animator().alphaValue = buttonsHidden ? 0 : 1 }
-            // Full screen's titlebar window, strip and all. Never this window.
             let detached = titlebar.window.flatMap { $0 === window ? nil : $0 }
-            titlebar.superview?.isHidden = toolbarHidden && detached != nil
-            detached?.alphaValue = toolbarHidden ? 0 : 1
-            detached?.ignoresMouseEvents = toolbarHidden
+            let fullScreen = detached != nil || entering || window.styleMask.contains(.fullScreen)
+            // Faded, not hidden, so the titlebar lays nothing out again. Only
+            // in a window: in full screen their opacity is the system's, and
+            // making them opaque there put the Close button over Back.
+            if !fullScreen {
+                for button in buttons { button.animator().alphaValue = buttonsHidden ? 0 : 1 }
+            }
+            // Full screen's titlebar window, strip and all. Never this window,
+            // and nothing is put back that wasn't hidden here.
+            if toolbarHidden, let detached {
+                titlebar.superview?.isHidden = true
+                detached.alphaValue = 0
+                detached.ignoresMouseEvents = true
+                (hiddenStrip, hiddenTitlebar) = (detached, titlebar.superview)
+            } else {
+                hiddenStrip?.alphaValue = 1
+                hiddenStrip?.ignoresMouseEvents = false
+                hiddenTitlebar?.isHidden = false
+                (hiddenStrip, hiddenTitlebar) = (nil, nil)
+            }
         }
     }
 }

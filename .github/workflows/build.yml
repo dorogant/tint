@@ -50,6 +50,10 @@ jobs:
           scripts/test-transport.sh
           scripts/test-autopreset.sh
           scripts/test-equalizer.sh
+          scripts/test-history.sh
+          scripts/test-mix.sh
+          scripts/test-friends.sh
+          scripts/test-stats.sh
 
       # These draw through Metal and offscreen windows. CI machines are virtual and
       # their GPU may not match a real Mac's, so a failure here is a hint, not a verdict.

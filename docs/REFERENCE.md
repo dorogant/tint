@@ -323,9 +323,12 @@ cover, the song's name, the lyrics and the background are all that's left. Movin
 the pointer shows a **Show controls** button and the window's buttons for 2.5 s;
 once it rests they go again, and the pointer with them. Escape, ⇧⌘H or any other
 surface brings the controls back. Lyrics has the same button at its top right;
-there the bottom bar goes with the toolbar. In full screen the strip the system
-keeps for the toolbar goes too. The star beside the song's name on Now Playing
-saves it to Liked Songs.
+there the bottom bar goes with the toolbar. The star beside the song's name on
+Now Playing saves it to Liked Songs.
+
+In full screen macOS moves the toolbar into a window of its own and gives it an
+opaque grey background. Tint hides that background, so the toolbar sits on the
+backdrop as it does in a window.
 
 On Now Playing the cover is a plain disc with a pale hairline rim in the cover's
 colour; it doesn't move. Visuals ▸ Cover swaps it for a **Card**: a rounded

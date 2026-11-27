@@ -136,6 +136,20 @@ extension EnvironmentValues {
     }
 }
 
+private struct AppActiveKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// True while Tint is the app in front (`WindowPresence.isActive`). In
+    /// place of `scenePhase`, which can stay inactive after quick switches
+    /// between apps.
+    var appActive: Bool {
+        get { self[AppActiveKey.self] }
+        set { self[AppActiveKey.self] = newValue }
+    }
+}
+
 private struct HeroNamespaceKey: EnvironmentKey {
     static var defaultValue: Namespace.ID? { nil }
 }

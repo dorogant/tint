@@ -765,6 +765,11 @@ scripts/              build-app.sh, package-app.sh, install-app.sh, release.sh, 
     stopped 30 Hz main-thread analysis dispatches when only the live background runs;
     skipped downsampling for cancelled fast-scroll artwork tasks; capped `LibraryModel.liked`
     (4,000) and `Navigator.stack` (64); aborted timed-out `spirc_task` on teardown.
+  - In front and visible, from AppKit: `WindowPresence` reads both from `NSApp` on every
+    notification that could change them. "In front" used to be SwiftUI's `scenePhase`, which
+    stayed inactive after a few quick switches between apps and left the tap, the visualizer
+    and the live background off until a restart. `scripts/test-presence.sh` holds it to
+    AppKit's answer through 2000 quick switches and through notifications that never came.
 
 ### Command Line Tools quirks
 

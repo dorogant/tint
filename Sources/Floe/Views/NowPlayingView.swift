@@ -212,11 +212,11 @@ private struct FlowerCoverView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(CoverAppearance.self) private var appearance
     @Environment(\.coverPalette) private var palette
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.appActive) private var appActive
     @Environment(\.windowVisible) private var windowVisible
     @ReducedMotion private var still
 
-    private var running: Bool { player.isPlaying && !still && scenePhase == .active && windowVisible }
+    private var running: Bool { player.isPlaying && !still && appActive && windowVisible }
 
     var body: some View {
         // A tinted rim, like a bottle cap's edge, separates the cover from the ring.

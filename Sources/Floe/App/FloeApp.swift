@@ -15,7 +15,6 @@ struct FloeApp: App {
     @ViewState private var autoPreset: AutoPresetController
     @ViewState private var presence = WindowPresence()
     @ViewState private var updates = UpdateModel()
-    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
     @ViewState private var appearance = CoverAppearance()
@@ -47,7 +46,7 @@ struct FloeApp: App {
     private var autoPresetActive: Bool { visuals.autoPreset && visuals.liveBackground }
 
     private var needsAnalysis: Bool {
-        player.isPlaying && ((scenePhase == .active && presence.isVisible) || SelfTest.isEnabled)
+        player.isPlaying && ((presence.isActive && presence.isVisible) || SelfTest.isEnabled)
             && !reduceMotion && !systemReduceMotion
             && (visuals.liveBackground || (visuals.showVisualizer && navigator.surface == .nowPlaying))
     }
@@ -69,6 +68,7 @@ struct FloeApp: App {
                 .environment(\.locale, settings.locale)
                 .environment(\.interfaceScale, settings.interfaceSize.scale)
                 .environment(\.windowVisible, presence.isVisible || SelfTest.isEnabled)
+                .environment(\.appActive, presence.isActive || SelfTest.isEnabled)
                 .environment(\.coverPalette, accentFromCover ? appearance.palette : CoverPalette.fixed(settings.fixedAccent))
                 .onChange(of: needsAnalysis, initial: true) {
                     visualization.setRunning(needsAnalysis)
@@ -78,8 +78,8 @@ struct FloeApp: App {
                 .onChange(of: settings.engine) { player.switchEngine(to: settings.engine) }
                 .onChange(of: settings.equalizer, initial: true) { FloeCore.shared.equalizer = settings.equalizer }
                 // The daily update check rides on coming to the front, so no timer runs for it.
-                .onChange(of: scenePhase, initial: true) {
-                    if scenePhase == .active, !SelfTest.isEnabled { updates.checkIfDue() }
+                .onChange(of: presence.isActive, initial: true) {
+                    if presence.isActive, !SelfTest.isEnabled { updates.checkIfDue() }
                 }
                 .task(id: "\(player.displayTrack?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)

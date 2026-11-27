@@ -252,9 +252,15 @@ Both styles support **Bars** and **Wave**. Sensitivity changes only the visual
 response. The optional **Live background** turns the backdrop into a light show
 that plays along in layers. **Beams**: bass lights, widens and punches the outer
 beams on each kick; hi-hats light the middle beams and glint in the haze; snares
-flick the middle pairs across; sustained vocals tint the smoke. Beams move on
-damped springs, turn on the beat, change look every eight bars or on a drop, and
-come to rest in silence. **Fluid** swirls the cover's colours and breathes with the
+flick the middle pairs across; sustained vocals tint the smoke. Uplights stand in
+two wings along the floor: the corner pair shines through a loud passage, the next
+pairs join as the song builds, and a drop lights all of them. The rig is mirrored
+about the centre line, so a beam and its twin on the other side always point
+opposite ways in the same light. Beams move on damped springs, turn on the beat,
+change look every eight bars or on a drop, and come to rest in silence. The opt-in
+strobe follows the song's beat clock, so it flashes evenly on the beat while the
+drums play (every other beat above 165 BPM, never more than three times a second)
+and falls back to the kicks only when no tempo can be found. **Fluid** swirls the cover's colours and breathes with the
 bass. **Bass punch** scales the kick response; black-and-white covers draw clean
 white light. Colours always come from the cover.
 

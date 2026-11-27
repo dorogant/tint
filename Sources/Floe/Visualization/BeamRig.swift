@@ -2,8 +2,9 @@ import Foundation
 import simd
 
 /// Beams: a lighting rig that plays along with the song. Moving heads hang on a
-/// truss along the top edge, and each layer of the music has its own job, so
-/// you can tell the kick from the hats from the vocal with the sound off:
+/// truss along the top edge, uplights stand along the floor in two wings, and
+/// each layer of the music has its own job, so you can tell the kick from the
+/// hats from the vocal with the sound off:
 ///
 /// | Music                                | Light                                                         |
 /// |--------------------------------------|---------------------------------------------------------------|
@@ -13,17 +14,25 @@ import simd
 /// | Highs envelope (hats, cymbals, air)  | the inner beams' brightness                                   |
 /// | Hat                                  | motes drifting down the inner beams catch the light          |
 /// | Mids envelope (vocals, leads)        | the haze fills with the cover's colour                        |
-/// | Loudness against the last seconds    | overall level and sweep size: a breakdown dims and calms, a drop brings in the floor beams |
-/// | Tempo and beat phase                 | sweeps turn on the beat; the look changes every eight bars    |
+/// | Loudness                             | the floor beams: the corner pair in a loud passage, the next pairs as it builds |
+/// | Loudness against the last seconds    | overall level and sweep size: a breakdown dims and calms, a drop lights the whole floor |
+/// | Tempo and beat phase                 | sweeps turn on the beat; the look changes every eight bars; the opt-in strobe flashes on the beat |
 ///
 /// Outer and inner blend across the truss, so with eight heads the middle pair
 /// is almost all treble and the end pair almost all bass. Every head pivots on
 /// damped springs, so beams swing with inertia, never jump, and settle when
 /// the music goes quiet. Nothing moves that the music didn't move.
+///
+/// The rig is mirrored about the centre line: a head and its twin on the other
+/// side always point opposite ways with the same light. Looks that leaned the
+/// whole rig to one side, or put a different colour in each floor corner, read
+/// as a mistake rather than a look (the owner, 2026-11-27).
 struct BeamRig {
-    enum Pattern: Int, CaseIterable { case fan, sweep, scissors, converge }
+    enum Pattern: Int, CaseIterable { case fan, wave, scissors, converge }
     /// The uniforms carry one slot per head, eight in all (see `heads`).
     static let maximumHeads = 8
+    /// Floor heads come in mirrored pairs, three at most: the corners, then inward.
+    static let maximumFloorPairs = 3
     /// Strobe flashes stay at three a second or fewer (WCAG 2.3.1), like beats.
     static let flashInterval = BeatDetector.minimumInterval
     /// Beats between looks when the tempo is known: eight bars of four.
@@ -37,7 +46,7 @@ struct BeamRig {
     private(set) var flash: Float = 0
     /// Strobe flashes so far.
     private(set) var flashes = 0
-    /// The corner beams from the floor join in on drops.
+    /// The floor beams: about a half in a loud passage, 1 on a drop.
     private(set) var floorLevel: Float = 0
     /// How much of the vocal/lead layer fills the haze.
     private(set) var hazeFill: Float = 0
@@ -56,12 +65,20 @@ struct BeamRig {
     /// Each head's choreographed aim, and the hits riding on it.
     private(set) var aim = [Spring](repeating: Spring(), count: maximumHeads)
     private(set) var swing = [Spring](repeating: Spring(), count: maximumHeads)
+    /// Each floor pair's lean toward the centre; the right wing mirrors the left.
+    private(set) var floorAim = [Spring](repeating: Spring(), count: maximumFloorPairs)
     private var floorSwing = Spring()
     private var snareSide: Float = 1
     /// A new strobe flash is drawn at full strength before it starts to fade.
     private var flashHeld = false
     private var sincePattern: Float = 0
     private var sinceFlash: Float = 10
+    /// Seconds since a kick counted as a beat: the strobe needs drums playing.
+    private var sinceBeat: Float = 10
+    /// The strobe's last beat of the clock, so each beat flashes once, and
+    /// how many beats of the clock it takes as one.
+    private var strobeBeat: Float = 0
+    private var strobeStride: Float = 1
     private var scheme = 0
     private var heads = 6
     /// Until the music first moves it, the rig stands in its resting fan (what
@@ -78,7 +95,7 @@ struct BeamRig {
             // Outward, strongest on the end heads, like a punch from below.
             for i in 0..<heads {
                 let s = Self.position(i, count: heads)
-                swing[i].velocity += pulse.kick * punch * Self.outer(s) * (s < 0 ? -1 : 1) * 1.9
+                swing[i].velocity += pulse.kick * punch * Self.outer(s) * Self.side(s) * 1.9
             }
             floorSwing.velocity += pulse.kick * punch * 1.2
             kickGlow = max(kickGlow, min(1.2, pulse.kick * react))
@@ -87,7 +104,7 @@ struct BeamRig {
             // The inner pairs cross on one hit and open on the next.
             for i in 0..<heads {
                 let s = Self.position(i, count: heads)
-                swing[i].velocity += pulse.snare * punch * (1 - Self.outer(s)) * (s < 0 ? 1 : -1) * snareSide * 1.3
+                swing[i].velocity += pulse.snare * punch * (1 - Self.outer(s)) * -Self.side(s) * snareSide * 1.3
             }
             snareSide = -snareSide
         }
@@ -99,14 +116,24 @@ struct BeamRig {
             clock += error * 0.2 * min(1, pulse.confidence * 1.5)
         }
         if pulse.beat > 0 {
+            sinceBeat = 0
             if pulse.lift > 0.85, sincePattern > 4 { change() }
-            if configuration.strobe, pulse.beat > 0.5, pulse.energy > 0.35, sinceFlash >= Self.flashInterval {
-                flash = 1
-                flashHeld = true
-                flashes += 1
-                sinceFlash = 0
-            }
+            // With no tempo to follow, the strobe takes the kicks as they come.
+            if !locked, pulse.beat > 0.5 { strobe(configuration) }
         }
+    }
+
+    /// The tempo is steady enough for the beat clock to place the strobe.
+    private var locked: Bool { latest.tempo > 0 && confidence > 0.3 }
+
+    /// One strobe flash, if the strobe is on, the music is loud and the last
+    /// flash is far enough back: brighter when the song has just stepped up.
+    private mutating func strobe(_ configuration: BackgroundConfiguration) {
+        guard configuration.strobe, latest.energy > 0.35, sinceFlash >= Self.flashInterval else { return }
+        flash = 0.75 + 0.25 * BeatDetector.smoothstep(0.5, 0.85, latest.lift)
+        flashHeld = true
+        flashes += 1
+        sinceFlash = 0
     }
 
     /// Moves the rig on by `dt` seconds of display time.
@@ -115,9 +142,11 @@ struct BeamRig {
         if !started {
             started = true
             for i in 0..<heads { aim[i].position = Self.aim(.fan, head: i, count: heads, beats: 0, period: 8, reach: reach) }
+            for k in 0..<Self.maximumFloorPairs { floorAim[k].position = Self.floorAim(.fan, pair: k, beats: 0, period: 8, reach: reach) }
         }
         sincePattern += dt
         sinceFlash += dt
+        sinceBeat += dt
         haze += dt * configuration.speed * (0.4 + 0.5 * energy)
 
         // The clock runs at the song's tempo when there is one; otherwise at an
@@ -131,6 +160,20 @@ struct BeamRig {
         let previous = clock
         clock += dt * rate
         if (previous / Self.phrase).rounded(.down) != (clock / Self.phrase).rounded(.down), sincePattern > 6 { change() }
+        // The strobe flashes as the clock passes a beat, so it keeps even time
+        // through kicks the detector misses and ignores the stray ones between
+        // beats: on the raw kicks it came and went at random. It stops within
+        // a second of the drums stopping. Every other beat above 165 BPM, where
+        // each beat would pass three flashes a second.
+        let stride: Float = rate > 2.75 ? 2 : 1
+        let beat = (clock / stride).rounded(.down)
+        if stride != strobeStride {
+            // Counting beats differently isn't a beat passing.
+            strobeStride = stride
+        } else if beat > strobeBeat, locked, sinceBeat < 1.2 {
+            strobe(configuration)
+        }
+        strobeBeat = beat
 
         func follow(_ value: inout Float, _ target: Float, attack: Float, release: Float) {
             value += (target - value) * BeatDetector.rate(dt, target > value ? attack : release)
@@ -149,8 +192,11 @@ struct BeamRig {
         follow(&level, target, attack: 0.1, release: 0.5)
         let calm = BeatDetector.smoothstep(0.08, 0.55, latest.energy) * (0.45 + 0.55 * latest.lift)
         follow(&reach, 0.3 + 0.7 * min(1, calm * 1.4), attack: 0.6, release: 1.2)
+        // The floor holds about half its light through a loud passage, a little
+        // more or less as the song swells and eases, and takes the rest on a drop.
         let drop = BeatDetector.smoothstep(0.62, 0.92, latest.lift) * min(1, latest.energy * react * 1.4)
-        follow(&floorLevel, drop, attack: 0.15, release: 0.6)
+        let loud = BeatDetector.smoothstep(0.3, 0.65, latest.energy) * min(1, react) * (0.3 + 0.4 * latest.lift)
+        follow(&floorLevel, min(1, max(drop, loud)), attack: 0.15, release: 0.6)
 
         // Heavy fixtures: the choreography pulls each head on a soft spring with
         // a top speed; hits ride on a quicker, looser spring around it.
@@ -160,6 +206,10 @@ struct BeamRig {
             let goal = Self.aim(pattern, head: i, count: heads, beats: clock, period: period, reach: reach)
             aim[i].step(toward: goal, frequency: 0.9, damping: 0.8, dt: dt, maximumSpeed: 2.2)
             swing[i].step(toward: 0, frequency: 2.4, damping: 0.3, dt: dt)
+        }
+        for k in 0..<Self.maximumFloorPairs {
+            let goal = Self.floorAim(pattern, pair: k, beats: clock, period: period, reach: reach)
+            floorAim[k].step(toward: goal, frequency: 0.9, damping: 0.8, dt: dt, maximumSpeed: 2.2)
         }
         floorSwing.step(toward: 0, frequency: 2, damping: 0.35, dt: dt)
     }
@@ -184,7 +234,11 @@ struct BeamRig {
             let outer = Self.outer(s), inner = 1 - outer
             let low = 0.4 + 0.7 * bass + 1.3 * kickGlow
             let top = 0.4 + 0.7 * high + 0.9 * sparkle
-            let intensity = level * (outer * low + inner * top)
+            // The truss gives up some light as the floor comes on: with nothing
+            // held back, the floor took Intense past the brightness white text can
+            // stand (mean luma 0.204 just after a kick, against a limit of 0.2;
+            // 0.194 with this, and 0.147 before there was a floor rig).
+            let intensity = level * (outer * low + inner * top) * (1 - 0.15 * floorLevel)
             let spread = 0.042 * (0.8 + 0.2 * outer) * (1 + outer * (0.35 * bass + 0.5 * kickGlow))
             let glint = inner * min(1.2, 0.4 * high + sparkle)
             let color = palette[pair.treble] + (palette[pair.bass] - palette[pair.treble]) * outer
@@ -197,15 +251,47 @@ struct BeamRig {
                 (h.0.1, h.1.1, h.2.1, h.3.1, h.4.1, h.5.1, h.6.1, h.7.1))
     }
 
-    /// The floor beams lean in from the corners, scissor slowly with the bars and
-    /// kick outward with the bass.
-    var floorAngle: Float { 0.5 + 0.18 * reach * sin(clock * .pi / 8) + floorSwing.position }
-    var floorSpread: Float { 0.05 * (1 + 0.5 * kickGlow) }
+    /// The floor heads, a pair to every two slots (left, then right): source x
+    /// (aspect-scaled), direction x and y, intensity; then colour and spread.
+    /// They lean in toward the centre, move with the look and kick further in
+    /// with the bass. The corner pair lights first and the others join as the
+    /// floor level rises. Their colours run the other way from the truss's,
+    /// treble at the corners, so both colours show on each side.
+    func floorHeads(count: Int, palette: [SIMD3<Float>], pair: (bass: Int, treble: Int), aspect: Float) -> (heads: FloorHeads, tints: FloorHeads) {
+        let pairs = Self.floorPairs(heads: count)
+        let spread = 0.042 * (1 + 0.5 * kickGlow)
+        func head(_ slot: Int) -> (SIMD4<Float>, SIMD4<Float>) {
+            let k = slot / 2
+            guard k < pairs else { return (.zero, .zero) }
+            let fk = Float(k)
+            let joined = BeatDetector.smoothstep(0.22 * fk, 0.22 * fk + 0.25, floorLevel)
+            // Each pair inward is dimmer, so a full floor doesn't outshine the truss.
+            let intensity = floorLevel * joined * (0.55 + 0.5 * kickGlow) * (1 - 0.22 * fk)
+            let lean = min(1.15, max(0.05, floorAim[k].position + floorSwing.position * (1 - 0.2 * fk)))
+            let left = slot % 2 == 0
+            let x = Self.floorPosition(k)
+            let color = palette[pair.treble] + (palette[pair.bass] - palette[pair.treble]) * (pairs > 1 ? fk / Float(pairs - 1) : 0)
+            return (SIMD4((left ? x : 1 - x) * aspect, (left ? 1 : -1) * sin(lean), cos(lean), intensity), SIMD4(color, spread))
+        }
+        let h = (head(0), head(1), head(2), head(3), head(4), head(5))
+        return ((h.0.0, h.1.0, h.2.0, h.3.0, h.4.0, h.5.0), (h.0.1, h.1.1, h.2.1, h.3.1, h.4.1, h.5.1))
+    }
+
+    /// Floor pairs for a truss of `heads`: a small rig keeps a small floor.
+    static func floorPairs(heads: Int) -> Int { min(maximumFloorPairs, heads / 2) }
+
+    /// Where a floor pair's left head stands, as a share of the width: the
+    /// corner, then inward. The middle of the floor stays clear for the truss.
+    static func floorPosition(_ pair: Int) -> Float { 0.13 * Float(pair) }
 
     /// Where a head sits on the truss, -1 (left) to 1 (right).
     static func position(_ i: Int, count: Int) -> Float {
         count > 1 ? Float(i) / Float(count - 1) * 2 - 1 : 0
     }
+
+    /// Which half of the truss a head is on: -1, 1, or 0 for one in the middle,
+    /// which has no twin and so may only point straight down.
+    static func side(_ s: Float) -> Float { s < 0 ? -1 : (s > 0 ? 1 : 0) }
 
     /// How much a head at `s` belongs to the bass: 1 at the ends, near 0 in the middle.
     static func outer(_ s: Float) -> Float { powf(abs(s), 1.4) }
@@ -219,21 +305,40 @@ struct BeamRig {
     }
 
     /// Where a pattern points a head, in radians from straight down (positive to
-    /// the right), `beats` into the song. Every turning point lands on a beat.
+    /// the right), `beats` into the song. Every turning point lands on a beat,
+    /// and a head's twin across the centre always gets the opposite angle.
     static func aim(_ pattern: Pattern, head i: Int, count: Int, beats: Float, period: Float, reach: Float) -> Float {
         let s = position(i, count: count)
         let t = 2 * Float.pi * beats / period
         switch pattern {
         case .fan: return s * (0.1 + 0.45 * reach * (0.5 - 0.5 * cos(t)))
-        case .sweep: return s * 0.12 + 0.42 * reach * sin(t - 0.35 * .pi * s)
-        case .scissors: return (i % 2 == 0 ? 1 : -1) * 0.38 * reach * sin(t) + s * 0.1
-        case .converge:
-            // Every head aims at one spot on the floor that drifts across the stage.
-            let x = (Float(i) + 0.5) / Float(count)
-            let focus = 0.5 + 0.3 * reach * sin(t)
-            return atanf((focus - x) * 1.6 / 0.9)
+        // Each pair opens and crosses in turn, a ripple running out from the middle.
+        case .wave: return side(s) * (0.1 * abs(s) + 0.34 * reach * sin(t - 0.8 * .pi * abs(s)))
+        // Neighbours swing against each other, counted in from the ends so the two halves match.
+        case .scissors: return side(s) * (min(i, count - 1 - i) % 2 == 0 ? 1 : -1) * 0.38 * reach * sin(t) + s * 0.1
+        // Every head aims at one spot on the centre line, which rises and sinks.
+        case .converge: return atanf((0.5 - (Float(i) + 0.5) / Float(count)) * 1.6 / focusDistance(t, reach: reach))
         }
     }
+
+    /// How far a floor head of pair `pair` leans toward the centre, in radians
+    /// from straight up. The floor answers the truss: its fan opens as the
+    /// truss's closes, the wave runs on into it, and its heads converge on a
+    /// spot as high above the floor as the truss's is below the truss, so at
+    /// full reach the two meet mid-air.
+    static func floorAim(_ pattern: Pattern, pair: Int, beats: Float, period: Float, reach: Float) -> Float {
+        let t = 2 * Float.pi * beats / period
+        let k = Float(pair)
+        switch pattern {
+        case .fan: return 0.5 + (k - 1) * (0.03 + 0.13 * reach * (0.5 + 0.5 * cos(t)))
+        case .wave: return 0.5 + 0.05 * (k - 1) + 0.17 * reach * sin(t - .pi * (1 + 0.2 * k))
+        case .scissors: return 0.5 + (pair % 2 == 0 ? 1 : -1) * 0.2 * reach * sin(t)
+        case .converge: return atanf((0.5 - floorPosition(pair)) * 1.6 / focusDistance(t, reach: reach))
+        }
+    }
+
+    /// How far from its heads a converging rig's spot is, in frame heights.
+    private static func focusDistance(_ t: Float, reach: Float) -> Float { 0.9 + 0.38 * reach * sin(t) }
 
     private mutating func change() {
         pattern = Pattern(rawValue: (pattern.rawValue + 1) % Pattern.allCases.count)!

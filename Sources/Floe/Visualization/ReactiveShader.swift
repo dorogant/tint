@@ -129,19 +129,19 @@ enum ReactiveShader {
 
     """#
 
-    /// Moving heads on a truss along the top edge (and two from the floor on a
-    /// drop) cut narrow cones through drifting haze, each with a hot core and a
-    /// lens flare at its source, added together like real light. Everything
-    /// else stays dark, so only the beams and flares are bright.
+    /// Moving heads on a truss along the top edge, and uplights in two wings
+    /// along the floor, cut narrow cones through drifting haze, each with a hot
+    /// core and a lens flare at its source, added together like real light.
+    /// Everything else stays dark, so only the beams and flares are bright.
     private static let beams = #"""
-    // motion: haze clock, spare, strobe flash, glow. size: width, height, heads, floor level.
-    // floor: floor angle, floor spread, haze fill (mids), sin(floor angle). haze: haze colour, neutral cover.
-    // average: palette average rgb, cos(floor angle).
+    // motion: haze clock, haze fill (mids), strobe flash, glow. size: width, height, heads, floor heads.
+    // haze: haze colour, neutral cover. average: palette average rgb, spare.
     // heads: angle, intensity, spread, glint. tints: head colour, sin(angle).
     // geometry: precomputed source x, dir x, dir y, spare.
+    // floorHeads: precomputed source x, dir x, dir y, intensity. floorTints: colour, spread.
     struct BeamUniforms {
-        float4 colors[5]; float4 motion; float4 size; float4 floor; float4 haze; float4 average;
-        float4 floorColors[2]; float4 heads[8]; float4 tints[8]; float4 geometry[8];
+        float4 colors[5]; float4 motion; float4 size; float4 haze; float4 average;
+        float4 heads[8]; float4 tints[8]; float4 geometry[8]; float4 floorHeads[6]; float4 floorTints[6];
     };
     /// Light scattered by the haze along one cone, brightest at its core. Every
     /// profile is pre-filtered for the pixel size, so thin beams stay smooth.
@@ -237,7 +237,7 @@ enum ReactiveShader {
 
         half2 fogAndBillow = smoothSample(hazeMap, float2(in.uv.x, 1.0f - in.uv.y)); // textures run top-down
         float smoke = float(fogAndBillow.x), billow = float(fogAndBillow.y);
-        float fill = u.floor.z;
+        float fill = u.motion.y;
         // Low contrast, like a room filled with fog: every beam shows along its
         // whole length and the volumes only thicken and thin it. Vocals and leads
         // thicken it further, so every beam glows fuller through it.
@@ -257,15 +257,26 @@ enum ReactiveShader {
                 light += flare(p, source, h.y, color, glow);
             }
         }
-        float floorLevel = u.size.w;
-        if (floorLevel > 0.005f) {
-            float2 rise = float2(u.floor.w, u.average.w); // up and in from the left corner
-            half3 left = half3(u.floorColors[0].rgb), right = half3(u.floorColors[1].rgb);
-            light += beam(p, float2(0.0f, 0.015f), rise, u.floor.y, floorLevel, left, density, glow, 0, pixel, pixel2, 0, 0);
-            light += beam(p, float2(aspect, 0.015f), float2(-rise.x, rise.y), u.floor.y, floorLevel, right, density, glow, 0, pixel, pixel2, 0, 0);
-            if (p.y < 0.365f) {
-                light += flare(p, float2(0.01f, 0.015f), floorLevel, left, glow);
-                light += flare(p, float2(aspect - 0.01f, 0.015f), floorLevel, right, glow);
+        // Six floor heads in place of the two corner beams cost GPU time in step
+        // with the beams lit (M3, 1589x1007, before and after back to back):
+        // 0.62–0.72 ms a frame before; now 0.86–0.90 on a drop with all six lit,
+        // 0.81–0.87 in a steady groove with four, 0.59–0.64 in a quiet passage.
+        int floorCount = int(u.size.w);
+        bool nearFloor = p.y < 0.365f;
+        for (int i = 0; i < 6; i++) {
+            if (i >= floorCount) break;
+            float4 f = u.floorHeads[i];
+            // A pair that hasn't joined is skipped. Keep this line even if it looks
+            // redundant with the check inside beam(): measured with every head lit,
+            // when it skips nothing, the frame still took 0.93 ms without it and
+            // 0.86 with it (M3, 1589x1007), and an unrolled loop took 0.91.
+            if (f.w <= 0.005f) continue;
+            float4 tint = u.floorTints[i];
+            half3 color = half3(tint.rgb);
+            light += beam(p, float2(f.x, 0.015f), f.yz, tint.w, f.w, color, density, glow, 0, pixel, pixel2, 0, 0);
+            if (nearFloor) {
+                // The corner lenses sit just inside the frame.
+                light += flare(p, float2(clamp(f.x, 0.01f, aspect - 0.01f), 0.015f), f.w, color, glow);
             }
         }
 

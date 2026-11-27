@@ -49,6 +49,7 @@ jobs:
           scripts/test-phase5.sh
           scripts/test-transport.sh
           scripts/test-autopreset.sh
+          scripts/test-equalizer.sh
 
       # These draw through Metal and offscreen windows. CI machines are virtual and
       # their GPU may not match a real Mac's, so a failure here is a hint, not a verdict.

@@ -1,21 +1,43 @@
+import Accelerate
 import AudioToolbox
 import CFloeCore
 import CoreAudio
 import Foundation
+import Synchronization
 import os
 
 /// Taps Spotify Soloist's Core Audio output via macOS's native process tap
 /// (`CATapDescription` + `AudioHardwareCreateProcessTap`) and pushes stereo
 /// float32 PCM into Tint's existing lock-free `AnalysisTap` ring.
 ///
-/// Only runs while `VisualizationModel` is active (playing, visible, effects on);
-/// stops completely when paused or hidden so idle CPU stays at 0%.
+/// Given a ring to play from, it also takes the sound over for the equalizer:
+/// Soloist's own output is muted for as long as the tap is read, and every
+/// frame goes into the ring for `EqualizerOutput` to play. The mute ends with
+/// the tap, so if Tint quits or crashes, Soloist is simply heard again.
+///
+/// Only runs while something needs it (the visuals: playing, visible, effects
+/// on; the equalizer: playing); stops completely otherwise so idle CPU stays at 0%.
 @MainActor
 final class SoloistAudioTap {
+    enum Start {
+        case started
+        /// Soloist hasn't opened an audio device yet. It will have by the time it plays.
+        case notReady
+        case failed
+    }
+
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
     private var activePID: pid_t?
+    private var activeRing: AudioRing?
+    /// The rate the tap delivers at: the rate of the device Soloist plays to.
+    private(set) var sampleRate: Double = 0
+    private let meter = TapMeter()
+    /// Counts up with every delivery that wasn't silence. A tap without the
+    /// System Audio Recording permission starts like any other and delivers
+    /// only silence, so this is the one way to tell that it hears Soloist.
+    var soundingDeliveries: Int { meter.sounding.load(ordering: .relaxed) }
     private let log = Logger(subsystem: "com.antonchurchyn.floe", category: "soloist-tap")
 
     deinit {
@@ -23,15 +45,17 @@ final class SoloistAudioTap {
         Self.teardown(tapID: tap, aggregateID: agg, ioProcID: proc)
     }
 
-    func start(pid: pid_t) {
-        if activePID == pid, ioProcID != nil { return }
+    /// With `takingOver`, Soloist is muted and its sound goes into that ring.
+    @discardableResult
+    func start(pid: pid_t, takingOver ring: AudioRing? = nil) -> Start {
+        if activePID == pid, ioProcID != nil, activeRing === ring { return .started }
         stop()
         guard let processObject = Self.processObjectID(for: pid) else {
             log.notice("No Core Audio process object yet for soloist pid \(pid)")
-            return
+            return .notReady
         }
         let description = CATapDescription(stereoMixdownOfProcesses: [processObject])
-        description.muteBehavior = .unmuted
+        description.muteBehavior = ring == nil ? .unmuted : .mutedWhenTapped
         description.isPrivate = true
         description.name = "Tint Soloist Analysis Tap"
 
@@ -39,12 +63,12 @@ final class SoloistAudioTap {
         let tapStatus = AudioHardwareCreateProcessTap(description, &newTap)
         guard tapStatus == noErr, newTap != AudioObjectID(kAudioObjectUnknown) else {
             log.notice("Process tap unavailable (OSStatus \(tapStatus)); visualizer will stay quiet until Audio Capture permission is granted.")
-            return
+            return .failed
         }
 
         guard let tapUID = Self.tapUID(for: newTap) else {
             _ = AudioHardwareDestroyProcessTap(newTap)
-            return
+            return .failed
         }
 
         let aggregateUID = "com.antonchurchyn.floe.soloist-tap.\(UUID().uuidString)"
@@ -67,30 +91,41 @@ final class SoloistAudioTap {
         guard aggStatus == noErr, newAggregate != AudioObjectID(kAudioObjectUnknown) else {
             log.error("Failed to create aggregate tap device (OSStatus \(aggStatus))")
             _ = AudioHardwareDestroyProcessTap(newTap)
-            return
+            return .failed
         }
 
-        let channels = Self.inputChannelCount(of: newAggregate)
-        let interleaved = Self.isInputInterleaved(of: newAggregate)
+        let format = Self.inputFormat(of: newAggregate)
+        // Without a rate there's nothing to play the sound back at, so it can't be taken over.
+        if ring != nil, (format?.mSampleRate ?? 0) <= 0 {
+            log.error("The tap reports no sample rate; leaving Soloist's sound alone")
+            Self.teardown(tapID: newTap, aggregateID: newAggregate, ioProcID: nil)
+            return .failed
+        }
+        let channels = Int(format?.mChannelsPerFrame ?? 2)
+        let interleaved = ((format?.mFormatFlags ?? 0) & kAudioFormatFlagIsNonInterleaved) == 0
         var newProc: AudioDeviceIOProcID?
-        let procStatus = Self.installIOProc(on: newAggregate, channels: channels, interleaved: interleaved, outID: &newProc)
+        ring?.reset()
+        let procStatus = Self.installIOProc(on: newAggregate, channels: channels, interleaved: interleaved, ring: ring, meter: meter, outID: &newProc)
         guard procStatus == noErr, let newProc else {
             log.error("Failed to install tap IOProc (OSStatus \(procStatus))")
             Self.teardown(tapID: newTap, aggregateID: newAggregate, ioProcID: nil)
-            return
+            return .failed
         }
 
         let startStatus = AudioDeviceStart(newAggregate, newProc)
         guard startStatus == noErr else {
             log.error("Failed to start tap device (OSStatus \(startStatus))")
             Self.teardown(tapID: newTap, aggregateID: newAggregate, ioProcID: newProc)
-            return
+            return .failed
         }
 
         tapID = newTap
         aggregateID = newAggregate
         ioProcID = newProc
         activePID = pid
+        activeRing = ring
+        sampleRate = format?.mSampleRate ?? 0
+        return .started
     }
 
     func stop() {
@@ -99,7 +134,11 @@ final class SoloistAudioTap {
         aggregateID = AudioObjectID(kAudioObjectUnknown)
         ioProcID = nil
         activePID = nil
+        activeRing = nil
     }
+
+    /// True while Soloist is muted and its sound goes through the ring.
+    var isTakingOver: Bool { activeRing != nil && ioProcID != nil }
 
     // MARK: - Nonisolated Core Audio helpers
 
@@ -122,6 +161,8 @@ final class SoloistAudioTap {
         on deviceID: AudioObjectID,
         channels: Int,
         interleaved: Bool,
+        ring: AudioRing?,
+        meter: TapMeter,
         outID: inout AudioDeviceIOProcID?
     ) -> OSStatus {
         let scratch = TapScratch()
@@ -132,25 +173,43 @@ final class SoloistAudioTap {
                let leftPtr = buffers[0].mData?.assumingMemoryBound(to: Float.self),
                let rightPtr = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
                 let frames = Int(buffers[0].mDataByteSize) / MemoryLayout<Float>.size
-                if frames > 0 { floe_push_analysis(leftPtr, rightPtr, UInt32(frames)) }
+                if frames > 0 { deliver(leftPtr, rightPtr, frames, to: ring, meter) }
                 return
             }
             let buf = buffers[0]
             let ch = max(1, Int(buf.mNumberChannels > 0 ? buf.mNumberChannels : UInt32(channels)))
-            let totalFloats = Int(buf.mDataByteSize) / MemoryLayout<Float>.size
-            let frames = min(totalFloats / ch, TapScratch.capacity)
-            guard frames > 0, let src = buf.mData?.assumingMemoryBound(to: Float.self) else { return }
+            let total = Int(buf.mDataByteSize) / MemoryLayout<Float>.size / ch
+            guard total > 0, let src = buf.mData?.assumingMemoryBound(to: Float.self) else { return }
             if ch == 1 {
-                floe_push_analysis(src, src, UInt32(frames))
-            } else {
-                let l = scratch.left, r = scratch.right
+                deliver(src, src, total, to: ring, meter)
+                return
+            }
+            // In pieces the scratch buffers hold: a long delivery cut short would
+            // only cost the visuals a few frames, but it would be a hole in the sound.
+            let l = scratch.left, r = scratch.right
+            var done = 0
+            while done < total {
+                let frames = min(total - done, TapScratch.capacity)
                 for i in 0..<frames {
-                    l[i] = src[i * ch]
-                    r[i] = src[i * ch + 1]
+                    l[i] = src[(done + i) * ch]
+                    r[i] = src[(done + i) * ch + 1]
                 }
-                floe_push_analysis(l, r, UInt32(frames))
+                deliver(l, r, frames, to: ring, meter)
+                done += frames
             }
         }
+    }
+
+    /// To the equalizer, if it has the sound, and to the visuals, which take
+    /// it as it left Soloist, before the equalizer.
+    private nonisolated static func deliver(_ left: UnsafePointer<Float>, _ right: UnsafePointer<Float>, _ frames: Int,
+                                            to ring: AudioRing?, _ meter: TapMeter) {
+        var peak: Float = 0
+        vDSP_maxmgv(left, 1, &peak, vDSP_Length(frames))
+        if peak <= 1e-5 { vDSP_maxmgv(right, 1, &peak, vDSP_Length(frames)) }
+        if peak > 1e-5 { meter.sounding.add(1, ordering: .relaxed) }
+        ring?.write(left: left, right: right, frames: frames)
+        floe_push_analysis(left, right, UInt32(frames))
     }
 
     private nonisolated static func processObjectID(for pid: pid_t) -> AudioObjectID? {
@@ -187,7 +246,7 @@ final class SoloistAudioTap {
         return cf as String
     }
 
-    private nonisolated static func inputChannelCount(of deviceID: AudioObjectID) -> Int {
+    private nonisolated static func inputFormat(of deviceID: AudioObjectID) -> AudioStreamBasicDescription? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamFormat,
             mScope: kAudioDevicePropertyScopeInput,
@@ -196,21 +255,13 @@ final class SoloistAudioTap {
         var desc = AudioStreamBasicDescription()
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &desc) == noErr,
-              desc.mChannelsPerFrame > 0 else { return 2 }
-        return Int(desc.mChannelsPerFrame)
+              desc.mChannelsPerFrame > 0 else { return nil }
+        return desc
     }
+}
 
-    private nonisolated static func isInputInterleaved(of deviceID: AudioObjectID) -> Bool {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamFormat,
-            mScope: kAudioDevicePropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var desc = AudioStreamBasicDescription()
-        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &desc) == noErr else { return true }
-        return (desc.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
-    }
+private final class TapMeter: Sendable {
+    let sounding = Atomic<Int>(0)
 }
 
 /// Pre-allocated planar buffers for deinterleaving inside the Core Audio IOProc

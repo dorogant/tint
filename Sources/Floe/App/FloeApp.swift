@@ -74,6 +74,7 @@ struct FloeApp: App {
                 }
                 .onChange(of: settings.playbackConfiguration, initial: true) { player.configurePlayback(settings.playbackConfiguration) }
                 .onChange(of: settings.engine) { player.switchEngine(to: settings.engine) }
+                .onChange(of: settings.equalizer, initial: true) { FloeCore.shared.equalizer = settings.equalizer }
                 .task(id: "\(player.displayTrack?.coverURL?.absoluteString ?? "")#\(visuals.backgroundBlur)") {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }

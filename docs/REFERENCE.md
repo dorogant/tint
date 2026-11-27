@@ -284,6 +284,40 @@ style/shape, and verifies pause, hiding, disabled effects and Reduce Motion. Add
 `-FloeVisualTest YES -FloeSnapshotDir /tmp/floe-shots` for synthetic-only visual QA.
 The live test restores visual preferences afterward and leaves playback paused.
 
+### Equalizer
+
+**Settings ▸ Playback ▸ Equalizer** has ten bands an octave apart (32 Hz to 16 kHz,
+±12 dB each) and presets; moving a band makes the preset Custom. It is for Spotify
+Soloist, which plays its own sound and has no equalizer. While the equalizer is on
+and a song plays, the Core Audio tap that feeds the visuals also mutes Soloist's
+output (`mutedWhenTapped`: the mute ends with the tap, so Soloist is heard again if
+Tint quits or crashes) and hands every frame to Tint's own `AVAudioEngine`, which
+runs it through `AVAudioUnitEQ` and plays it. That adds about 30 ms: one tap
+delivery plus 1024 frames, the cushion that keeps the two audio threads from running
+each other dry. The visuals still analyse the sound as it left Soloist.
+
+- **Level.** Boosts are paid for in headroom: the whole signal is turned down by the
+  largest gain the bands add up to (Bass boost: 7.1 dB), so a song mastered to full
+  scale doesn't clip. Cuts cost nothing.
+- **When it holds the sound.** From just before Tint tells Soloist to play until three
+  seconds after it pauses, so the engine and the tap rest while nothing plays. A song
+  started from another device is taken over when Soloist reports playing, a moment in.
+- **Never silence.** A tap without the System Audio Recording permission starts
+  normally and delivers silence, and macOS offers no way to ask. So Tint mutes Soloist
+  only after the tap has delivered sound once (remembered across launches), and hands
+  the sound back if the tap goes silent for ten seconds of playing, or if its own output
+  stops asking for sound for two seconds and two fresh starts don't revive it.
+
+```sh
+scripts/test-equalizer.sh
+```
+
+checks the settings and presets, the ring between the two audio threads (every order
+of turns, then two real threads racing), and the production audio graph rendered
+offline at 44.1, 48 and 96 kHz: flat changes nothing, the audio unit measures within
+0.01 dB of the formula the headroom is computed from, and no setting raises any tone
+above the level it came in at. How it sounds through Soloist needs a listen.
+
 ### Design and motion
 
 Tint follows macOS conventions where they fit. The window has a standard unified

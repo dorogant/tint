@@ -272,3 +272,13 @@
 "Large" = "Large";
 "Sets the size of text, artwork and spacing in the main window." = "Sets the size of text, artwork and spacing in the main window.";
 "Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.";
+"Equalizer" = "Equalizer";
+"Flat" = "Flat";
+"Bass boost" = "Bass boost";
+"Bass reducer" = "Bass reducer";
+"Treble boost" = "Treble boost";
+"Vocal" = "Vocal";
+"Electronic" = "Electronic";
+"Small speakers" = "Small speakers";
+"While the equalizer is on, Tint plays Soloist's sound itself, about 30 ms later. Boosts lower the overall level so loud songs don't distort; turn the volume up to match." = "While the equalizer is on, Tint plays Soloist's sound itself, about 30 ms later. Boosts lower the overall level so loud songs don't distort; turn the volume up to match.";
+"Waiting to hear Soloist. If the sound stays unchanged while music plays, allow Tint to record system audio in System Settings → Privacy & Security." = "Waiting to hear Soloist. If the sound stays unchanged while music plays, allow Tint to record system audio in System Settings → Privacy & Security.";

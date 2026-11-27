@@ -169,6 +169,8 @@ enum MixChooser {
         if recipe.skipHeard && exclusions.heard.contains(id) { return false }
         // Can't be judged, so it plays only when nothing is being judged.
         guard let features = candidate.features else { return !recipe.steers }
+        // A mix is music: a chapter of an audiobook isn't a quiet song.
+        if features.isSpoken { return false }
         if recipe.mood.refusesMisfits && !recipe.mood.fits(features.valence) { return false }
         return true
     }

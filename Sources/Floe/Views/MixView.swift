@@ -159,7 +159,8 @@ private struct RunningMix: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: scale(20)) {
-            if let origin = mix.origin {
+            // Said only when the mix couldn't start from what was asked.
+            if let origin = mix.origin, origin != MixText.asked(mix.recipe.source) {
                 MixNotice(systemImage: "info.circle", tint: Theme.secondary, text: LocalizedStringKey(MixText.origin(origin)))
             }
             if mix.likedUnchecked {
@@ -464,6 +465,14 @@ enum MixText {
         case .calm: "Calm"
         case .any: "Any"
         case .energetic: "Energetic"
+        }
+    }
+
+    static func asked(_ source: MixRecipe.Source) -> MixModel.Origin {
+        switch source {
+        case .today: .today
+        case .week: .week
+        case .liked: .liked
         }
     }
 

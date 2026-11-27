@@ -36,10 +36,19 @@ struct MixSong: Equatable, Hashable, Sendable, Identifiable {
 }
 
 /// The two of ReccoBeats' audio features a mix steers by, each 0…1: valence
-/// (sad to happy) and energy (calm to energetic).
+/// (sad to happy) and energy (calm to energetic). And the one it refuses by:
+/// how much of the track is speech.
 struct MixFeatures: Equatable, Sendable {
     var valence: Double
     var energy: Double
+    var speechiness: Double = 0
+
+    /// Above this a track is all talk. Asked for calm, sad neighbours,
+    /// ReccoBeats answered with chapters of audiobooks and children's radio
+    /// plays among the songs (captured in `MixFixtures.calm`); they score low
+    /// on valence and energy, so a quiet mix ranked them first.
+    static let spoken = 0.66
+    var isSpoken: Bool { speechiness > Self.spoken }
 }
 
 /// Where a mix's suggestions come from. ReccoBeats in the app, a stub in the tests.
@@ -191,12 +200,14 @@ struct ReccoBeats: MixCatalog {
             let href: String
             let valence: Double
             let energy: Double
+            let speechiness: Double?
         }
         guard let body = try? JSONDecoder().decode(Body.self, from: data) else { throw Failure.unreadable }
         var result: [String: MixFeatures] = [:]
         for case let item? in body.content.map(\.value) {
             guard let id = MixSong.trackID(in: item.href) else { continue }
-            result[id] = MixFeatures(valence: min(max(item.valence, 0), 1), energy: min(max(item.energy, 0), 1))
+            result[id] = MixFeatures(valence: min(max(item.valence, 0), 1), energy: min(max(item.energy, 0), 1),
+                                     speechiness: min(max(item.speechiness ?? 0, 0), 1))
         }
         return result
     }

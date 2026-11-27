@@ -40,7 +40,7 @@ struct MixTests {
 
         let features = (try? ReccoBeats.features(in: MixFixtures.features)) ?? [:]
         check(features.count == 3 && features["0000000000000000000000"] == nil, "an ID the service doesn't know is simply missing (\(features.count))")
-        check(features["7qiZfU4dY1lWllzX7mPBI3"] == MixFeatures(valence: 0.931, energy: 0.652),
+        check(features["7qiZfU4dY1lWllzX7mPBI3"] == MixFeatures(valence: 0.931, energy: 0.652, speechiness: 0.0802),
               "features must carry valence and energy (\(String(describing: features["7qiZfU4dY1lWllzX7mPBI3"])))")
         check((try? ReccoBeats.features(in: MixFixtures.nothing)) == [:], "an empty answer is no features, not an error")
         check((try? ReccoBeats.songs(in: Data("<html>".utf8))) == nil, "a body that isn't the answer must be an error")
@@ -189,6 +189,18 @@ struct MixTests {
         let seed = tid("seed", 1), played = tid("played", 1), liked = tid("liked", 1), heard = tid("heard", 1), plain = tid("plain", 1)
         let exclusions = MixChooser.Exclusions(ids: [seed, played], liked: [liked], heard: [heard])
         var recipe = MixRecipe()
+        // Talk isn't music, whatever was asked: a chapter of an audiobook is
+        // as calm and as sad as anything, and a quiet mix used to rank it first.
+        let chapter = MixCandidate(song: MixSong(id: plain, title: "Kapitel 14", artists: ["Hörspiel"], durationMs: 185_000),
+                                   features: MixFeatures(valence: 0.2, energy: 0.2, speechiness: 0.93))
+        let rap = MixCandidate(song: MixSong(id: plain, title: "Verse", artists: ["MC"], durationMs: 185_000),
+                               features: MixFeatures(valence: 0.2, energy: 0.2, speechiness: 0.4))
+        var quiet = MixRecipe()
+        quiet.mood = .sad
+        check(!MixChooser.allowed(chapter, quiet, MixChooser.Exclusions()) && !MixChooser.allowed(chapter, MixRecipe(), MixChooser.Exclusions()),
+              "a track that is all speech must never play")
+        check(MixChooser.allowed(rap, quiet, MixChooser.Exclusions()), "a song with a lot of words is still a song")
+
         func allowed(_ id: String, valence: Double? = 0.5) -> Bool {
             MixChooser.allowed(candidate(id, valence: valence), recipe, exclusions)
         }

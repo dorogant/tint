@@ -14,6 +14,7 @@ struct FloeApp: App {
     @ViewState private var visuals: VisualSettings
     @ViewState private var autoPreset: AutoPresetController
     @ViewState private var presence = WindowPresence()
+    @ViewState private var listening = ListeningRecorder()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("reduceMotion") private var reduceMotion = false
@@ -64,6 +65,7 @@ struct FloeApp: App {
                 .environment(visuals)
                 .environment(settings)
                 .environment(connect)
+                .environment(listening)
                 .environment(\.locale, settings.locale)
                 .environment(\.interfaceScale, settings.interfaceSize.scale)
                 .environment(\.windowVisible, presence.isVisible || SelfTest.isEnabled)
@@ -79,6 +81,14 @@ struct FloeApp: App {
                     await appearance.load(player.displayTrack?.coverURL, blur: visuals.backgroundBlur)
                 }
                 .task(id: player.displayTrack.map(LyricsRequest.init)) { await lyrics.load(player.displayTrack) }
+                // The listening history: told of every change of song and of playing, and
+                // once more when the song playing has been heard long enough to count.
+                .task(id: "\(player.track?.uri ?? "")#\(player.isPlaying)") {
+                    var wait = await listening.update(track: player.track, isPlaying: player.isPlaying)
+                    while let seconds = wait, (try? await Task.sleep(for: .seconds(seconds + 0.5))) != nil {
+                        wait = await listening.update(track: player.track, isPlaying: player.isPlaying)
+                    }
+                }
                 // Playing with no window in sight is how Tint spends most of its time:
                 // after half a minute of that, the covers kept for browsing (up to 48 MB) go.
                 .task(id: presence.isVisible) {

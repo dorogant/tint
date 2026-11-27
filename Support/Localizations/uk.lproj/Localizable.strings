@@ -292,3 +292,6 @@
 "Small speakers" = "Малі динаміки";
 "While the equalizer is on, Tint plays Soloist's sound itself, about 30 ms later. Boosts lower the overall level so loud songs don't distort; turn the volume up to match." = "Поки еквалайзер увімкнено, Tint сам відтворює звук Soloist, приблизно на 30 мс пізніше. Підсилення смуг знижує загальний рівень, щоб гучні пісні не спотворювалися; додайте гучності, щоб вирівняти.";
 "Waiting to hear Soloist. If the sound stays unchanged while music plays, allow Tint to record system audio in System Settings → Privacy & Security." = "Очікую на звук Soloist. Якщо під час відтворення звук не змінюється, дозвольте Tint записувати системний звук у Системних параметрах → Приватність і безпека.";
+"Mix" = "Мікс";
+"Friends" = "Друзі";
+"Stats" = "Статистика";

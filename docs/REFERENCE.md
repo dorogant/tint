@@ -322,8 +322,10 @@ progress bar, transport, volume and the panel's tint go, the cover grows, and th
 cover, the song's name, the lyrics and the background are all that's left. Moving
 the pointer shows a **Show controls** button and the window's buttons for 2.5 s;
 once it rests they go again, and the pointer with them. Escape, ⇧⌘H or any other
-surface brings the controls back. The star beside the song's name saves it to
-Liked Songs.
+surface brings the controls back. Lyrics has the same button at its top right;
+there the bottom bar goes with the toolbar. In full screen the strip the system
+keeps for the toolbar goes too. The star beside the song's name on Now Playing
+saves it to Liked Songs.
 
 On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
 cover stays upright; only the scalloped edge crawls around it and slowly breathes,

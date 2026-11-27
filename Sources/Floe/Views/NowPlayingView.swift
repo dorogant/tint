@@ -83,7 +83,7 @@ struct NowPlayingView: View {
             .overlay(alignment: .topTrailing) {
                 // Both stay mounted while the controls are away, so ⇧⌘H and ⇧⌘L still work.
                 HStack(spacing: scale(8)) {
-                    ControlsToggle(hidden: false, shortcut: KeyboardShortcut("h", modifiers: [.command, .shift])) {
+                    ControlsToggle(hidden: false, shortcut: ControlsToggle.shortcut) {
                         navigator.controlsHidden.toggle()
                     }
                     LyricsToggle(on: $showLyrics)
@@ -208,10 +208,12 @@ private struct TrackTitle: View {
     }
 }
 
-/// Puts Now Playing's controls and the toolbar away (⇧⌘H), leaving the cover,
-/// the lyrics and the background to watch. While they're away it's the way
-/// back, with its name beside it, and Escape presses it.
+/// Puts the controls and the toolbar away (⇧⌘H) on Now Playing and Lyrics,
+/// leaving the cover, the lyrics and the background to watch. While they're
+/// away it's the way back, with its name beside it, and Escape presses it.
 struct ControlsToggle: View {
+    static let shortcut = KeyboardShortcut("h", modifiers: [.command, .shift])
+
     let hidden: Bool
     let shortcut: KeyboardShortcut
     let action: () -> Void

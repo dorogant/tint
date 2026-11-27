@@ -135,6 +135,17 @@ struct LayoutRender {
         check(toolbarItems(in: window)?.isHidden == false && window.standardWindowButton(.closeButton)?.alphaValue == 1,
               "the toolbar and the window's buttons are back")
         if only?.contains("lyrics") ?? true { write(capture(window), to: output.appendingPathComponent("lyrics.png")) }
+        // Lyrics has the same view: the toolbar and the bottom bar go.
+        navigator.controlsHidden = true
+        await settle(window, steps: 35)
+        check(navigator.controlsHidden && toolbarItems(in: window)?.isHidden == true, "Lyrics hides its controls too")
+        if only?.contains("lyrics") ?? true { write(capture(window), to: output.appendingPathComponent("lyrics-hidden.png")) }
+        navigator.surface = .library
+        check(!navigator.controlsHidden, "the Library always has its controls")
+        navigator.controlsHidden = true
+        check(!navigator.controlsHidden, "and can't put them away")
+        navigator.surface = .lyrics
+        await settle(window, steps: 10)
         navigator.surface = .library
         await settle(window, steps: 10)
         check(!(window.firstResponder is NSText), "returning to Library doesn't focus the field either")

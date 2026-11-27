@@ -271,6 +271,7 @@ struct SettingsView: View {
         } footer: {
             note("A native Spotify client for macOS. Spotify Premium is required. Not affiliated with Spotify.")
         }
+        UpdateSection()
         SwiftUI.Section {
             Link("Playback engine: Spotify Soloist", destination: URL(string: "https://developer.spotify.com/documentation/soloist")!)
             Link("Legacy engine: librespot", destination: URL(string: "https://github.com/librespot-org/librespot")!)

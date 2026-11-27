@@ -72,7 +72,7 @@ struct LayoutRender {
         .environment(\.coverPalette, CoverPalette.fixed(settings.fixedAccent))
         // The harness can't activate without taking focus from whatever's in front;
         // FLOE_LAYOUT_ACTIVE=1 measures as if it were the frontmost app.
-        .transformEnvironment(\.scenePhase) { if environment["FLOE_LAYOUT_ACTIVE"] == "1" { $0 = .active } }
+        .environment(\.appActive, environment["FLOE_LAYOUT_ACTIVE"] == "1")
 
         let window = OffscreenWindow(contentRect: NSRect(origin: CGPoint(x: -30_000, y: -30_000), size: size),
                                      styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

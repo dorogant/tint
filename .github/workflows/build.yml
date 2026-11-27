@@ -53,6 +53,8 @@ jobs:
           scripts/test-history.sh
           scripts/test-mix.sh
           scripts/test-stats.sh
+          scripts/test-updates.sh
+          scripts/test-presence.sh
 
       # These draw through Metal and offscreen windows. CI machines are virtual and
       # their GPU may not match a real Mac's, so a failure here is a hint, not a verdict.

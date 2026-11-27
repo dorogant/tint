@@ -215,7 +215,7 @@ struct ProgressBar: View {
     @Environment(\.coverPalette) private var palette
     var large = false
     @ReducedMotion private var still
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.appActive) private var appActive
     @Environment(\.windowVisible) private var windowVisible
     @Environment(\.isOnstage) private var onstage
     @Environment(PlayerModel.self) private var player
@@ -226,7 +226,7 @@ struct ProgressBar: View {
     var body: some View {
         let duration = max(player.displayTrack?.durationMs ?? 0, 1)
         let enabled = player.displayTrack != nil && !player.isLoading
-        let visible = scenePhase == .active && windowVisible && onstage
+        let visible = appActive && windowVisible && onstage
         // Both bars tick once a second; Core Animation glides the Now Playing
         // playhead in between and moves the pointer readout.
         TimelineView(.animation(minimumInterval: 1, paused: !player.isPlaying || dragFraction != nil || !visible)) { context in

@@ -317,6 +317,14 @@ run the sign-in card stays up through both steps.
 The quote button at the top right of Now Playing (**⇧⌘L**) hides the lyrics; the
 cover and visualizer slide to the centre and grow.
 
+The screen button beside it (**⇧⌘H**) puts the controls away: the toolbar, the
+progress bar, transport, volume and the panel's tint go, the cover grows, and the
+cover, the song's name, the lyrics and the background are all that's left. Moving
+the pointer shows a **Show controls** button and the window's buttons for 2.5 s;
+once it rests they go again, and the pointer with them. Escape, ⇧⌘H or any other
+surface brings the controls back. The star beside the song's name saves it to
+Liked Songs.
+
 On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
 cover stays upright; only the scalloped edge crawls around it and slowly breathes,
 and both stop on pause. The circular visualizer scales with

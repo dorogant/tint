@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Onboarding until both logins exist, then the main window.
@@ -97,7 +98,7 @@ struct MainView: View {
                         .environment(\.isOnstage, navigator.surface != .nowPlaying && windowVisible)
                 }
                 if navigator.surface == .nowPlaying {
-                    NowPlayingView().glassPanel()
+                    NowPlayingView().glassPanel(clear: navigator.controlsHidden)
                         .environment(\.isOnstage, windowVisible)
                         .transition(.asymmetric(
                             insertion: AnyTransition(SurfaceTransition(still: still)),
@@ -111,12 +112,14 @@ struct MainView: View {
         .padding([.horizontal, .bottom], scale.margin)
         .environment(\.heroNamespace, hero)
         .animation(still ? FloeMotion.fade : FloeMotion.surface, value: navigator.surface)
+        .animation(still ? FloeMotion.fade : FloeMotion.enter, value: navigator.controlsHidden)
         // A status banner's room opens on the same spring it drops in on.
         .animation(still ? nil : FloeMotion.enter, value: PlaybackStatusView.key(player))
         .toolbar { toolbarContent }
         // The one search field: the toolbar's own, trailing, so it's there on every surface.
         .modifier(ToolbarSearch())
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .modifier(HiddenControlsChrome())
     }
 
     private var libraryPanel: some View {
@@ -206,6 +209,110 @@ struct MainView: View {
         case let .playlist(id): PlaylistView(id: id)
         case let .album(id): AlbumView(id: id)
         case let .artist(id): ArtistView(id: id)
+        }
+    }
+}
+
+/// What the window shows while Now Playing's controls are away: nothing,
+/// until the pointer moves. Then the button that brings them back and the
+/// window's own buttons show, and go again once the pointer has rested, with
+/// the pointer itself. Escape brings the controls back at any time.
+private struct HiddenControlsChrome: ViewModifier {
+    @Environment(Navigator.self) private var navigator
+    @Environment(\.interfaceScale) private var scale
+    @ViewState private var awake = false
+    @ViewState private var rest = PointerRest()
+
+    /// How long the pointer rests before the buttons go.
+    private static let patience: Duration = .seconds(2.5)
+
+    func body(content: Content) -> some View {
+        let hidden = navigator.controlsHidden
+        content
+            .overlay(alignment: .topTrailing) {
+                if hidden {
+                    ControlsToggle(hidden: true, shortcut: .cancelAction) { navigator.controlsHidden = false }
+                        .padding(3 * scale.margin)
+                        .opacity(awake ? 1 : 0)
+                        .allowsHitTesting(awake)
+                        .transition(.opacity)
+                }
+            }
+            .background(WindowChrome(toolbarHidden: hidden, buttonsHidden: hidden && !awake))
+            .onContinuousHover { phase in
+                guard navigator.controlsHidden else { return }
+                switch phase {
+                case .active: rest.inside = true; wake()
+                case .ended: rest.inside = false
+                }
+            }
+            .onChange(of: hidden) {
+                if hidden {
+                    // The pointer is on the button that was just pressed.
+                    rest.inside = true
+                    wake()
+                } else {
+                    rest.wait?.cancel()
+                    rest.wait = nil
+                    awake = false
+                }
+            }
+            .animation(FloeMotion.fade, value: awake)
+    }
+
+    /// One task waits out the rest; each move only pushes its deadline on.
+    private func wake() {
+        rest.deadline = .now + Self.patience
+        if !awake { awake = true }
+        guard rest.wait == nil else { return }
+        rest.wait = Task {
+            while !Task.isCancelled, ContinuousClock.now < rest.deadline {
+                try? await Task.sleep(until: rest.deadline)
+            }
+            guard !Task.isCancelled else { return }
+            rest.wait = nil
+            awake = false
+            if rest.inside && NSApp.isActive { NSCursor.setHiddenUntilMouseMoves(true) }
+        }
+    }
+}
+
+/// When the pointer last moved and the task waiting for it to rest. A plain
+/// class: moving the pointer redraws nothing.
+@MainActor
+private final class PointerRest {
+    var deadline = ContinuousClock.now
+    var inside = false
+    var wait: Task<Void, Never>?
+}
+
+/// Hides the toolbar's items and fades the window's close, minimise and zoom
+/// buttons. It stays mounted with the main view, so they always come back.
+///
+/// The toolbar itself stays (`NSToolbar.isVisible`, or SwiftUI's
+/// `toolbarVisibility`, would take its room away too): when it returned, Back
+/// was laid out on top of the window's buttons (seen in the layout renders).
+/// Hiding the view that holds its items changes no layout at all, so nothing
+/// moves when the controls go, and the buttons keep their place.
+private struct WindowChrome: NSViewRepresentable {
+    let toolbarHidden: Bool
+    let buttonsHidden: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let (toolbarHidden, buttonsHidden) = (toolbarHidden, buttonsHidden)
+        // The first update comes before the view has joined its window.
+        DispatchQueue.main.async { [weak view] in
+            guard let window = view?.window else { return }
+            let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+                .compactMap { window.standardWindowButton($0) }
+            // Found from a button, not from the window: in full screen the
+            // titlebar lives in a window of its own.
+            let items = buttons.first?.superview?.subviews.first { "\(type(of: $0))".contains("ToolbarView") }
+            if let items, items.isHidden != toolbarHidden { items.isHidden = toolbarHidden }
+            // Faded, not hidden, so the titlebar lays nothing out again.
+            for button in buttons { button.animator().alphaValue = buttonsHidden ? 0 : 1 }
         }
     }
 }

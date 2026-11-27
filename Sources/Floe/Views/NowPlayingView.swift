@@ -3,6 +3,7 @@ import SwiftUI
 struct NowPlayingView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(VisualSettings.self) private var settings
+    @Environment(Navigator.self) private var navigator
     @ReducedMotion private var still
     @AppStorage("nowPlayingLyrics") private var showLyrics = true
     @Environment(\.interfaceScale) private var scale
@@ -14,15 +15,18 @@ struct NowPlayingView: View {
                 let circular = settings.showVisualizer && settings.style == .circular
                 let normal = settings.showVisualizer && settings.style == .normal
                 let compact = geometry.size.height < scale(600)
+                // With the controls put away the cover takes their room and may grow.
+                let clean = navigator.controlsHidden
                 // Reserve room for a wrapped title, transport and optional bottom strip;
                 // the circular ring scales with the cover, as in the reference.
-                let controlsHeight = scale(compact ? 310 : 390)
+                let controlsHeight = scale(compact ? 310 : 390) - (clean ? scale(compact ? 130 : 150) : 0)
                 let ring = circular ? VisualizerView.ringScale : 1
                 let available = (geometry.size.height - controlsHeight - (normal ? scale(96) : 0)) / ring
                 let lyricsWidth = showLyrics ? max(scale(330), geometry.size.width * 0.42) : 0
                 let columnWidth = geometry.size.width - 2 * scale.margin - lyricsWidth - (showLyrics ? scale(20) : 0)
                 let coverWidth = (columnWidth - scale(compact ? 24 : 40)) / ring
-                let coverSize = min(scale(showLyrics ? 330 : 420), max(scale(100), min(available, coverWidth)))
+                let largest: CGFloat = showLyrics ? (clean ? 400 : 330) : (clean ? 520 : 420)
+                let coverSize = min(scale(largest), max(scale(100), min(available, coverWidth)))
                 VStack(spacing: scale(12)) {
                     HStack(spacing: scale(20)) {
                         // Cover, words, then controls: the wider gaps separate the
@@ -40,19 +44,25 @@ struct NowPlayingView: View {
                             }
                             .animation(still ? FloeMotion.fade : FloeMotion.enter, value: track.uri)
                             .padding(.top, scale(compact ? 14 : 26))
-                            VStack(spacing: scale(compact ? 4 : 8)) {
-                                ProgressBar(large: true).frame(maxWidth: scale(480))
-                                TransportControls(playSize: 58)
-                                VolumeControl().padding(.top, scale(compact ? 2 : 4))
+                            if !clean {
+                                VStack(spacing: scale(compact ? 4 : 8)) {
+                                    ProgressBar(large: true).frame(maxWidth: scale(480))
+                                    TransportControls(playSize: 58)
+                                    VolumeControl().padding(.top, scale(compact ? 2 : 4))
+                                }
+                                .padding(.top, scale(compact ? 10 : 18))
+                                .transition(still ? .opacity : .opacity.combined(with: .offset(y: 12)))
                             }
-                            .padding(.top, scale(compact ? 10 : 18))
                             Spacer(minLength: 0)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(scale(compact ? 12 : 20))
                         if showLyrics {
                             LyricsView().frame(width: lyricsWidth)
-                                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: scale.corner - scale.margin, style: .continuous))
+                                .background {
+                                    RoundedRectangle(cornerRadius: scale.corner - scale.margin, style: .continuous)
+                                        .fill(.black.opacity(0.08)).opacity(clean ? 0 : 1)
+                                }
                                 .transition(lyricsTransition)
                         }
                     }
@@ -64,12 +74,26 @@ struct NowPlayingView: View {
                 }
                 .padding(scale.margin)
                 .animation(still ? nil : FloeMotion.enter, value: showLyrics)
+                .animation(still ? FloeMotion.fade : FloeMotion.enter, value: clean)
                 // Turning the visualizer on or off, or changing its style, eases
                 // the strip, the ring and the cover's new size into place.
                 .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.showVisualizer)
                 .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.style)
             }
-            .overlay(alignment: .topTrailing) { LyricsToggle(on: $showLyrics).padding(2 * scale.margin) }
+            .overlay(alignment: .topTrailing) {
+                // Both stay mounted while the controls are away, so ⇧⌘H and ⇧⌘L still work.
+                HStack(spacing: scale(8)) {
+                    ControlsToggle(hidden: false, shortcut: KeyboardShortcut("h", modifiers: [.command, .shift])) {
+                        navigator.controlsHidden.toggle()
+                    }
+                    LyricsToggle(on: $showLyrics)
+                }
+                .padding(2 * scale.margin)
+                .opacity(navigator.controlsHidden ? 0 : 1)
+                .allowsHitTesting(!navigator.controlsHidden)
+                .accessibilityHidden(navigator.controlsHidden)
+                .animation(FloeMotion.fade, value: navigator.controlsHidden)
+            }
             .onAppear {
                 // The ring fades in once the cover has flown into place.
                 withAnimation(still ? nil : .easeOut(duration: 0.4).delay(0.35)) {
@@ -142,12 +166,21 @@ private struct TrackTitle: View {
     @Environment(\.interfaceScale) private var scale
 
     var body: some View {
+        // The star's room is kept on both sides, so the title stays centred.
+        let star = scale(compact ? 30 : 34)
         VStack(spacing: 0) {
             Text(track.name)
                 .floeFont(size: compact ? 24 : 28, weight: .bold)
                 .tracking(compact ? -0.2 : -0.35)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, star + scale(4))
+                .overlay(alignment: .trailing) {
+                    LikeButton(uri: track.uri, size: compact ? 16 : 18, side: compact ? 30 : 34)
+                        .opacity(navigator.controlsHidden ? 0 : 1)
+                        .allowsHitTesting(!navigator.controlsHidden)
+                        .accessibilityHidden(navigator.controlsHidden)
+                }
             HStack(spacing: 0) {
                 ForEach(Array(track.artists.enumerated()), id: \.offset) { index, artist in
                     if index > 0 { Text(", ") }
@@ -168,7 +201,43 @@ private struct TrackTitle: View {
                     .padding(.top, scale(3))
             }
         }
-        .frame(maxWidth: scale(520))
+        // As wide as before for the title, plus the star's room either side.
+        .frame(maxWidth: scale(520) + 2 * (star + scale(4)))
+        // The mini player asks too, but it needn't be what this star depends on.
+        .onAppear { library.requestLikedState(track.uri) }
+    }
+}
+
+/// Puts Now Playing's controls and the toolbar away (⇧⌘H), leaving the cover,
+/// the lyrics and the background to watch. While they're away it's the way
+/// back, with its name beside it, and Escape presses it.
+struct ControlsToggle: View {
+    let hidden: Bool
+    let shortcut: KeyboardShortcut
+    let action: () -> Void
+    @Environment(\.interfaceScale) private var scale
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: scale(6)) {
+                Image(systemName: "tv")
+                if hidden { Text("Show controls") }
+            }
+            .floeFont(size: 12, weight: .semibold)
+            .foregroundStyle(.white)
+            .opacity(hovering ? 1 : 0.62)
+            .padding(.horizontal, hidden ? scale(12) : 0)
+            .frame(minWidth: scale(30), minHeight: scale(30))
+            .glassControl(in: .capsule)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.floe)
+        .onHover { hovering = $0 }
+        .floeHover(hovering)
+        .keyboardShortcut(shortcut)
+        .help(hidden ? "Show controls" : "Hide controls")
+        .accessibilityLabel(hidden ? "Show controls" : "Hide controls")
     }
 }
 

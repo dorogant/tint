@@ -15,6 +15,7 @@ final class Navigator {
     var surface: Surface = .library {
         didSet {
             guard surface != oldValue else { return }
+            if surface != .nowPlaying { controlsHidden = false }
             if let index = surfaceTrail.firstIndex(of: surface) {
                 // Returned to a surface already passed through: the way back starts over from it.
                 surfaceTrail.removeSubrange(index...)
@@ -22,6 +23,12 @@ final class Navigator {
                 surfaceTrail.append(oldValue)
             }
         }
+    }
+    /// Now Playing with its controls and the toolbar put away, leaving the
+    /// cover, the song's name, the lyrics and the background. It belongs to
+    /// Now Playing: any other surface ends it.
+    var controlsHidden = false {
+        didSet { if controlsHidden && surface != .nowPlaying { controlsHidden = false } }
     }
     /// The surfaces passed through to reach this one, the Library first, each
     /// once: Lyrics opened from Now Playing goes Back to Now Playing, then to

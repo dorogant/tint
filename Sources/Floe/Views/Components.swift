@@ -60,24 +60,27 @@ extension View {
     /// No live blur (`Material`): each live-blur layer costs memory and GPU time,
     /// and the cover backdrop is already blurred at thumbnail resolution.
     /// Rounds to the interface size's `corner` unless given a radius.
-    func glassPanel(cornerRadius: CGFloat? = nil) -> some View {
-        modifier(GlassPanelModifier(radius: cornerRadius))
+    /// `clear` fades the tint and the edge away, leaving the content on the backdrop.
+    func glassPanel(cornerRadius: CGFloat? = nil, clear: Bool = false) -> some View {
+        modifier(GlassPanelModifier(radius: cornerRadius, clear: clear))
     }
 }
 
 private struct GlassPanelModifier: ViewModifier {
     var radius: CGFloat?
+    var clear = false
     @AppStorage("glassOpacity") private var opacity = 0.62
     @Environment(\.interfaceScale) private var scale
 
     func body(content: Content) -> some View {
         let cornerRadius = radius ?? scale.corner
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        content.background(Color(white: 0.11).opacity(opacity), in: shape)
+        content.background { shape.fill(Color(white: 0.11).opacity(opacity)).opacity(clear ? 0 : 1) }
             .overlay {
                 // Flat strokeBorder draws directly in Core Animation without a
                 // panel-sized bitmap, CPU gradient evaluation or CGPath clipping.
                 shape.strokeBorder(Theme.panelStroke, lineWidth: 1)
+                    .opacity(clear ? 0 : 1)
                     .allowsHitTesting(false)
             }
             .overlay(alignment: .top) {
@@ -86,6 +89,7 @@ private struct GlassPanelModifier: ViewModifier {
                                startPoint: .leading, endPoint: .trailing)
                     .frame(height: 1)
                     .padding(.horizontal, cornerRadius)
+                    .opacity(clear ? 0 : 1)
                     .allowsHitTesting(false)
             }
     }

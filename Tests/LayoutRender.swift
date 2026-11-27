@@ -108,8 +108,32 @@ struct LayoutRender {
         navigator.surface = .nowPlaying
         await settle(window, steps: 10)
         if only?.contains("now-playing") ?? true { write(capture(window), to: output.appendingPathComponent("now-playing.png")) }
-        navigator.surface = .lyrics
+        // The controls put away: no toolbar, and once the pointer has rested, no buttons at all.
+        check(toolbarItems(in: window)?.isHidden == false, "the toolbar shows on Now Playing")
+        navigator.controlsHidden = true
         await settle(window, steps: 10)
+        check(toolbarItems(in: window)?.isHidden == true, "hiding the controls hides the toolbar")
+        if only?.contains("now-playing") ?? true {
+            write(capture(window), to: output.appendingPathComponent("now-playing-hidden-awake.png"))
+        }
+        await settle(window, steps: 25)
+        check(window.standardWindowButton(.closeButton)?.alphaValue == 0, "the window's buttons go once the pointer rests")
+        if only?.contains("now-playing") ?? true {
+            write(capture(window), to: output.appendingPathComponent("now-playing-hidden.png"))
+        }
+        if let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: "\u{1B}",
+                                         charactersIgnoringModifiers: "\u{1B}", isARepeat: false, keyCode: 53) {
+            _ = window.performKeyEquivalent(with: escape)
+        }
+        await settle(window, steps: 10)
+        check(!navigator.controlsHidden, "Escape brings the controls back")
+        navigator.controlsHidden = true
+        navigator.surface = .lyrics
+        check(!navigator.controlsHidden, "leaving Now Playing brings the controls back")
+        await settle(window, steps: 10)
+        check(toolbarItems(in: window)?.isHidden == false && window.standardWindowButton(.closeButton)?.alphaValue == 1,
+              "the toolbar and the window's buttons are back")
         if only?.contains("lyrics") ?? true { write(capture(window), to: output.appendingPathComponent("lyrics.png")) }
         navigator.surface = .library
         await settle(window, steps: 10)
@@ -252,6 +276,11 @@ struct LayoutRender {
     }
 
     /// The toolbar's search field (the system's, inside the titlebar).
+    /// The view holding the toolbar's items, a sibling of the window's buttons.
+    static func toolbarItems(in window: NSWindow) -> NSView? {
+        window.standardWindowButton(.closeButton)?.superview?.subviews.first { "\(type(of: $0))".contains("ToolbarView") }
+    }
+
     static func searchField(in window: NSWindow) -> NSSearchField? {
         func find(_ view: NSView) -> NSSearchField? {
             if let field = view as? NSSearchField { return field }

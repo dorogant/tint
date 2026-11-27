@@ -5,8 +5,8 @@ import Observation
 /// a new one and keeps the old for Back.
 enum Route: Hashable {
     case home, search, songs
-    /// A mix made to order, friends' listening and your own numbers.
-    case mix, friends, stats
+    /// A mix made to order and your own numbers.
+    case mix, stats
     case playlist(String), album(String), artist(String)
 }
 

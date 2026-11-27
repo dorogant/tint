@@ -16,7 +16,6 @@ struct FloeApp: App {
     @ViewState private var presence = WindowPresence()
     @ViewState private var listening = ListeningRecorder()
     @ViewState private var mix: MixModel
-    @ViewState private var friends = FriendsModel()
     @ViewState private var stats = StatsModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -71,7 +70,6 @@ struct FloeApp: App {
                 .environment(connect)
                 .environment(listening)
                 .environment(mix)
-                .environment(friends)
                 .environment(stats)
                 .environment(\.locale, settings.locale)
                 .environment(\.interfaceScale, settings.interfaceSize.scale)

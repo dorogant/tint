@@ -19,7 +19,6 @@ struct SidebarView: View {
                     NavRow(title: "Home", systemImage: "house.fill", route: .home, selection: selection)
                     NavRow(title: "Songs", systemImage: "star.fill", route: .songs, selection: selection)
                     NavRow(title: "Mix", systemImage: "sparkles", route: .mix, selection: selection)
-                    NavRow(title: "Friends", systemImage: "person.2.fill", route: .friends, selection: selection)
                     NavRow(title: "Stats", systemImage: "chart.bar.fill", route: .stats, selection: selection)
 
                     if !pinned.isEmpty {

@@ -221,7 +221,6 @@ struct MainView: View {
         case .search: SearchView()
         case .songs: SongsView()
         case .mix: MixView()
-        case .friends: FriendsView()
         case .stats: StatsView()
         case let .playlist(id): PlaylistView(id: id)
         case let .album(id): AlbumView(id: id)

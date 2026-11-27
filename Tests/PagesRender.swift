@@ -1,12 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Offscreen renders of the Mix, Friends and Stats pages, in English and
-/// Ukrainian at a narrow and a wide width, each in the states a person meets:
-/// the questionnaire, a mix that's playing, a mix that couldn't start; friends
-/// listening, idle, new and missing, and nobody yet; stats with a month of
-/// history, with one day and with none. Everything the pages talk to is a
-/// stand-in: no ReccoBeats, ListenBrainz, Spotify, player or real settings.
+/// Offscreen renders of the Mix and Stats pages, in English and Ukrainian at
+/// a narrow and a wide width, each in the states a person meets: the
+/// questionnaire, a mix that's playing, a mix that couldn't start; stats with
+/// a month of history, with one day and with none. Everything the pages talk
+/// to is a stand-in: no ReccoBeats, Spotify, player or real settings.
 @main
 @MainActor
 struct PagesRender {
@@ -37,7 +36,6 @@ struct PagesRender {
                     .environment(SearchModel())
                     .environment(models.listening)
                     .environment(models.stats)
-                    .environment(models.friends)
                     .environment(models.mix)
                     .environment(AppSettings(defaults: TestDefaults.make()))
                     .environment(\.locale, Locale(identifier: language))
@@ -83,15 +81,6 @@ struct PagesRender {
             await failed.mix.settled()
             await shoot("mix-nothing", MixView(), failed)
 
-            // Friends
-            let friends = Models(friendNames: ["mira", "oleh", "anna", "newbie", "ghost"])
-            await friends.friends.refresh()
-            await shoot("friends-some", FriendsView(), friends)
-            await shoot("friends-none", FriendsView(), Models())
-            let offline = Models(friendNames: ["mira", "oleh"], offline: true)
-            await offline.friends.refresh()
-            await shoot("friends-offline", FriendsView(), offline)
-
             // Stats
             let month = Models()
             await month.listen(days: 30)
@@ -108,17 +97,13 @@ struct PagesRender {
         let listening: ListeningRecorder
         let history = ListeningHistory(file: nil)
         let stats = StatsModel(defaults: TestDefaults.make())
-        let friends: FriendsModel
         let mix: MixModel
         let catalog = StubCatalog()
         let songs = StubLibrary()
         let fake = FakePlayer()
 
-        init(history: Bool = true, friendNames: [String] = [], offline: Bool = false) {
+        init(history: Bool = true) {
             listening = ListeningRecorder(history: self.history)
-            let defaults = TestDefaults.make()
-            defaults.set(friendNames, forKey: "friendsListenBrainzNames")
-            friends = FriendsModel(defaults: defaults, client: ListenBrainzClient(transport: PageListenBrainz(offline: offline), clock: InstantClock()))
             if history { songs.plays = (0..<8).map { (id: tid("seed", $0), secondsAgo: 1800 * Double($0 + 1)) } }
             // Real titles from a captured answer, so the rows read like a mix.
             catalog.respond = { _, fetch in fetch % 2 == 0 ? MixFixtures.pop : MixFixtures.calm }
@@ -155,46 +140,4 @@ struct PagesRender {
             }
         }
     }
-}
-
-/// A small ListenBrainz answering from the captured fixtures: one friend
-/// listening now, one who last listened a while ago, one whose songs have no
-/// Spotify link, one who hasn't listened yet and one who doesn't exist.
-struct PageListenBrainz: ListenBrainzTransport {
-    let offline: Bool
-
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        if offline { throw URLError(.notConnectedToInternet) }
-        let path = request.url?.path ?? ""
-        let name = path.split(separator: "/").drop { $0 != "user" }.dropFirst().first.map(String.init) ?? ""
-        var status = 200
-        var body = ""
-        if name == "ghost" {
-            (status, body) = (404, FriendsFixtures.noSuchUser)
-        } else if path.hasSuffix("/playing-now") {
-            body = name == "mira" ? FriendsFixtures.playingNow : FriendsFixtures.nothingPlaying
-        } else if path.hasSuffix("/listens") {
-            switch name {
-            case "mira": body = FriendsFixtures.listensFromSpotify
-            case "oleh": body = FriendsFixtures.listensMapped
-            case "anna": body = FriendsFixtures.listensUnmapped
-            default: body = #"{"payload":{"count":0,"listens":[],"user_id":"newbie"}}"#
-            }
-        } else if path.contains("/stats/") {
-            if name == "mira" { body = FriendsFixtures.topArtistsThisWeek } else if name == "oleh" { body = FriendsFixtures.topArtistsLastWeek } else { status = 204 }
-        } else if path.hasSuffix("/listen-count") {
-            body = FriendsFixtures.listenCount
-        } else if path.hasSuffix("/following") {
-            body = FriendsFixtures.following
-        }
-        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/2", headerFields: FriendsFixtures.headers)!)
-    }
-}
-
-/// Pacing that doesn't wait, so a page of friends loads at once.
-final class InstantClock: PacingClock, @unchecked Sendable {
-    private let lock = NSLock()
-    private var time: TimeInterval = 0
-    var now: TimeInterval { lock.withLock { time } }
-    func sleep(for seconds: TimeInterval) async throws { lock.withLock { time += seconds } }
 }

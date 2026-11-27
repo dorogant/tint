@@ -385,26 +385,6 @@ their rotation, every filter, the ranking, refills, the length, steering and let
 with a stand-in service and player. What the mix sounds like, and whether ReccoBeats'
 neighbours suit a given taste, needs listening.
 
-### Friends
-
-Spotify has no public way to read what friends are playing, and Tint doesn't use the
-private one. **Friends** reads [ListenBrainz](https://listenbrainz.org) instead: a free,
-open service anyone can connect their Spotify account to once, after which what they
-play is public through an API that needs no key. Friends are added by their ListenBrainz
-name (checked before it's kept; up to 25). Each shows what they're playing or last
-played, their last few songs, and their top artists of the week with their listen
-count; those listening now come first. A song that carries a Spotify link plays in Tint;
-one that doesn't opens Tint's search for it. With your own ListenBrainz name entered,
-the people that account follows are offered in one go.
-
-Tint sends ListenBrainz the friends' names and nothing else, and sends nothing about
-what you play: to be seen by friends, connect Spotify on ListenBrainz's own site. The
-page refreshes when opened and every 60 seconds while it is the page showing, the
-window is visible and Tint is active; never in the background. All requests go through
-one paced line that respects ListenBrainz's rate-limit headers.
-`scripts/test-friends.sh` checks the parsing against captured answers, the pacing on a
-clock the test moves, the list and its order.
-
 ### Stats
 
 **Stats** shows listening in numbers from two sources kept apart. *In Tint* comes from
@@ -416,7 +396,7 @@ artists and songs over about four weeks, six months and a year (`me/top`), which
 every device and goes back further. `scripts/test-stats.sh` checks every number against
 hand-made histories, at local day boundaries.
 
-`scripts/render-pages.sh` draws the three pages offscreen in their states, in English
+`scripts/render-pages.sh` draws the Mix and Stats pages offscreen in their states, in English
 and Ukrainian.
 
 ### Design and motion

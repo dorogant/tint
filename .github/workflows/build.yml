@@ -52,7 +52,6 @@ jobs:
           scripts/test-equalizer.sh
           scripts/test-history.sh
           scripts/test-mix.sh
-          scripts/test-friends.sh
           scripts/test-stats.sh
 
       # These draw through Metal and offscreen windows. CI machines are virtual and

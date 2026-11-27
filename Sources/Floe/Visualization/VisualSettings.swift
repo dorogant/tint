@@ -5,7 +5,9 @@ import Observation
 @Observable
 final class VisualSettings {
     enum Style: String, CaseIterable, Identifiable { case normal, circular; var id: Self { self } }
-    enum Shape: String, CaseIterable, Identifiable { case bars, wave; var id: Self { self } }
+    enum Shape: String, CaseIterable, Identifiable { case rays, bars, wave; var id: Self { self } }
+    /// How Now Playing shows the cover: in the scalloped mask, or as a card in perspective.
+    enum Cover: String, CaseIterable, Identifiable { case flower, card; var id: Self { self } }
     enum BackgroundKind: String, CaseIterable, Identifiable { case fluid, beams; var id: Self { self } }
     nonisolated static let speedRange = 0.25...2.0
     nonisolated static let glowRange = 0.0...2.0
@@ -16,6 +18,9 @@ final class VisualSettings {
     var style: Style { didSet { defaults.set(style.rawValue, forKey: "visualizerStyle") } }
     var shape: Shape { didSet { defaults.set(shape.rawValue, forKey: "visualizerShape") } }
     var sensitivity: Double { didSet { defaults.set(sensitivity, forKey: "visualizerSensitivity") } }
+    var cover: Cover { didSet { defaults.set(cover.rawValue, forKey: "coverShape") } }
+    /// Off, the flower's petals stop crawling and the card stops swaying.
+    var coverMotion: Bool { didSet { defaults.set(coverMotion, forKey: "coverMotion") } }
     var liveBackground: Bool { didSet { defaults.set(liveBackground, forKey: "liveBackground") } }
     var backgroundKind: BackgroundKind { didSet { defaults.set(backgroundKind.rawValue, forKey: "backgroundKind"); edited() } }
     var reactivity: Double { didSet { defaults.set(reactivity, forKey: "backgroundReactivity"); edited() } }
@@ -61,7 +66,9 @@ final class VisualSettings {
         let fallback = BackgroundPreset.balancedLook
         showVisualizer = defaults.object(forKey: "showVisualizer") as? Bool ?? true
         style = Style(rawValue: defaults.string(forKey: "visualizerStyle") ?? "") ?? .circular
-        shape = Shape(rawValue: defaults.string(forKey: "visualizerShape") ?? "") ?? .bars
+        shape = Shape(rawValue: defaults.string(forKey: "visualizerShape") ?? "") ?? .rays
+        cover = Cover(rawValue: defaults.string(forKey: "coverShape") ?? "") ?? .flower
+        coverMotion = defaults.object(forKey: "coverMotion") as? Bool ?? true
         sensitivity = min(3, max(0.25, defaults.object(forKey: "visualizerSensitivity") as? Double ?? 1.2))
         liveBackground = defaults.bool(forKey: "liveBackground")
         backgroundKind = BackgroundKind(rawValue: defaults.string(forKey: "backgroundKind") ?? "") ?? fallback.kind

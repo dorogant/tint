@@ -327,10 +327,16 @@ Liked Songs.
 
 On Now Playing the cover sits in a 22-petal scalloped mask with a tinted rim. The
 cover stays upright; only the scalloped edge crawls around it and slowly breathes,
-and both stop on pause. The circular visualizer scales with
-the cover. **Bars** are mirrored radial bars with bass at the top; **Wave** is a
-filled halo whose lobes follow the spectrum. Along the bottom, **Bars** are mirrored
-around the middle (bass at the centre). **Wave** is a twisted ribbon of round beads
+and both stop on pause. Visuals ▸ Cover swaps the flower for a **Card**: a rounded
+square standing in perspective over its reflection, swaying 19° to each side every
+11 seconds. Core Animation runs both, and **Cover motion** turns either off (the
+card then holds a 12° turn). Nothing can ring the card, so its visualizer is always
+the strip along the bottom. The circular visualizer scales with
+the cover. **Rays**, the default, are 168 hairlines that brighten as they grow, so a
+quiet passage leaves a faint rim; **Bars** are mirrored radial bars with bass at the
+top; **Wave** is a filled halo whose lobes follow the spectrum. Along the bottom,
+**Rays** grow both ways from the middle line and **Bars** stand on the floor, both
+mirrored around the middle (bass at the centre). **Wave** is a twisted ribbon of round beads
 that drifts sideways; each bead swells with the part of the spectrum it passes.
 Colors run from pale at the top to the cover accent at the bottom, and all motion
 freezes with the analysis on pause.
@@ -368,7 +374,9 @@ cover is upright and shows a new image even while paused, bass sits at the top o
 ring, bottom bars stand on the floor, the halo is pale on top, and the progress fill covers only
 the elapsed part. Additional checks cover height-only progress resizing, the track
 thickening with a thumb only under the pointer (and with Reduce Motion), the playhead
-gliding only while playing, and the bead ribbon's overlap. Its dim rear ribbon is now clipped by Core Animation rather
+gliding only while playing, and the bead ribbon's overlap. The card must be upright
+and in perspective over a reflection that fades out, and a short ray must be fainter
+than a long one (`FLOE_LAYER_PREVIEWS=<dir>` writes both as PNGs). Its dim rear ribbon is now clipped by Core Animation rather
 than a polygon subtraction on every frame. Synthetic path-generation time fell
 from 0.411–0.433 ms to 0.051 ms/frame (~88%); this excludes compositor/GPU work and
 is not a new whole-app CPU measurement.

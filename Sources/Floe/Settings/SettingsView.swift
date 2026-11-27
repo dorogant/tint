@@ -104,6 +104,13 @@ struct SettingsView: View {
             } footer: {
                 note("Visual only. Audio is sampled about 30 times per second while Tint is active. Playback volume is unchanged.")
             }
+            SwiftUI.Section {
+                CoverOptions()
+            } header: {
+                Text("Cover")
+            } footer: {
+                note("How Now Playing shows the album cover. The card keeps its visualizer below it.")
+            }
         case .background:
             SwiftUI.Section {
                 BackgroundOptions()

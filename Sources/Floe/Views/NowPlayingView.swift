@@ -12,8 +12,11 @@ struct NowPlayingView: View {
     var body: some View {
         if let track = player.displayTrack {
             GeometryReader { geometry in
-                let circular = settings.showVisualizer && settings.style == .circular
-                let normal = settings.showVisualizer && settings.style == .normal
+                // The card stands on its reflection, so a ring can't go round it:
+                // its visualizer is always the strip along the bottom.
+                let card = settings.cover == .card
+                let circular = settings.showVisualizer && settings.style == .circular && !card
+                let normal = settings.showVisualizer && (settings.style == .normal || card)
                 let compact = geometry.size.height < scale(600)
                 // With the controls put away the cover takes their room and may grow.
                 let clean = navigator.controlsHidden
@@ -21,7 +24,8 @@ struct NowPlayingView: View {
                 // the circular ring scales with the cover, as in the reference.
                 let controlsHeight = scale(compact ? 310 : 390) - (clean ? scale(compact ? 130 : 150) : 0)
                 let ring = circular ? VisualizerView.ringScale : 1
-                let available = (geometry.size.height - controlsHeight - (normal ? scale(96) : 0)) / ring
+                let foot = card ? FloatingCover.foot : 0
+                let available = (geometry.size.height - controlsHeight - (normal ? scale(96) : 0)) / (ring + foot)
                 let lyricsWidth = showLyrics ? max(scale(330), geometry.size.width * 0.42) : 0
                 let columnWidth = geometry.size.width - 2 * scale.margin - lyricsWidth - (showLyrics ? scale(20) : 0)
                 let coverWidth = (columnWidth - scale(compact ? 24 : 40)) / ring
@@ -33,7 +37,7 @@ struct NowPlayingView: View {
                         // groups and the narrower ones hold each group together.
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
-                            CoverStage(size: coverSize, ring: ring) {
+                            CoverStage(size: coverSize, ring: ring, card: card) {
                                 if circular { VisualizerView(circular: true).opacity(ringShown ? 1 : 0).transition(.opacity) }
                             }
                             // A new song's details rise into place as the old ones lift away.
@@ -79,6 +83,7 @@ struct NowPlayingView: View {
                 // the strip, the ring and the cover's new size into place.
                 .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.showVisualizer)
                 .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.style)
+                .animation(still ? FloeMotion.fade : FloeMotion.enter, value: settings.cover)
             }
             .overlay(alignment: .topTrailing) {
                 // Both stay mounted while the controls are away, so ⇧⌘H and ⇧⌘L still work.
@@ -129,27 +134,30 @@ private struct Soften: ViewModifier {
 private struct CoverStage<Ring: View>: View {
     let size: CGFloat
     let ring: CGFloat
+    let card: Bool
     @ViewBuilder var ringView: Ring
     @ReducedMotion private var still
     @ViewState private var hovering = false
 
     var body: some View {
         let lifted = hovering && !still
+        // The card's reflection hangs below the square the cover stands in.
+        let foot = card ? size * FloatingCover.foot : 0
         ZStack {
             RadialGradient(colors: [.black.opacity(0.5), .black.opacity(0)], center: .center,
                            startRadius: 0, endRadius: size * 0.52)
                 .frame(width: size * 1.05, height: size * 0.92)
                 .clipShape(Ellipse())
-                .offset(y: size * (lifted ? 0.1 : 0.06))
+                .offset(y: size * (lifted ? 0.1 : 0.06) - foot / 2)
                 .opacity(hovering ? 1 : 0.5)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             ringView
-            FlowerCoverView(size: size)
-                .contentShape(Circle())
+            CoverView(size: size, card: card)
+                .contentShape(card ? AnyShape(Rectangle()) : AnyShape(Circle()))
                 .onHover { hovering = $0 }
         }
-        .frame(width: size * ring, height: size * ring)
+        .frame(width: size * ring, height: size * ring + foot)
         .scaleEffect(lifted ? 1.02 : 1)
         .floeHover(hovering)
     }
@@ -274,11 +282,15 @@ private struct LyricsToggle: View {
     }
 }
 
-/// The petals crawl around an upright cover and the edge breathes, both run by
-/// Core Animation (see `CrawlingCover`), so playback costs no per-frame work here.
-private struct FlowerCoverView: View {
+/// The cover in the shape chosen in Visuals. As a flower, the petals crawl
+/// around an upright cover and the edge breathes; as a card, it sways in
+/// perspective over its reflection. Core Animation runs both (see
+/// `CrawlingCover` and `FloatingCover`), so playback costs no per-frame work here.
+private struct CoverView: View {
     let size: CGFloat
+    let card: Bool
     @Environment(PlayerModel.self) private var player
+    @Environment(VisualSettings.self) private var settings
     @Environment(CoverAppearance.self) private var appearance
     @Environment(\.coverPalette) private var palette
     @Environment(\.scenePhase) private var scenePhase
@@ -290,11 +302,25 @@ private struct FlowerCoverView: View {
     var body: some View {
         // A tinted rim, like a bottle cap's edge, separates the cover from the ring.
         let rim = palette.highlight.mix(with: .black, by: 0.45).opacity(0.9)
-        // Flexible inside, so the hero flight can draw it at the mini player's size.
-        Group {
+        // One container for both shapes, so the hero flight always has a single
+        // cover to move; flexible inside, so it can draw at the mini player's size.
+        ZStack {
             if let image = appearance.image {
-                CrawlingCover(image: image, rim: NSColor(rim), rimWidth: max(2, size * 0.014),
-                              running: running, fade: !still)
+                if card {
+                    // The clock keeps running with the sway off, for the crossfade to a new cover.
+                    FloatingCover(image: image, running: running, sways: settings.coverMotion && !still, fade: !still)
+                } else {
+                    // The petals are animations on the clock, so stopping them stops the clock.
+                    CrawlingCover(image: image, rim: NSColor(rim), rimWidth: max(2, size * 0.014),
+                                  running: running && settings.coverMotion, fade: !still)
+                }
+            } else if card {
+                RoundedRectangle(cornerRadius: size * FloatingCover.inset * 0.085, style: .continuous)
+                    .fill(.white.opacity(0.06))
+                    .overlay(Image(systemName: "music.note").floeFont(size: 60).foregroundStyle(Theme.tertiary))
+                    .aspectRatio(1, contentMode: .fit)
+                    .scaleEffect(FloatingCover.inset)
+                    .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 BlobShape(phase: 0).fill(.white.opacity(0.06))
                     .overlay(Image(systemName: "music.note").floeFont(size: 60).foregroundStyle(Theme.tertiary))
@@ -311,7 +337,7 @@ private struct FlowerCoverView: View {
             }
         }
         .heroCover()
-        .frame(width: size, height: size)
+        .frame(width: size, height: size * (card ? 1 + FloatingCover.foot : 1))
         .accessibilityElement()
         .accessibilityLabel("Album cover")
     }

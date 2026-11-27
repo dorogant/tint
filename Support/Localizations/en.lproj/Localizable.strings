@@ -274,3 +274,10 @@
 "Large" = "Large";
 "Sets the size of text, artwork and spacing in the main window." = "Sets the size of text, artwork and spacing in the main window.";
 "Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second.";
+"Card" = "Card";
+"Cover" = "Cover";
+"Cover motion" = "Cover motion";
+"Flower" = "Flower";
+"Rays" = "Rays";
+"The card keeps its visualizer below it." = "The card keeps its visualizer below it.";
+"How Now Playing shows the album cover. The card keeps its visualizer below it." = "How Now Playing shows the album cover. The card keeps its visualizer below it.";

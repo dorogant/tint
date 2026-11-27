@@ -274,3 +274,10 @@
 "Large" = "Великий";
 "Sets the size of text, artwork and spacing in the main window." = "Визначає розмір тексту, обкладинок і відступів у головному вікні.";
 "Each kind splits the music into layers. Beams: kicks punch the outer beams, hi-hats light the middle ones, vocals fill the haze with color, and sweeps turn on the beat. Fluid swirls the cover's colors like ink and breathes with the bass. Bass punch sets how hard kicks move the light. The strobe never flashes more than three times a second." = "Кожен вид розкладає музику на шари. Промені: бочка штовхає крайні промені, хай-хети запалюють середні, вокал наповнює дим кольором, а рухи повертають у такт. Рідина розливає кольори обкладинки, наче чорнило, і дихає разом із басом. Удар басу задає, наскільки сильно бочка рухає світло. Стробоскоп блимає не частіше ніж тричі на секунду.";
+"Card" = "Картка";
+"Cover" = "Обкладинка";
+"Cover motion" = "Рух обкладинки";
+"Flower" = "Квітка";
+"Rays" = "Лінії";
+"The card keeps its visualizer below it." = "Візуалізатор картки завжди під нею.";
+"How Now Playing shows the album cover. The card keeps its visualizer below it." = "Як «Зараз грає» показує обкладинку альбому. Візуалізатор картки завжди під нею.";

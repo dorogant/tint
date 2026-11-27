@@ -1,5 +1,19 @@
 import SwiftUI
 
+/// The Now Playing cover: its shape, and whether it moves while a song plays.
+/// Rows only, like the options below.
+struct CoverOptions: View {
+    @Environment(VisualSettings.self) private var settings
+    var body: some View {
+        @Bindable var settings = settings
+        Picker("Cover", selection: $settings.cover) {
+            Text("Flower").tag(VisualSettings.Cover.flower)
+            Text("Card").tag(VisualSettings.Cover.card)
+        }.pickerStyle(.segmented)
+        Toggle("Cover motion", isOn: $settings.coverMotion)
+    }
+}
+
 /// Rows only, so the same controls sit in the Visuals popover and in a Settings `Form`.
 struct VisualizerOptions: View {
     @Environment(VisualSettings.self) private var settings
@@ -11,7 +25,11 @@ struct VisualizerOptions: View {
                 Text("Normal").tag(VisualSettings.Style.normal)
                 Text("Circular").tag(VisualSettings.Style.circular)
             }.pickerStyle(.segmented)
+            // The card stands on its reflection, so nothing can ring it.
+            .disabled(settings.cover == .card)
+            .help(settings.cover == .card ? "The card keeps its visualizer below it." : "")
             Picker("Shape", selection: $settings.shape) {
+                Text("Rays").tag(VisualSettings.Shape.rays)
                 Text("Bars").tag(VisualSettings.Shape.bars)
                 Text("Wave").tag(VisualSettings.Shape.wave)
             }.pickerStyle(.segmented)
@@ -113,6 +131,8 @@ struct VisualControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Visuals").font(.title3.bold())
+            CoverOptions()
+            Divider()
             VisualizerOptions()
             Divider()
             // Tighter than the sections around it: the background has the most rows.

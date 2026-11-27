@@ -25,7 +25,7 @@ import SwiftUI
 }
 
 @MainActor @Observable final class VisualSettings {
-    enum Shape { case bars, wave }
+    enum Shape { case rays, bars, wave }
     var shape = Shape.bars
     var sensitivity = 1.0
 }

@@ -28,6 +28,10 @@ Built with SwiftUI, Core Animation and Metal on top of
 - Media keys and the Control Center player
 - English and Ukrainian
 
+## What's new in 0.4.4
+
+- **Albums**: a page in the sidebar with every album you've saved. Home's strip only ever showed the few that fit; it now has a **Show all** link.
+
 ## What's new in 0.4.3
 
 - **Mix**: a mix made to order. Say what it should start from (today, this week or your liked songs), its mood, energy and length, and whether to leave out liked or already-heard songs; then steer it while it plays. Suggestions come from [ReccoBeats](https://reccobeats.com), which is sent Spotify track IDs and nothing else.
